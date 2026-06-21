@@ -124,7 +124,7 @@ export class RolesManagementService {
       orderBy: { createdAt: "desc" },
     });
 
-    return users.map((u) => ({
+    return users.map((u: typeof users[number]) => ({
       ...u,
       role: u.role as Role,
     }));

@@ -93,7 +93,7 @@ export class TagsService {
       where: { documentId },
       include: { tag: true },
     });
-    return tags.map((dt) => dt.tag);
+    return tags.map((dt: typeof tags[number]) => dt.tag);
   }
 
   // 获取标签使用统计
@@ -103,7 +103,7 @@ export class TagsService {
         _count: { select: { documents: true } },
       },
     });
-    return tags.map((t) => ({
+    return tags.map((t: typeof tags[number]) => ({
       id: t.id,
       name: t.name,
       type: t.type,

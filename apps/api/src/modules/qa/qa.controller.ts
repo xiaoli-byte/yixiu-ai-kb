@@ -27,7 +27,7 @@ export class QaController {
   async list(@CurrentUser("sub") userId: string) {
     const tenantId = this.db.tenantId!;
     const items = await this.qa.listConversations(userId, tenantId);
-    return items.map((c) => ({
+    return items.map((c: typeof items[number]) => ({
       id: c.id,
       title: c.title,
       createdAt: c.createdAt.toISOString(),

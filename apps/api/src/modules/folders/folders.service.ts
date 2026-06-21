@@ -25,10 +25,12 @@ export class FoldersService {
       orderBy: { name: "asc" },
     });
 
-    const buildTree = (parentId: string | null): any[] => {
+    interface FolderNode { id: string; name: string; parentId: string | null; children: FolderNode[] }
+
+    const buildTree = (parentId: string | null): FolderNode[] => {
       return folders
-        .filter((f) => f.parentId === parentId)
-        .map((f) => ({
+        .filter((f: typeof folders[number]) => f.parentId === parentId)
+        .map((f: typeof folders[number]) => ({
           id: f.id,
           name: f.name,
           parentId: f.parentId,

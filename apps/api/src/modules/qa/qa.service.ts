@@ -63,11 +63,11 @@ export class QaService {
       createdAt: conv.createdAt.toISOString(),
       updatedAt: conv.updatedAt.toISOString(),
       messageCount: conv.messages.length,
-      messages: conv.messages.map((m) => ({
+      messages: conv.messages.map((m: typeof conv.messages[number]) => ({
         id: m.id,
-        role: m.role as any,
+        role: m.role as "user" | "assistant",
         content: m.content,
-        citations: (m.citations as any) || [],
+        citations: (m.citations as unknown as Citation[]) || [],
         createdAt: m.createdAt.toISOString(),
       })),
     };
@@ -249,7 +249,7 @@ export class QaService {
 
       // 7. LLM 完成后才发送 citations，前端此时才渲染参考资料区域
       opts.onCitations(citations);
-      opts.onDone(messageId, finalConvId);
+      opts.onDone(messageId, finalConvId!);
     } catch (e: any) {
       this.logger.error(`ask error: ${e.message}`, e.stack);
       opts.onError(e);

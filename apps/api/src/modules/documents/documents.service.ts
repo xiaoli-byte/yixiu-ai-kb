@@ -66,7 +66,7 @@ export class DocumentsService {
     ]);
 
     return {
-      items: items.map((d) => ({
+      items: items.map((d: typeof items[number]) => ({
         id: d.id,
         title: d.title,
         mime: d.mime,
@@ -75,7 +75,7 @@ export class DocumentsService {
         folderId: d.folderId,
         ownerId: d.ownerId,
         ownerName: d.owner?.name,
-        tags: d.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
+        tags: d.tags.map((t: typeof d.tags[number]) => ({ id: t.tag.id, name: t.tag.name })),
         createdAt: d.createdAt.toISOString(),
         updatedAt: d.updatedAt.toISOString(),
       })),
@@ -108,7 +108,7 @@ export class DocumentsService {
       folderId: doc.folderId,
       ownerId: doc.ownerId,
       ownerName: doc.owner?.name,
-      tags: doc.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
+      tags: doc.tags.map((t: typeof doc.tags[number]) => ({ id: t.tag.id, name: t.tag.name })),
       createdAt: doc.createdAt.toISOString(),
       updatedAt: doc.updatedAt.toISOString(),
       errorMessage: doc.errorMessage,

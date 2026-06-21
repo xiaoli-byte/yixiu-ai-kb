@@ -2,4 +2,4 @@
 export { default } from "./users";
 export { default as departmentsApi } from "./departments";
 export * from "./users";
-export * from "./departments";
+export { create as createDepartment } from "./departments";
