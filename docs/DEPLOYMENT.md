@@ -26,44 +26,57 @@
 ### 1.1 硬件要求
 
 #### 开发环境
-| 资源 | 最低要求 |
-|------|----------|
-| CPU | 2 核 |
-| 内存 | 4 GB |
-| 磁盘 | 20 GB |
+
+
+| 资源  | 最低要求  |
+| --- | ----- |
+| CPU | 2 核   |
+| 内存  | 4 GB  |
+| 磁盘  | 20 GB |
+
 
 #### 生产环境（小型）
-| 资源 | 最低要求 | 推荐 |
-|------|----------|------|
-| CPU | 4 核 | 8 核 |
-| 内存 | 8 GB | 16 GB |
-| 磁盘 | 100 GB | 500 GB SSD |
+
+
+| 资源  | 最低要求   | 推荐         |
+| --- | ------ | ---------- |
+| CPU | 4 核    | 8 核        |
+| 内存  | 8 GB   | 16 GB      |
+| 磁盘  | 100 GB | 500 GB SSD |
+
 
 #### 生产环境（中型）
-| 资源 | 最低要求 | 推荐 |
-|------|----------|------|
-| CPU | 8 核 | 16 核 |
-| 内存 | 16 GB | 32 GB |
-| 磁盘 | 500 GB SSD | 1 TB SSD |
+
+
+| 资源  | 最低要求       | 推荐       |
+| --- | ---------- | -------- |
+| CPU | 8 核        | 16 核     |
+| 内存  | 16 GB      | 32 GB    |
+| 磁盘  | 500 GB SSD | 1 TB SSD |
+
 
 ### 1.2 软件要求
 
-| 软件 | 版本要求 |
-|------|----------|
-| Node.js | ≥ 20.x |
-| pnpm | ≥ 9.x |
-| Docker | ≥ 24.x |
-| Docker Compose | ≥ 2.x |
+
+| 软件             | 版本要求   |
+| -------------- | ------ |
+| Node.js        | ≥ 20.x |
+| pnpm           | ≥ 9.x  |
+| Docker         | ≥ 24.x |
+| Docker Compose | ≥ 2.x  |
+
 
 ### 1.3 外部服务
 
-| 服务 | 说明 | 必填 |
-|------|------|------|
-| DashScope API | 通义千问 API | 是 |
-| PostgreSQL 16 | 主数据库 + 向量 | 是 |
-| Neo4j 5.x | 图数据库 | 是 |
-| Redis 7 | 缓存和队列 | 是 |
-| MinIO | S3 兼容存储 | 是 |
+
+| 服务            | 说明        | 必填  |
+| ------------- | --------- | --- |
+| DashScope API | 通义千问 API  | 是   |
+| PostgreSQL 16 | 主数据库 + 向量 | 是   |
+| Neo4j 5.x     | 图数据库      | 是   |
+| Redis 7       | 缓存和队列     | 是   |
+| MinIO         | S3 兼容存储   | 是   |
+
 
 ---
 
@@ -87,6 +100,7 @@ nano .env
 ```
 
 **必须配置项：**
+
 ```env
 # DashScope API Key（必填）
 DASHSCOPE_API_KEY=your_api_key_here
@@ -142,12 +156,14 @@ pnpm --filter @ai-knowledge/web dev    # 前端 (端口 8888)
 
 ### 2.6 验证部署
 
-| 服务 | 地址 | 验证方式 |
-|------|------|----------|
-| 前端 | http://localhost:8888 | 浏览器访问 |
-| 后端 API | http://localhost:9999/api | 返回 API 文档 |
-| 健康检查 | http://localhost:9999/health | 返回 `{"status":"ok"}` |
-| MinIO Console | http://localhost:9001 | 登录界面 |
+
+| 服务            | 地址                                                           | 验证方式                 |
+| ------------- | ------------------------------------------------------------ | -------------------- |
+| 前端            | [http://localhost:8888](http://localhost:8888)               | 浏览器访问                |
+| 后端 API        | [http://localhost:9999/api](http://localhost:9999/api)       | 返回 API 文档            |
+| 健康检查          | [http://localhost:9999/health](http://localhost:9999/health) | 返回 `{"status":"ok"}` |
+| MinIO Console | [http://localhost:9001](http://localhost:9001)               | 登录界面                 |
+
 
 ---
 
@@ -292,72 +308,90 @@ docker run -d --name web \
 
 ## 4. Docker 部署
 
-### 4.1 Docker Compose 配置
+### 4.1 前置准备
+
+Docker Compose 部署依赖以下配置文件，请确保它们存在：
+
+```bash
+# 创建必要的目录和配置文件
+mkdir -p infra/nginx/conf.d
+
+# 配置文件说明：
+# - infra/nginx/nginx.conf         # Nginx 主配置
+# - infra/nginx/conf.d/default.conf # 反向代理配置
+```
+
+详细配置请参考 [8. 反向代理配置](#82-站点配置)。
+
+### 4.2 Docker Compose 配置
 
 创建 `docker-compose.prod.yml`：
 
 ```yaml
-version: '3.8'
-
 services:
   # PostgreSQL + pgvector
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: postgres
+    container_name: ai-knowledge-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ai_knowledge
+      POSTGRES_USER: ${POSTGRES_USER:-ai_knowledge}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ai_knowledge
+      POSTGRES_DB: ${POSTGRES_DB:-ai_knowledge}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ai_knowledge"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_knowledge}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   # Neo4j
   neo4j:
-    image: neo4j:5
-    container_name: neo4j
+    image: neo4j:5.20-community
+    container_name: ai-knowledge-neo4j
     restart: unless-stopped
     environment:
-      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD}
       NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
       NEO4J_dbms_memory_heap_initial__size: 512m
-      NEO4J_dbms_memory_heap_max__size: 2g
+      NEO4J_dbms_memory_heap_max__size: 1G
+      NEO4J_dbms_memory_pagecache_size: 512m
     volumes:
       - neo4j_data:/data
-      - neo4j_logs:/logs
-      - ./infra/docker/neo4j/init.cypher:/init.cypher:ro
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
     healthcheck:
-      test: ["CMD", "neo4j", "status"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   # Redis
   redis:
     image: redis:7-alpine
-    container_name: redis
+    container_name: ai-knowledge-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # MinIO
   minio:
     image: minio/minio:latest
-    container_name: minio
+    container_name: ai-knowledge-minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -366,13 +400,61 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # API 服务
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: ai-knowledge-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ai_knowledge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_knowledge}
+      REDIS_URL: redis://redis:6379
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ai-knowledge-docs
+    ports:
+      - "${API_PORT:-9999}:9999"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # Web 前端
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: ai-knowledge-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8888}:80"
 
   # Nginx Reverse Proxy
   nginx:
     image: nginx:alpine
-    container_name: nginx
+    container_name: ai-knowledge-nginx
     restart: unless-stopped
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -387,16 +469,11 @@ services:
 volumes:
   postgres_data:
   neo4j_data:
-  neo4j_logs:
   redis_data:
   minio_data:
-
-networks:
-  default:
-    name: ai-knowledge-network
 ```
 
-### 4.2 启动 Docker 部署
+### 4.3 启动 Docker 部署
 
 ```bash
 # 复制生产配置
@@ -412,16 +489,16 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml logs -f
 ```
 
-### 4.3 初始化 MinIO Bucket
+### 4.4 初始化 MinIO Bucket
 
 ```bash
 # 等待 MinIO 启动
 sleep 10
 
 # 创建 Bucket
-docker exec minio mc alias set local http://localhost:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY}
-docker exec minio mc mb local/ai-knowledge-docs --ignore-existing
-docker exec minio mc anonymous set download local/ai-knowledge-docs
+docker exec ai-knowledge-minio mc alias set local http://localhost:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY}
+docker exec ai-knowledge-minio mc mb local/ai-knowledge-docs --ignore-existing
+docker exec ai-knowledge-minio mc anonymous set download local/ai-knowledge-docs
 ```
 
 ---
@@ -613,43 +690,46 @@ kubectl logs -f deployment/api -n ai-knowledge
 
 ### 6.1 完整环境变量列表
 
-| 变量名 | 说明 | 默认值 | 必填 |
-|--------|------|--------|------|
-| `NODE_ENV` | 运行环境 | development | - |
-| `API_PORT` | API 端口 | 9999 | - |
-| `WEB_PORT` | 前端端口 | 8888 | - |
-| `WEB_ORIGIN` | 前端地址（用于 CORS） | http://localhost:8888 | - |
-| `DATABASE_URL` | PostgreSQL 连接地址 | - | 是 |
-| `REDIS_URL` | Redis 连接地址 | - | 是 |
-| `NEO4J_URI` | Neo4j Bolt 地址 | bolt://localhost:7687 | 是 |
-| `NEO4J_USER` | Neo4j 用户名 | neo4j | 是 |
-| `NEO4J_PASSWORD` | Neo4j 密码 | - | 是 |
-| `S3_ENDPOINT` | MinIO 端点 | http://localhost:9000 | 是 |
-| `S3_REGION` | 区域 | us-east-1 | - |
-| `S3_BUCKET` | Bucket 名称 | ai-knowledge-docs | - |
-| `S3_ACCESS_KEY` | S3 Access Key | - | 是 |
-| `S3_SECRET_KEY` | S3 Secret Key | - | 是 |
-| `JWT_ACCESS_SECRET` | Access Token 密钥 | - | 是 |
-| `JWT_REFRESH_SECRET` | Refresh Token 密钥 | - | 是 |
-| `JWT_ACCESS_TTL` | Access Token 有效期 | 7d | - |
-| `JWT_REFRESH_TTL` | Refresh Token 有效期 | 30d | - |
-| `BOOTSTRAP_ADMIN_EMAIL` | 初始管理员邮箱 | - | 是 |
-| `BOOTSTRAP_ADMIN_PASSWORD` | 初始管理员密码 | - | 是 |
-| `DASHSCOPE_API_KEY` | 通义千问 API Key | - | 是 |
-| `DASHSCOPE_BASE_URL` | DashScope API 地址 | https://dashscope.aliyuncs.com/api/v1 | - |
-| `DASHSCOPE_LLM_MODEL` | LLM 模型 | qwen-plus | - |
-| `DASHSCOPE_EMBED_MODEL` | Embedding 模型 | text-embedding-v4 | - |
-| `DASHSCOPE_EMBED_DIM` | Embedding 维度 | 1024 | - |
-| `CHUNK_SIZE` | 切片大小 | 500 | - |
-| `CHUNK_OVERLAP` | 切片重叠 | 50 | - |
-| `SEARCH_BM25_TOPK` | BM25 召回数 | 50 | - |
-| `SEARCH_VECTOR_TOPK` | 向量召回数 | 50 | - |
-| `SEARCH_RRF_K` | RRF K 值 | 60 | - |
-| `SEARCH_RRF_FINAL_TOPK` | 最终返回数 | 10 | - |
+
+| 变量名                        | 说明                | 默认值                                                                            | 必填  |
+| -------------------------- | ----------------- | ------------------------------------------------------------------------------ | --- |
+| `NODE_ENV`                 | 运行环境              | development                                                                    | -   |
+| `API_PORT`                 | API 端口            | 9999                                                                           | -   |
+| `WEB_PORT`                 | 前端端口              | 8888                                                                           | -   |
+| `WEB_ORIGIN`               | 前端地址（用于 CORS）     | [http://localhost:8888](http://localhost:8888)                                 | -   |
+| `DATABASE_URL`             | PostgreSQL 连接地址   | -                                                                              | 是   |
+| `REDIS_URL`                | Redis 连接地址        | -                                                                              | 是   |
+| `NEO4J_URI`                | Neo4j Bolt 地址     | bolt://localhost:7687                                                          | 是   |
+| `NEO4J_USER`               | Neo4j 用户名         | neo4j                                                                          | 是   |
+| `NEO4J_PASSWORD`           | Neo4j 密码          | -                                                                              | 是   |
+| `S3_ENDPOINT`              | MinIO 端点          | [http://localhost:9000](http://localhost:9000)                                 | 是   |
+| `S3_REGION`                | 区域                | us-east-1                                                                      | -   |
+| `S3_BUCKET`                | Bucket 名称         | ai-knowledge-docs                                                              | -   |
+| `S3_ACCESS_KEY`            | S3 Access Key     | -                                                                              | 是   |
+| `S3_SECRET_KEY`            | S3 Secret Key     | -                                                                              | 是   |
+| `JWT_ACCESS_SECRET`        | Access Token 密钥   | -                                                                              | 是   |
+| `JWT_REFRESH_SECRET`       | Refresh Token 密钥  | -                                                                              | 是   |
+| `JWT_ACCESS_TTL`           | Access Token 有效期  | 7d                                                                             | -   |
+| `JWT_REFRESH_TTL`          | Refresh Token 有效期 | 30d                                                                            | -   |
+| `BOOTSTRAP_ADMIN_EMAIL`    | 初始管理员邮箱           | -                                                                              | 是   |
+| `BOOTSTRAP_ADMIN_PASSWORD` | 初始管理员密码           | -                                                                              | 是   |
+| `DASHSCOPE_API_KEY`        | 通义千问 API Key      | -                                                                              | 是   |
+| `DASHSCOPE_BASE_URL`       | DashScope API 地址  | [https://dashscope.aliyuncs.com/api/v1](https://dashscope.aliyuncs.com/api/v1) | -   |
+| `DASHSCOPE_LLM_MODEL`      | LLM 模型            | qwen-plus                                                                      | -   |
+| `DASHSCOPE_EMBED_MODEL`    | Embedding 模型      | text-embedding-v4                                                              | -   |
+| `DASHSCOPE_EMBED_DIM`      | Embedding 维度      | 1024                                                                           | -   |
+| `CHUNK_SIZE`               | 切片大小              | 500                                                                            | -   |
+| `CHUNK_OVERLAP`            | 切片重叠              | 50                                                                             | -   |
+| `SEARCH_BM25_TOPK`         | BM25 召回数          | 50                                                                             | -   |
+| `SEARCH_VECTOR_TOPK`       | 向量召回数             | 50                                                                             | -   |
+| `SEARCH_RRF_K`             | RRF K 值           | 60                                                                             | -   |
+| `SEARCH_RRF_FINAL_TOPK`    | 最终返回数             | 10                                                                             | -   |
+
 
 ### 6.2 环境特定配置
 
 #### 开发环境
+
 ```env
 NODE_ENV=development
 LOG_LEVEL=debug
@@ -657,6 +737,7 @@ CORS_ORIGIN=http://localhost:8888
 ```
 
 #### 生产环境
+
 ```env
 NODE_ENV=production
 LOG_LEVEL=info
@@ -666,6 +747,7 @@ JWT_REFRESH_SECRET=<生成 64 位随机字符串>
 ```
 
 #### 测试环境
+
 ```env
 NODE_ENV=test
 DATABASE_URL=postgresql://ai_knowledge:test@localhost:5432/ai_knowledge_test
@@ -1169,3 +1251,4 @@ docker system prune -f
 # 重建特定服务
 docker compose up -d --force-recreate [service-name]
 ```
+
