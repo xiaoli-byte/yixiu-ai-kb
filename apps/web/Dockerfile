@@ -1,4 +1,4 @@
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 RUN corepack enable
 
@@ -20,7 +20,7 @@ WORKDIR /app/apps/web
 RUN pnpm install --shamefully-hoist && pnpm build
 
 # 运行阶段
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 RUN corepack enable
