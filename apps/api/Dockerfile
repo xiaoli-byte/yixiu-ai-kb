@@ -4,7 +4,7 @@ RUN corepack enable
 COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY packages/ packages/
 COPY apps/api/package.json ./apps/api/
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --shamefully-hoist
 COPY apps/api/ ./apps/api/
 RUN pnpm --filter @ai-knowledge/api build
 
