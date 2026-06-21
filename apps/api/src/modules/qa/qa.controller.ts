@@ -1,0 +1,113 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
+import { AuthGuard } from "@nestjs/passport";
+import { QaService } from "./qa.service";
+import { DatabaseService } from "../../database/database.service";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
+import type { Response } from "express";
+
+@UseGuards(AuthGuard("jwt"))
+@Controller("qa")
+export class QaController {
+  constructor(
+    private readonly qa: QaService,
+    private readonly db: DatabaseService,
+  ) {}
+
+  @Get("conversations")
+  async list(@CurrentUser("sub") userId: string) {
+    const tenantId = this.db.tenantId!;
+    const items = await this.qa.listConversations(userId, tenantId);
+    return items.map((c) => ({
+      id: c.id,
+      title: c.title,
+      createdAt: c.createdAt.toISOString(),
+      updatedAt: c.updatedAt.toISOString(),
+      messageCount: (c as any)._count?.messages || 0,
+    }));
+  }
+
+  @Get("conversations/:id")
+  async get(@Param("id") id: string, @CurrentUser("sub") userId: string) {
+    return this.qa.getConversation(id, userId);
+  }
+
+  @Get("chunks/:id")
+  async getChunk(@Param("id") id: string) {
+    return this.qa.getChunk(id);
+  }
+
+  @Get("documents/:id/pdf-url")
+  async getDocumentUrl(
+    @Param("id") id: string,
+    @CurrentUser("sub") userId: string,
+  ) {
+    const tenantId = this.db.tenantId!;
+    return this.qa.getDocumentPresignedUrl(id, tenantId, userId);
+  }
+
+  @Get("documents/:id/markdown")
+  async getDocumentMarkdown(
+    @Param("id") id: string,
+    @CurrentUser("sub") userId: string,
+  ) {
+    const tenantId = this.db.tenantId!;
+    return this.qa.getDocumentMarkdown(id, tenantId);
+  }
+
+  @Delete("conversations/:id")
+  async delete(
+    @Param("id") id: string,
+    @CurrentUser("sub") userId: string,
+  ) {
+    return this.qa.deleteConversation(id, userId);
+  }
+
+  @Post("ask")
+  @RateLimit({ ...RateLimitPolicies.qa, message: "AI 问答请求过于频繁，请稍后再试" })
+  async ask(
+    @Body() body: { conversationId?: string; question: string; topK?: number },
+    @CurrentUser("sub") userId: string,
+    @Res() res: Response,
+  ) {
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    const write = (event: any) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    await this.qa.ask({
+      userId,
+      tenantId: this.db.tenantId!,
+      conversationId: body.conversationId,
+      question: body.question,
+      topK: body.topK,
+      onChunk: (content) => write({ type: "chunk", content }),
+      // citations 在 LLM 完成后由 service 调用，此时才发往前端
+      onCitations: (citations) => write({ type: "citations", citations }),
+      // 无检索结果时通知前端，前端显示提示但不中断流程
+      onNoResults: () => write({ type: "no_results" }),
+      onDone: (messageId, conversationId) => {
+        write({ type: "done", messageId, conversationId });
+        res.end();
+      },
+      onError: (e) => {
+        write({ type: "error", message: e.message });
+        res.end();
+      },
+    });
+  }
+}

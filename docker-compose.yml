@@ -1,0 +1,118 @@
+# ===== 端口策略 =====
+# 默认（推荐）：数据库只走 Docker 内部网络，不占用 host 任何端口。
+# 应用通过容器名连接：postgres://ai-knowledge-postgres:5432
+#
+# 如需在 host 上直连（TablePlus / DBeaver / redis-cli）：
+#   1. 把下面每个服务里 `expose` 那块的两行取消注释：
+#        ports:
+#          - "${POSTGRES_PORT:-5432}:5432"
+#   2. 把 .env 里的 DATABASE_URL / REDIS_URL / NEO4J_URI 改回 localhost
+#   3. docker compose up -d
+# 一个项目同时只能有一个服务占用 host 上的某端口。
+
+services:
+  postgres:
+    # 使用官方 zhparser 镜像并安装 pgvector
+    image: zhparser/zhparser:bookworm-16
+    container_name: ai-knowledge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ai_knowledge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_knowledge}
+    # 初始化时安装 pgvector 和 zhparser，创建 zhcfg 配置
+    command: >
+      bash -c "
+        # 修复 pgvector 扩展别名
+        ln -sf /usr/share/postgresql/16/extension/vector.control /usr/share/postgresql/16/extension/pgvector.control 2>/dev/null || true
+        ln -sf /usr/lib/postgresql/16/lib/vector.so /usr/lib/postgresql/16/lib/pgvector.so 2>/dev/null || true
+        # 安装 pgvector（如未安装）
+        apt-get update && apt-get install -y postgresql-16-pgvector || true
+        # 创建扩展
+        psql -v ON_ERROR_STOP=1 -c \"CREATE EXTENSION IF NOT EXISTS pgvector;\" postgres || true
+        psql -v ON_ERROR_STOP=1 -c \"CREATE EXTENSION IF NOT EXISTS zhparser;\" postgres || true
+        # 创建 zhcfg 配置
+        psql -v ON_ERROR_STOP=1 -c \"CREATE TEXT SEARCH CONFIGURATION IF NOT EXISTS zhcfg (parser = zhparser);\" postgres || true
+        psql -v ON_ERROR_STOP=1 -c \"ALTER TEXT SEARCH CONFIGURATION zhcfg ADD MAPPING FOR n,v,a,i,e,l,s,j,h WITH simple;\" postgres || true
+        # 启动 PostgreSQL
+        docker-entrypoint.sh postgres
+      "
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_knowledge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-knowledge-redis
+    restart: unless-stopped
+    expose:
+      - "6379"
+    # Windows 原生 nest dev 通过 host 连入，必须暴露
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: ai-knowledge-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_password}
+    # MinIO 控制台是开发体验必须的，始终暴露
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:5.20-community
+    container_name: ai-knowledge-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j_dev_password}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 1G
+      NEO4J_dbms_memory_pagecache_size: 512m
+    expose:
+      - "7474"
+      - "7687"
+    # Windows 原生 nest dev 通过 host 连入，必须暴露
+    ports:
+      - "${NEO4J_HTTP_PORT:-7474}:7474"
+      - "${NEO4J_BOLT_PORT:-7687}:7687"
+    volumes:
+      - neo4j_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  neo4j_data:

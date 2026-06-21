@@ -1,0 +1,29 @@
+# Node
+node_modules/
+dist/
+.next/
+.turbo/
+*.log
+.pnpm-store/
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+.cursor
+
+# Prisma
+apps/api/src/database/prisma/migrations/dev/
+
+# Postgres / Neo4j data
+infra/docker/postgres/data/
+infra/docker/neo4j/data/
+
+# Misc
+coverage/
+.nyc_output/
