@@ -1,6 +1,6 @@
 FROM node:22-alpine AS builder
 WORKDIR /app
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 
 # 复制 workspace 配置（包括 .npmrc）
 COPY .npmrc ./
@@ -23,7 +23,7 @@ RUN pnpm install --shamefully-hoist && pnpm build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-RUN corepack enable
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 COPY --from=builder /app/apps/web/.next ./apps/web/.next
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/package.json ./apps/web/
