@@ -44,7 +44,6 @@ export class DocumentsController {
     const tagIds = tags
       ? tags.split(",").map((t) => t.trim()).filter((t) => t.length > 0)
       : undefined;
-    console.log("[DEBUG] list query:", { q, status, folderId, tags, tagIds, page, pageSize });
     return this.docs.list({
       q,
       status,
@@ -61,7 +60,7 @@ export class DocumentsController {
   }
 
   @Post("upload")
-  @UseGuards(AdminGuard)
+  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.CREATE })
   @UseInterceptors(
     FileInterceptor("file", {
       limits: { fileSize: 50 * 1024 * 1024 },

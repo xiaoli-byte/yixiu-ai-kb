@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   BookOpen,
   Search,
@@ -18,6 +19,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const router = useRouter();
   const { user, accessToken, logout } = useAuth();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // 未登录时重定向到登录页
+  useEffect(() => {
+    if (mounted && !accessToken) {
+      router.push("/login");
+    }
+  }, [mounted, accessToken, router]);
 
   // 支持 super_admin 和 admin
   const isAdmin = user?.role === Role.SUPER_ADMIN || user?.role === Role.ADMIN;
@@ -30,7 +43,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     ...(isAdmin ? [{ href: "/settings", label: "系统设置", icon: Settings }] : []),
   ];
 
-  if (!accessToken) return null;
+  // 客户端水合完成前显示空白，避免闪屏
+  if (!mounted) return null;
 
   // 获取角色显示文本
   const getRoleLabel = (role?: string) => {
