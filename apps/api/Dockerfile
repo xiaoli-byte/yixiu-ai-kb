@@ -4,7 +4,12 @@ RUN npm install -g pnpm@9
 COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY packages/ packages/
 COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
 RUN pnpm install --shamefully-hoist
+
+# 构建共享包
+RUN pnpm --filter @ai-knowledge/schemas build
+
 COPY apps/api/ ./apps/api/
 RUN pnpm --filter @ai-knowledge/api prisma:generate
 RUN pnpm --filter @ai-knowledge/api build
