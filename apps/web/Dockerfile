@@ -1,7 +1,4 @@
 FROM node:25 AS builder
-ARG API_BASE_URL=http://localhost:9999/api
-ENV API_BASE_URL=$API_BASE_URL
-ENV NEXT_PUBLIC_API_BASE=$API_BASE_URL
 WORKDIR /app
 RUN npm install -g pnpm@9
 
@@ -26,6 +23,7 @@ RUN pnpm install --shamefully-hoist && pnpm build
 FROM node:25 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+ENV API_INTERNAL_URL=http://api:9999
 ENV PATH="/app/node_modules/.bin:/app/apps/web/node_modules/.bin:${PATH}"
 RUN npm install -g pnpm@9
 COPY --from=builder /app/apps/web/.next ./apps/web/.next
