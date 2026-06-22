@@ -1,6 +1,4 @@
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ||
-  (typeof window !== "undefined" ? "/api/backend" : process.env.API_INTERNAL_URL || "http://localhost:9999/api");
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "/api/backend";
 
 export class ApiError extends Error {
   status: number;
