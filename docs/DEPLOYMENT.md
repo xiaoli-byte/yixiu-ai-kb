@@ -156,13 +156,13 @@ pnpm --filter @ai-knowledge/web dev    # 前端 (端口 8888)
 
 ### 2.6 验证部署
 
-
-| 服务            | 地址                                                           | 验证方式                 |
-| ------------- | ------------------------------------------------------------ | -------------------- |
-| 前端            | [http://localhost:8888](http://localhost:8888)               | 浏览器访问                |
-| 后端 API        | [http://localhost:9999/api](http://localhost:9999/api)       | 返回 API 文档            |
-| 健康检查          | [http://localhost:9999/health](http://localhost:9999/health) | 返回 `{"status":"ok"}` |
-| MinIO Console | [http://localhost:9001](http://localhost:9001)               | 登录界面                 |
+| 服务 | 地址 | 验证方式 |
+| --- | --- | --- |
+| 前端 | [http://localhost:8888](http://localhost:8888) | 浏览器访问 |
+| 后端 API | [http://localhost:9999/api](http://localhost:9999/api) | 返回 API 信息 |
+| 健康检查 | [http://localhost:9999/health](http://localhost:9999/health) | 返回 `{"status":"ok"}` |
+| MinIO Console | [http://localhost:9001](http://localhost:9001) | 登录界面 |
+| Neo4j Browser | [http://localhost:7474](http://localhost:7474) | 登录界面 |
 
 
 ---
@@ -218,59 +218,107 @@ pnpm --filter @ai-knowledge/web build
 
 ### 3.3 配置生产环境变量
 
-创建 `/opt/ai-knowledge/.env.production`：
+创建 `.env.production` 文件：
 
 ```env
-# ===== 应用配置 =====
+# ===== 应用基础配置 =====
 NODE_ENV=production
 API_PORT=9999
 WEB_PORT=8888
-WEB_ORIGIN=https://your-domain.com
+LOG_LEVEL=info
 
 # ===== PostgreSQL =====
-DATABASE_URL=postgresql://ai_knowledge:your_password@postgres:5432/ai_knowledge
+POSTGRES_USER=ai_knowledge
+POSTGRES_PASSWORD=your_secure_password
+POSTGRES_DB=ai_knowledge
+POSTGRES_PORT=55432
 
 # ===== Redis =====
-REDIS_URL=redis://redis:6379
+REDIS_PORT=6379
+
+# ===== MinIO =====
+MINIO_ROOT_USER=minio_admin
+MINIO_ROOT_PASSWORD=minio_password
+MINIO_PORT=9000
+MINIO_CONSOLE_PORT=9001
+S3_BUCKET=ai-knowledge-docs
+S3_REGION=us-east-1
+S3_ACCESS_KEY=minio_admin
+S3_SECRET_KEY=minio_password
 
 # ===== Neo4j =====
-NEO4J_URI=bolt://neo4j:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_neo4j_password
+NEO4J_PASSWORD=neo4j_secure_password
 
-# ===== MinIO / S3 =====
-S3_ENDPOINT=http://minio:9000
-S3_REGION=us-east-1
-S3_BUCKET=ai-knowledge-docs
-S3_ACCESS_KEY=your_access_key
-S3_SECRET_KEY=your_secret_key
-
-# ===== JWT =====
-JWT_ACCESS_SECRET=your_very_long_random_access_secret_here_at_least_32_chars
-JWT_REFRESH_SECRET=your_very_long_random_refresh_secret_here_at_least_32_chars
-JWT_ACCESS_TTL=7d
-JWT_REFRESH_TTL=30d
-
-# ===== Bootstrap =====
-BOOTSTRAP_ADMIN_EMAIL=admin@yourcompany.com
-BOOTSTRAP_ADMIN_PASSWORD=your_secure_password
+# ===== 鉴权 =====
+JWT_ACCESS_SECRET=your_access_secret_minimum_32_chars
+JWT_REFRESH_SECRET=your_refresh_secret_minimum_32_chars
+BOOTSTRAP_ADMIN_EMAIL=admin@demo.com
+BOOTSTRAP_ADMIN_PASSWORD=admin_password
+BOOTSTRAP_ADMIN_NAME=Super Admin
+BOOTSTRAP_TENANT_ID=tenant_demo
 
 # ===== DashScope (必填) =====
-DASHSCOPE_API_KEY=your_dashscope_api_key
+DASHSCOPE_API_KEY=your_api_key
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 DASHSCOPE_LLM_MODEL=qwen-plus
 DASHSCOPE_EMBED_MODEL=text-embedding-v4
 DASHSCOPE_EMBED_DIM=1024
+DASHSCOPE_LLM_MOCK=false
+DASHSCOPE_EMBED_MOCK=false
 
-# ===== 生产配置 =====
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
+# ===== 检索参数 =====
 SEARCH_BM25_TOPK=50
 SEARCH_VECTOR_TOPK=50
 SEARCH_RRF_K=60
 SEARCH_RRF_FINAL_TOPK=10
+CHUNK_SIZE=500
+CHUNK_OVERLAP=50
+EMBED_BATCH_SIZE=10
 ```
 
-### 3.4 使用 PM2 运行
+### 3.4 启动生产服务
+
+使用 Docker Compose 启动所有服务（推荐）：
+
+```bash
+# 启动所有服务（使用生产环境配置）
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+
+# 查看状态
+docker compose -f docker-compose.prod.yml --env-file .env.production ps
+
+# 查看日志
+docker compose -f docker-compose.prod.yml --env-file .env.production logs -f
+```
+
+### 3.5 替代方案：手动 Docker 运行
+
+如果不使用 Docker Compose，可以手动启动容器：
+
+```bash
+# 启动基础设施服务
+docker compose up -d postgres neo4j redis minio
+
+# 构建镜像
+docker build -t ai-knowledge/api -f apps/api/Dockerfile .
+docker build -t ai-knowledge/web -f apps/web/Dockerfile .
+
+# 运行容器
+docker run -d --name ai-knowledge-api \
+  --env-file .env.production \
+  --network ai-knowledge_default \
+  -p 9999:9999 \
+  ai-knowledge/api
+
+docker run -d --name ai-knowledge-web \
+  -p 8888:8888 \
+  ai-knowledge/web
+```
+
+### 3.6 替代方案：PM2 运行（非 Docker）
+
+仅适用于开发/测试环境，生产环境推荐使用 Docker：
 
 ```bash
 # 安装 PM2
@@ -278,30 +326,11 @@ npm install -g pm2
 
 # 启动后端
 cd /opt/ai-knowledge/apps/api
-pm2 start dist/main.js --name api -i 2  # 2 个实例
+pm2 start dist/main.js --name api -i 2
 
-# 启动前端（静态服务）
+# 启动前端
 cd /opt/ai-knowledge/apps/web
 pm2 serve out 8888 --name web &
-```
-
-### 3.5 使用 Docker 运行
-
-```bash
-# 构建镜像
-docker build -t ai-knowledge/api -f apps/api/Dockerfile .
-docker build -t ai-knowledge/web -f apps/web/Dockerfile .
-
-# 运行容器
-docker run -d --name api \
-  --env-file .env.production \
-  --network ai-knowledge-network \
-  -p 9999:9999 \
-  ai-knowledge/api
-
-docker run -d --name web \
-  -p 8888:80 \
-  ai-knowledge/web
 ```
 
 ---
@@ -310,183 +339,116 @@ docker run -d --name web \
 
 ### 4.1 前置准备
 
-Docker Compose 部署依赖以下配置文件，请确保它们存在：
+Docker Compose 部署依赖以下配置文件：
 
 ```bash
-# 创建必要的目录和配置文件
-mkdir -p infra/nginx/conf.d
-
-# 配置文件说明：
-# - infra/nginx/nginx.conf         # Nginx 主配置
-# - infra/nginx/conf.d/default.conf # 反向代理配置
+# 项目结构
+ai-knowledge/
+├── docker-compose.prod.yml    # 生产环境 Docker Compose 配置
+├── .env.production            # 生产环境变量（需创建）
+├── infra/
+│   ├── nginx/
+│   │   ├── nginx.conf        # Nginx 主配置
+│   │   └── conf.d/
+│   │       └── default.conf   # 反向代理配置
+│   └── docker/
+│       └── postgres/
+│           └── init.sql       # PostgreSQL 初始化脚本
+└── apps/
+    ├── api/Dockerfile         # API 服务 Dockerfile
+    └── web/Dockerfile         # Web 前端 Dockerfile
 ```
 
-详细配置请参考 [8. 反向代理配置](#82-站点配置)。
+### 4.2 配置环境变量
 
-### 4.2 Docker Compose 配置
+创建 `.env.production` 文件：
 
-创建 `docker-compose.prod.yml`：
+```bash
+cp .env.example .env.production
+```
 
-```yaml
-services:
-  # PostgreSQL + pgvector
-  postgres:
-    image: pgvector/pgvector:pg16
-    container_name: ai-knowledge-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ai_knowledge}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-ai_knowledge}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_knowledge}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+**必须配置项：**
 
-  # Neo4j
-  neo4j:
-    image: neo4j:5.20-community
-    container_name: ai-knowledge-neo4j
-    restart: unless-stopped
-    environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD}
-      NEO4J_PLUGINS: '["apoc"]'
-      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
-      NEO4J_dbms_memory_heap_initial__size: 512m
-      NEO4J_dbms_memory_heap_max__size: 1G
-      NEO4J_dbms_memory_pagecache_size: 512m
-    volumes:
-      - neo4j_data:/data
-    ports:
-      - "${NEO4J_HTTP_PORT:-7474}:7474"
-      - "${NEO4J_BOLT_PORT:-7687}:7687"
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+```env
+# ===== 应用基础配置 =====
+NODE_ENV=production
+API_PORT=9999
+WEB_PORT=8888
 
-  # Redis
-  redis:
-    image: redis:7-alpine
-    container_name: ai-knowledge-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# ===== PostgreSQL =====
+POSTGRES_USER=ai_knowledge
+POSTGRES_PASSWORD=your_secure_password
+POSTGRES_DB=ai_knowledge
+POSTGRES_PORT=55432
 
-  # MinIO
-  minio:
-    image: minio/minio:latest
-    container_name: ai-knowledge-minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
-    volumes:
-      - minio_data:/data
-    ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# ===== Redis =====
+REDIS_PORT=6379
 
-  # API 服务
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    container_name: ai-knowledge-api
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-ai_knowledge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ai_knowledge}
-      REDIS_URL: redis://redis:6379
-      NEO4J_URI: bolt://neo4j:7687
-      NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
-      S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
-      S3_SECRET_KEY: ${S3_SECRET_KEY}
-      S3_BUCKET: ai-knowledge-docs
-    ports:
-      - "${API_PORT:-9999}:9999"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+# ===== MinIO =====
+MINIO_ROOT_USER=minio_admin
+MINIO_ROOT_PASSWORD=minio_password
+S3_BUCKET=ai-knowledge-docs
+S3_ACCESS_KEY=minio_admin
+S3_SECRET_KEY=minio_password
 
-  # Web 前端
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    container_name: ai-knowledge-web
-    restart: unless-stopped
-    ports:
-      - "${WEB_PORT:-8888}:80"
+# ===== Neo4j =====
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=neo4j_secure_password
 
-  # Nginx Reverse Proxy
-  nginx:
-    image: nginx:alpine
-    container_name: ai-knowledge-nginx
-    restart: unless-stopped
-    volumes:
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./infra/nginx/conf.d:/etc/nginx/conf.d:ro
-    ports:
-      - "80:80"
-      - "443:443"
-    depends_on:
-      - api
-      - web
+# ===== 鉴权 =====
+JWT_ACCESS_SECRET=your_access_secret_minimum_32_chars
+JWT_REFRESH_SECRET=your_refresh_secret_minimum_32_chars
+BOOTSTRAP_ADMIN_EMAIL=admin@demo.com
+BOOTSTRAP_ADMIN_PASSWORD=admin_password
+BOOTSTRAP_ADMIN_NAME=Super Admin
+BOOTSTRAP_TENANT_ID=tenant_demo
 
-volumes:
-  postgres_data:
-  neo4j_data:
-  redis_data:
-  minio_data:
+# ===== DashScope (必填) =====
+DASHSCOPE_API_KEY=your_api_key
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+DASHSCOPE_LLM_MODEL=qwen-plus
+DASHSCOPE_EMBED_MODEL=text-embedding-v4
+DASHSCOPE_EMBED_DIM=1024
+
+# ===== 检索参数 =====
+SEARCH_BM25_TOPK=50
+SEARCH_VECTOR_TOPK=50
+SEARCH_RRF_K=60
+SEARCH_RRF_FINAL_TOPK=10
+CHUNK_SIZE=500
+CHUNK_OVERLAP=50
 ```
 
 ### 4.3 启动 Docker 部署
 
+使用生产环境专用配置：
+
 ```bash
-# 复制生产配置
-cp .env.example .env.production
+# 启动所有服务（使用 docker-compose.prod.yml）
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
 
-# 编辑生产配置
-nano .env.production
-
-# 启动所有服务
-docker compose -f docker-compose.prod.yml up -d
+# 查看服务状态
+docker compose -f docker-compose.prod.yml --env-file .env.production ps
 
 # 查看日志
-docker compose -f docker-compose.prod.yml logs -f
+docker compose -f docker-compose.prod.yml --env-file .env.production logs -f
+
+# 查看特定服务日志
+docker compose -f docker-compose.prod.yml --env-file .env.production logs -f api
+docker compose -f docker-compose.prod.yml --env-file .env.production logs -f web
+```
+
+**预期输出：**
+
+```
+NAME                    STATUS
+ai-knowledge-postgres   running (healthy)
+ai-knowledge-neo4j      running (healthy)
+ai-knowledge-redis      running (healthy)
+ai-knowledge-minio      running (healthy)
+ai-knowledge-api        running
+ai-knowledge-web        running
+ai-knowledge-nginx      running
 ```
 
 ### 4.4 初始化 MinIO Bucket
@@ -495,11 +457,20 @@ docker compose -f docker-compose.prod.yml logs -f
 # 等待 MinIO 启动
 sleep 10
 
-# 创建 Bucket
+# 创建 Bucket（使用 Docker 网络内地址）
 docker exec ai-knowledge-minio mc alias set local http://localhost:9000 ${S3_ACCESS_KEY} ${S3_SECRET_KEY}
 docker exec ai-knowledge-minio mc mb local/ai-knowledge-docs --ignore-existing
 docker exec ai-knowledge-minio mc anonymous set download local/ai-knowledge-docs
 ```
+
+### 4.5 验证部署
+
+| 服务 | 地址 | 验证方式 |
+| --- | --- | --- |
+| 前端 | [http://localhost](http://localhost) | 浏览器访问（通过 Nginx） |
+| 后端 API | [http://localhost/api](http://localhost/api) | 返回 API 信息 |
+| 健康检查 | [http://localhost/api/health](http://localhost/api/health) | 返回 `{"status":"ok"}` |
+| MinIO Console | [http://localhost:9001](http://localhost:9001) | 登录界面 |
 
 ---
 
@@ -690,41 +661,50 @@ kubectl logs -f deployment/api -n ai-knowledge
 
 ### 6.1 完整环境变量列表
 
+> **注意**：生产环境使用 Docker Compose 时，环境变量通过 `.env.production` 文件注入。API 服务使用 `DATABASE_URL`、`REDIS_URL` 等标准格式；PostgreSQL、Redis 等基础服务使用独立配置变量（如 `POSTGRES_USER`、`POSTGRES_PASSWORD` 等）。
 
-| 变量名                        | 说明                | 默认值                                                                            | 必填  |
-| -------------------------- | ----------------- | ------------------------------------------------------------------------------ | --- |
-| `NODE_ENV`                 | 运行环境              | development                                                                    | -   |
-| `API_PORT`                 | API 端口            | 9999                                                                           | -   |
-| `WEB_PORT`                 | 前端端口              | 8888                                                                           | -   |
-| `WEB_ORIGIN`               | 前端地址（用于 CORS）     | [http://localhost:8888](http://localhost:8888)                                 | -   |
-| `DATABASE_URL`             | PostgreSQL 连接地址   | -                                                                              | 是   |
-| `REDIS_URL`                | Redis 连接地址        | -                                                                              | 是   |
-| `NEO4J_URI`                | Neo4j Bolt 地址     | bolt://localhost:7687                                                          | 是   |
-| `NEO4J_USER`               | Neo4j 用户名         | neo4j                                                                          | 是   |
-| `NEO4J_PASSWORD`           | Neo4j 密码          | -                                                                              | 是   |
-| `S3_ENDPOINT`              | MinIO 端点          | [http://localhost:9000](http://localhost:9000)                                 | 是   |
-| `S3_REGION`                | 区域                | us-east-1                                                                      | -   |
-| `S3_BUCKET`                | Bucket 名称         | ai-knowledge-docs                                                              | -   |
-| `S3_ACCESS_KEY`            | S3 Access Key     | -                                                                              | 是   |
-| `S3_SECRET_KEY`            | S3 Secret Key     | -                                                                              | 是   |
-| `JWT_ACCESS_SECRET`        | Access Token 密钥   | -                                                                              | 是   |
-| `JWT_REFRESH_SECRET`       | Refresh Token 密钥  | -                                                                              | 是   |
-| `JWT_ACCESS_TTL`           | Access Token 有效期  | 7d                                                                             | -   |
-| `JWT_REFRESH_TTL`          | Refresh Token 有效期 | 30d                                                                            | -   |
-| `BOOTSTRAP_ADMIN_EMAIL`    | 初始管理员邮箱           | -                                                                              | 是   |
-| `BOOTSTRAP_ADMIN_PASSWORD` | 初始管理员密码           | -                                                                              | 是   |
-| `DASHSCOPE_API_KEY`        | 通义千问 API Key      | -                                                                              | 是   |
-| `DASHSCOPE_BASE_URL`       | DashScope API 地址  | [https://dashscope.aliyuncs.com/api/v1](https://dashscope.aliyuncs.com/api/v1) | -   |
-| `DASHSCOPE_LLM_MODEL`      | LLM 模型            | qwen-plus                                                                      | -   |
-| `DASHSCOPE_EMBED_MODEL`    | Embedding 模型      | text-embedding-v4                                                              | -   |
-| `DASHSCOPE_EMBED_DIM`      | Embedding 维度      | 1024                                                                           | -   |
-| `CHUNK_SIZE`               | 切片大小              | 500                                                                            | -   |
-| `CHUNK_OVERLAP`            | 切片重叠              | 50                                                                             | -   |
-| `SEARCH_BM25_TOPK`         | BM25 召回数          | 50                                                                             | -   |
-| `SEARCH_VECTOR_TOPK`       | 向量召回数             | 50                                                                             | -   |
-| `SEARCH_RRF_K`             | RRF K 值           | 60                                                                             | -   |
-| `SEARCH_RRF_FINAL_TOPK`    | 最终返回数             | 10                                                                             | -   |
-
+| 变量名 | 说明 | 默认值 | 必填 |
+| --- | --- | --- | --- |
+| `NODE_ENV` | 运行环境 | development | - |
+| `API_PORT` | API 端口 | 9999 | - |
+| `WEB_PORT` | 前端端口 | 8888 | - |
+| `LOG_LEVEL` | 日志级别 | info | - |
+| `DATABASE_URL` | PostgreSQL 连接地址（API 使用） | - | 是 |
+| `POSTGRES_USER` | PostgreSQL 用户名 | ai_knowledge | - |
+| `POSTGRES_PASSWORD` | PostgreSQL 密码 | - | 是 |
+| `POSTGRES_DB` | PostgreSQL 数据库名 | ai_knowledge | - |
+| `REDIS_URL` | Redis 连接地址（API 使用） | redis://redis:6379 | 是 |
+| `REDIS_PORT` | Redis 端口 | 6379 | - |
+| `NEO4J_URI` | Neo4j Bolt 地址 | bolt://localhost:7687 | 是 |
+| `NEO4J_USER` | Neo4j 用户名 | neo4j | 是 |
+| `NEO4J_PASSWORD` | Neo4j 密码 | - | 是 |
+| `S3_ENDPOINT` | MinIO 端点 | http://localhost:9000 | 是 |
+| `S3_REGION` | 区域 | us-east-1 | - |
+| `S3_BUCKET` | Bucket 名称 | ai-knowledge-docs | - |
+| `S3_ACCESS_KEY` | S3 Access Key | - | 是 |
+| `S3_SECRET_KEY` | S3 Secret Key | - | 是 |
+| `JWT_ACCESS_SECRET` | Access Token 密钥 | - | 是 |
+| `JWT_REFRESH_SECRET` | Refresh Token 密钥 | - | 是 |
+| `JWT_ACCESS_TTL` | Access Token 有效期 | 7d | - |
+| `JWT_REFRESH_TTL` | Refresh Token 有效期 | 30d | - |
+| `BOOTSTRAP_ADMIN_EMAIL` | 初始管理员邮箱 | - | 是 |
+| `BOOTSTRAP_ADMIN_PASSWORD` | 初始管理员密码 | - | 是 |
+| `BOOTSTRAP_ADMIN_NAME` | 初始管理员名称 | - | - |
+| `BOOTSTRAP_TENANT_ID` | 初始租户 ID | - | 是 |
+| `DASHSCOPE_API_KEY` | 通义千问 API Key | - | 是 |
+| `DASHSCOPE_BASE_URL` | DashScope API 地址 | https://dashscope.aliyuncs.com/api/v1 | - |
+| `DASHSCOPE_LLM_MODEL` | LLM 模型 | qwen-plus | - |
+| `DASHSCOPE_EMBED_MODEL` | Embedding 模型 | text-embedding-v4 | - |
+| `DASHSCOPE_EMBED_DIM` | Embedding 维度 | 1024 | - |
+| `DASHSCOPE_LLM_MOCK` | 模拟 LLM 调用 | false | - |
+| `DASHSCOPE_EMBED_MOCK` | 模拟 Embedding 调用 | false | - |
+| `CHUNK_SIZE` | 切片大小 | 500 | - |
+| `CHUNK_OVERLAP` | 切片重叠 | 50 | - |
+| `SEARCH_BM25_TOPK` | BM25 召回数 | 50 | - |
+| `SEARCH_VECTOR_TOPK` | 向量召回数 | 50 | - |
+| `SEARCH_RRF_K` | RRF K 值 | 60 | - |
+| `SEARCH_RRF_FINAL_TOPK` | 最终返回数 | 10 | - |
+| `EMBED_BATCH_SIZE` | Embedding 批处理大小 | 10 | - |
 
 ### 6.2 环境特定配置
 
@@ -733,7 +713,6 @@ kubectl logs -f deployment/api -n ai-knowledge
 ```env
 NODE_ENV=development
 LOG_LEVEL=debug
-CORS_ORIGIN=http://localhost:8888
 ```
 
 #### 生产环境
@@ -741,17 +720,15 @@ CORS_ORIGIN=http://localhost:8888
 ```env
 NODE_ENV=production
 LOG_LEVEL=info
-CORS_ORIGIN=https://your-domain.com
-JWT_ACCESS_SECRET=<生成 64 位随机字符串>
-JWT_REFRESH_SECRET=<生成 64 位随机字符串>
+JWT_ACCESS_SECRET=<生成 32 位以上随机字符串>
+JWT_REFRESH_SECRET=<生成 32 位以上随机字符串>
 ```
 
 #### 测试环境
 
 ```env
 NODE_ENV=test
-DATABASE_URL=postgresql://ai_knowledge:test@localhost:5432/ai_knowledge_test
-REDIS_URL=redis://localhost:6379/1
+LOG_LEVEL=debug
 ```
 
 ---
@@ -829,7 +806,52 @@ tcp-keepalive 60
 
 ## 8. 反向代理配置
 
-### 8.1 Nginx 配置
+### 8.1 Docker 环境 Nginx 配置（默认）
+
+当使用 Docker Compose 部署时，Nginx 使用以下配置代理到 Docker 服务：
+
+> 项目已提供默认配置：`infra/nginx/nginx.conf` 和 `infra/nginx/conf.d/default.conf`
+
+```nginx
+resolver 127.0.0.11 ipv6=off valid=10s;
+
+server {
+    listen 80;
+    server_name localhost;
+
+    # API 代理
+    location /api/ {
+        set $api_backend "http://api:9999";
+        proxy_pass $api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+
+    # Next.js 静态资源
+    location /_next/static/ {
+        proxy_pass http://web:8888;
+        proxy_cache_valid 200 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # Web 前端
+    location / {
+        proxy_pass http://web:8888;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+### 8.2 独立服务器 Nginx 配置
+
+适用于在独立服务器（非 Docker）上部署时的 Nginx 配置：
 
 ```nginx
 # /etc/nginx/nginx.conf
@@ -851,7 +873,7 @@ http {
     log_format main '$remote_addr - $remote_user [$time_local] "$request" '
                     '$status $body_bytes_sent "$http_referer" '
                     '"$http_user_agent" "$http_x_forwarded_for" '
-                    'rt=$request_time uct=$upstream_connect_time uht=$upstream_header_time urt=$upstream_response_time';
+                    'rt=$request_time';
 
     access_log /var/log/nginx/access.log main;
     error_log /var/log/nginx/error.log warn;
@@ -882,7 +904,7 @@ http {
 }
 ```
 
-### 8.2 站点配置
+### 8.3 独立服务器站点配置
 
 ```nginx
 # /etc/nginx/conf.d/ai-knowledge.conf
@@ -913,7 +935,7 @@ server {
     ssl_session_timeout 1d;
     ssl_session_cache shared:SSL:50m;
     ssl_session_tickets off;
-    
+
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
     ssl_prefer_server_ciphers off;
@@ -948,7 +970,7 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
-        
+
         # SSE 支持
         proxy_buffering off;
         proxy_cache off;
@@ -956,7 +978,7 @@ server {
 }
 ```
 
-### 8.3 SSL 证书 (Let's Encrypt)
+### 8.4 SSL 证书 (Let's Encrypt)
 
 ```bash
 # 安装 Certbot
@@ -1174,29 +1196,28 @@ docker compose up -d
 
 ```bash
 # 检查 PostgreSQL 状态
-docker compose ps postgres
-docker compose logs postgres
+docker compose -f docker-compose.prod.yml --env-file .env.production ps postgres
+docker compose -f docker-compose.prod.yml logs postgres
 
 # 测试连接
-docker exec -it postgres psql -U ai_knowledge -d ai_knowledge -c "SELECT 1;"
+docker exec -it ai-knowledge-postgres psql -U ai_knowledge -d ai_knowledge -c "SELECT 1;"
 
 # 检查网络
-docker network inspect ai-knowledge-network
+docker network inspect ai-knowledge_default
 ```
 
-### Q: 文档处理队列不工作？
+### Q: 文档上传/处理失败？
 
 ```bash
-# 检查 Redis 连接
-docker exec -it redis redis-cli ping
+# 检查 API 服务日志
+docker compose -f docker-compose.prod.yml logs api
 
-# 检查 BullMQ Dashboard
-# 访问 Redis Insight 或使用 redis-cli
-docker exec -it redis redis-cli
+# 检查 MinIO 服务状态
+docker compose -f docker-compose.prod.yml --env-file .env.production ps minio
+docker exec -it ai-knowledge-minio mc ls local/ai-knowledge-docs
 
-# 查看队列状态
-KEYS bullmq:*
-LLEN bullmq:documents:wait
+# 验证 MinIO Bucket 配置
+docker exec -it ai-knowledge-minio mc anonymous get local/ai-knowledge-docs
 ```
 
 ### Q: 前端构建失败？
@@ -1204,7 +1225,7 @@ LLEN bullmq:documents:wait
 ```bash
 # 清理缓存
 pnpm store prune
-rm -rf node_modules/.cache
+rm -rf apps/web/node_modules/.cache
 
 # 重新构建
 pnpm --filter @ai-knowledge/web clean
@@ -1215,29 +1236,44 @@ pnpm --filter @ai-knowledge/web build
 
 ```bash
 # 检查 Neo4j 日志
-docker compose logs neo4j | grep -i error
+docker compose -f docker-compose.prod.yml logs neo4j | grep -i error
 
 # 调整超时配置
-# 在 neo4j.conf 中添加：
-dbms.transaction.timeout=120s
+# 在 docker-compose.prod.yml 的 neo4j 服务中添加：
+# NEO4J_dbms_transaction_timeout=120s
 ```
 
 ---
 
 ## 附录：快速命令参考
 
+### 开发环境
+
 ```bash
-# 启动所有服务
+# 启动基础设施
 docker compose up -d
+
+# 启动开发服务
+pnpm dev
 
 # 停止所有服务
 docker compose down
+```
+
+### 生产环境
+
+```bash
+# 启动所有服务
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+
+# 停止所有服务
+docker compose -f docker-compose.prod.yml --env-file .env.production down
 
 # 查看日志
-docker compose logs -f
+docker compose -f docker-compose.prod.yml --env-file .env.production logs -f
 
 # 重启特定服务
-docker compose restart [service-name]
+docker compose -f docker-compose.prod.yml --env-file .env.production restart [service-name]
 
 # 进入容器
 docker exec -it [container-name] bash
@@ -1249,6 +1285,6 @@ docker stats
 docker system prune -f
 
 # 重建特定服务
-docker compose up -d --force-recreate [service-name]
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --force-recreate [service-name]
 ```
 
