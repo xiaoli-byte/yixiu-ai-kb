@@ -1,62 +1,21 @@
-import { api } from "@/lib/api-client";
+import {
+  getUsers as getUsersApi,
+  createUser as createUserApi,
+  updateUser as updateUserApi,
+  deleteUser as deleteUserApi,
+  resetUserPassword as resetPwdApi,
+} from "@/lib/api/endpoints/users";
 
-export interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: "admin" | "editor" | "viewer";
-  departmentId?: string;
-  createdAt: string;
-}
+// 类型
+export type { User, CreateUserData, UpdateUserData } from "@/types/api";
 
-export interface CreateUserData {
-  email: string;
-  name: string;
-  password: string;
-  role: string;
-  departmentId?: string | null;
-}
+// 导出 API 函数
+export const list = getUsersApi;
+export const create = createUserApi;
+export const update = updateUserApi;
+export const remove = deleteUserApi;
+export const resetPassword = resetPwdApi;
 
-export interface UpdateUserData {
-  name: string;
-  role: string;
-  departmentId?: string | null;
-}
-
-export async function list() {
-  const res = await api<User[]>("/users");
-  return res;
-}
-
-export async function create(data: CreateUserData) {
-  const res = await api("/users", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-  return res;
-}
-
-export async function update(id: string, data: UpdateUserData) {
-  const res = await api(`/users/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
-  return res;
-}
-
-export async function remove(id: string) {
-  const res = await api(`/users/${id}`, { method: "DELETE" });
-  return res;
-}
-
-export async function resetPassword(id: string, newPassword: string) {
-  const res = await api(`/users/${id}/reset-password`, {
-    method: "POST",
-    body: JSON.stringify({ newPassword }),
-  });
-  return res;
-}
-
+// 默认导出
 const usersApi = { list, create, update, remove, resetPassword };
-
 export default usersApi;

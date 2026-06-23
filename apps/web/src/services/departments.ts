@@ -1,48 +1,19 @@
-import { api } from "@/lib/api-client";
+import {
+  getDepartments as getDeptsApi,
+  createDepartment as createDeptApi,
+  updateDepartment as updateDeptApi,
+  deleteDepartment as deleteDeptApi,
+} from "@/lib/api/endpoints/departments";
 
-export interface Department {
-  id: string;
-  name: string;
-  parentId: string | null;
-  createdAt: string;
-}
+// 类型
+export type { Department, CreateDepartmentData, UpdateDepartmentData } from "@/types/api";
 
-export interface CreateDepartmentData {
-  name: string;
-  parentId?: string | null;
-}
+// 导出 API 函数
+export const list = getDeptsApi;
+export const create = createDeptApi;
+export const update = updateDeptApi;
+export const remove = deleteDeptApi;
 
-export interface UpdateDepartmentData {
-  name: string;
-  parentId?: string | null;
-}
-
-export async function list() {
-  const res = await api<Department[]>("/departments");
-  return res;
-}
-
-export async function create(data: CreateDepartmentData) {
-  const res = await api("/departments", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-  return res;
-}
-
-export async function update(id: string, data: UpdateDepartmentData) {
-  const res = await api(`/departments/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
-  return res;
-}
-
-export async function remove(id: string) {
-  const res = await api(`/departments/${id}`, { method: "DELETE" });
-  return res;
-}
-
+// 默认导出
 const departmentsApi = { list, create, update, remove };
-
 export default departmentsApi;

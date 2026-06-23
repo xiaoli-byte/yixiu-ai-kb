@@ -1,31 +1,15 @@
-import { api } from "@/lib/api-client";
+import { login as loginApi, logout as logoutApi, refreshToken as refreshTokenApi } from "@/lib/api/endpoints/auth";
+import { saveAuth, clearAuth } from "@/lib/api/client";
 
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
+// 类型
+export type { LoginRequest, LoginResponse, User } from "@/types/api";
 
-export interface LoginResponse {
-  accessToken: string;
-  refreshToken: string;
-  user: {
-    id: string;
-    email: string;
-    name: string;
-    role: string;
-    tenantId: string;
-    departmentId?: string;
-  };
-}
+// 导出 API 函数
+export const login = loginApi;
+export const logout = logoutApi;
+export const refreshToken = refreshTokenApi;
+export { saveAuth, clearAuth };
 
-export async function login(data: LoginRequest) {
-  const res = await api<LoginResponse>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-  return res;
-}
-
-const authApi = { login };
-
+// 默认导出
+const authApi = { login, logout, refreshToken };
 export default authApi;

@@ -1,5 +1,5 @@
 FROM node:25 AS builder
-ARG NEXT_PUBLIC_API_BASE=/api/backend
+ARG NEXT_PUBLIC_API_BASE=/api
 ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
 WORKDIR /app
 RUN npm install -g pnpm@9

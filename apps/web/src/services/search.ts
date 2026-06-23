@@ -1,35 +1,11 @@
-import { api } from "@/lib/api-client";
+import { search as searchEndpoint } from "@/lib/api/endpoints/search";
 
-export interface SearchHit {
-  chunkId: string;
-  documentId: string;
-  documentTitle: string;
-  idx: number;
-  text: string;
-  highlight: string;
-  score: number;
-  sources: string[];
-}
+// 类型
+export type { SearchHit, SearchResponse, SearchRequest } from "@/types/api";
 
-export interface SearchResponse {
-  hits: SearchHit[];
-  took: number;
-}
+// 导出 API 函数
+export const search = searchEndpoint;
 
-export interface SearchRequest {
-  q: string;
-  mode?: "hybrid" | "semantic" | "keyword";
-  topK?: number;
-}
-
-export async function search(params: SearchRequest) {
-  const res = await api<SearchResponse>("/search", {
-    method: "POST",
-    body: JSON.stringify(params),
-  });
-  return res;
-}
-
+// 默认导出
 const searchApi = { search };
-
 export default searchApi;

@@ -44,7 +44,11 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
     this.worker = new Worker<DocumentJobPayload>(
       DOCUMENT_QUEUE,
       async (job) => this.process(job),
-      { connection: this.redis, concurrency: 2 },
+      {
+        connection: this.redis,
+        concurrency: 2,
+        lockDuration: 5 * 60 * 1000, // 5分钟锁，防止处理时间过长导致锁过期
+      },
     );
     this.worker.on("failed", (job, err) =>
       this.logger.error(`任务 ${job?.id} 失败: ${err.message}`),

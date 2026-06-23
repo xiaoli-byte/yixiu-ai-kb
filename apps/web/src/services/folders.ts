@@ -1,48 +1,19 @@
-import { api } from "@/lib/api-client";
+import {
+  getFolderTree as treeApi,
+  createFolder as createFolderApi,
+  updateFolder as updateFolderApi,
+  deleteFolder as deleteFolderApi,
+} from "@/lib/api/endpoints/folders";
 
-export interface Folder {
-  id: string;
-  name: string;
-  parentId: string | null;
-  children?: Folder[];
-}
+// 类型
+export type { Folder, CreateFolderData, UpdateFolderData } from "@/types/api";
 
-export interface CreateFolderData {
-  name: string;
-  parentId?: string | null;
-}
+// 导出 API 函数
+export const tree = treeApi;
+export const create = createFolderApi;
+export const update = updateFolderApi;
+export const remove = deleteFolderApi;
 
-export interface UpdateFolderData {
-  name: string;
-  parentId?: string | null;
-}
-
-export async function tree() {
-  const res = await api<Folder[]>("/folders/tree");
-  return res;
-}
-
-export async function create(data: CreateFolderData) {
-  const res = await api<Folder>("/folders", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-  return res;
-}
-
-export async function update(id: string, data: UpdateFolderData) {
-  const res = await api<Folder>(`/folders/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(data),
-  });
-  return res;
-}
-
-export async function remove(id: string) {
-  const res = await api(`/folders/${id}`, { method: "DELETE" });
-  return res;
-}
-
+// 默认导出
 const foldersApi = { tree, create, update, remove };
-
 export default foldersApi;

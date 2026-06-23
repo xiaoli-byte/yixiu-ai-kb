@@ -6,7 +6,6 @@ import {
   BookOpen,
   Search,
   MessageSquare,
-  Network,
   LogOut,
   Files,
   Settings,
@@ -35,11 +34,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // 支持 super_admin 和 admin
   const isAdmin = user?.role === Role.SUPER_ADMIN || user?.role === Role.ADMIN;
 
+  // TODO: 暂时隐藏图谱功能，待 Neo4j 服务稳定后开启
   const NAV = [
     { href: "/documents", label: "文档管理", icon: Files },
     { href: "/search", label: "智能检索", icon: Search },
     { href: "/qa", label: "AI 问答", icon: MessageSquare },
-    { href: "/graph", label: "知识图谱", icon: Network },
     ...(isAdmin ? [{ href: "/settings", label: "系统设置", icon: Settings }] : []),
   ];
 

@@ -1,71 +1,37 @@
-import { api, apiBaseUrl } from "@/lib/api-client";
+import {
+  getConversations as convListApi,
+  getConversation as convGetApi,
+  deleteConversation as convDeleteApi,
+  getDocumentPdfUrl as pdfUrlApi,
+  getDocumentMarkdown as mdApi,
+  getAskEndpoint as askEndpointApi,
+} from "@/lib/api/endpoints/qa";
 
-export interface Citation {
-  index: number;
-  chunkId: string;
-  documentId: string;
-  documentTitle: string;
-  mime: string;
-  snippet: string;
-  page: number | null;
-}
+// 类型
+export type {
+  Citation,
+  ChatMessage,
+  Conversation,
+  ConversationDetail,
+  PdfUrlResponse,
+  MarkdownContentResponse,
+} from "@/types/api";
 
-export interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  citations: Citation[];
-  createdAt: string;
-}
+// 导出 API 函数
+export const conversationList = convListApi;
+export const conversationGet = convGetApi;
+export const conversationDelete = convDeleteApi;
+export const getDocumentPdfUrl = pdfUrlApi;
+export const getDocumentMarkdown = mdApi;
+export const getAskEndpoint = askEndpointApi;
 
-export interface Conversation {
-  id: string;
-  title: string;
-  messageCount: number;
-  updatedAt: string;
-}
-
-export interface PdfUrlResponse {
-  url: string;
-  title: string;
-  mime: string;
-}
-
-export interface MarkdownContentResponse {
-  title: string;
-  content: string;
-  mime: string;
-}
-
-export async function conversationList() {
-  const res = await api<Conversation[]>("/qa/conversations");
-  return res;
-}
-
-export async function conversationGet(id: string) {
-  const res = await api<{ messages: ChatMessage[] }>(`/qa/conversations/${id}`);
-  return res;
-}
-
-export async function conversationDelete(id: string) {
-  const res = await api(`/qa/conversations/${id}`, { method: "DELETE" });
-  return res;
-}
-
-export async function getDocumentPdfUrl(documentId: string) {
-  const res = await api<PdfUrlResponse>(`/qa/documents/${documentId}/pdf-url`);
-  return res;
-}
-
-export async function getDocumentMarkdown(documentId: string) {
-  const res = await api<MarkdownContentResponse>(`/qa/documents/${documentId}/markdown`);
-  return res;
-}
-
-export function getAskEndpoint() {
-  return `${apiBaseUrl}/qa/ask`;
-}
-
-const qaApi = { conversationList, conversationGet, conversationDelete, getDocumentPdfUrl, getDocumentMarkdown, getAskEndpoint };
-
+// 默认导出
+const qaApi = {
+  conversationList,
+  conversationGet,
+  conversationDelete,
+  getDocumentPdfUrl,
+  getDocumentMarkdown,
+  getAskEndpoint,
+};
 export default qaApi;

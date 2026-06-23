@@ -1,46 +1,15 @@
-import { api } from "@/lib/api-client";
+import {
+  getGraphTop as topApi,
+  searchGraph as searchApi,
+} from "@/lib/api/endpoints/graph";
 
-export interface GraphNode {
-  id: string;
-  label: string;
-  type: string;
-  val?: number;
-  properties?: any;
-}
+// 类型
+export type { GraphNode, GraphEdge, GraphData, GraphSearchQuery } from "@/types/api";
 
-export interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-  label: string;
-}
+// 导出 API 函数
+export const top = topApi;
+export { searchApi as search };
 
-export interface GraphData {
-  nodes: GraphNode[];
-  edges: GraphEdge[];
-}
-
-export interface GraphSearchQuery {
-  keyword: string;
-  type?: "Entity" | "Tag" | "Document";
-  depth?: number;
-  limit?: number;
-}
-
-export async function top(limit: number = 30) {
-  const res = await api<GraphNode[]>("/graph/top", {
-    query: { limit },
-  });
-  return res;
-}
-
-export async function search(params: GraphSearchQuery) {
-  const res = await api<GraphData>("/graph/search", {
-    query: params,
-  });
-  return res;
-}
-
-const graphApi = { top, search };
-
+// 默认导出
+const graphApi = { top, search: searchApi };
 export default graphApi;

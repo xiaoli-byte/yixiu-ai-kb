@@ -1,15 +1,41 @@
-// Re-export types from all services
-export type { LoginRequest, LoginResponse } from "./auth";
-export type { DocumentDto, DocumentDetail, DocumentListResponse, DocumentQuery, DocumentUpdateData } from "./documents";
-export type { Folder, CreateFolderData, UpdateFolderData } from "./folders";
-export type { Tag, CreateTagData } from "./tags";
-export type { GraphNode, GraphEdge, GraphData, GraphSearchQuery } from "./graph";
-export type { Citation, ChatMessage, Conversation, PdfUrlResponse } from "./qa";
-export type { SearchHit, SearchResponse, SearchRequest } from "./search";
-export type { User, CreateUserData, UpdateUserData } from "./users";
-export type { Department, CreateDepartmentData, UpdateDepartmentData } from "./departments";
+// 重新导出所有服务类型
+export type {
+  LoginRequest,
+  LoginResponse,
+  User as AuthUser,
+  DocumentDto,
+  DocumentDetail,
+  DocumentListResponse,
+  DocumentQuery,
+  DocumentUpdateData,
+  DocumentTag,
+  Folder,
+  CreateFolderData,
+  UpdateFolderData,
+  Tag,
+  CreateTagData,
+  GraphNode,
+  GraphEdge,
+  GraphData,
+  GraphSearchQuery,
+  Citation,
+  ChatMessage,
+  Conversation,
+  ConversationDetail,
+  PdfUrlResponse,
+  MarkdownContentResponse,
+  SearchHit,
+  SearchResponse,
+  SearchRequest,
+  User,
+  CreateUserData,
+  UpdateUserData,
+  Department,
+  CreateDepartmentData,
+  UpdateDepartmentData,
+} from "@/types/api";
 
-// Default exports
+// 默认导出
 export { default as authApi } from "./auth";
 export { default as documentsApi } from "./documents";
 export { default as foldersApi } from "./folders";
@@ -19,3 +45,7 @@ export { default as qaApi } from "./qa";
 export { default as searchApi } from "./search";
 export { default as usersApi } from "./users";
 export { default as departmentsApi } from "./departments";
+
+// 重新导出 API 客户端
+export { api as api, apiClient, apiBaseUrl, clearAuth, saveAuth } from "@/lib/api-client";
+export { ApiError, RateLimitError, TokenExpiredError } from "@/lib/api-client";

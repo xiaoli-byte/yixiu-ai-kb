@@ -42,7 +42,7 @@ export default function SearchPage() {
       setTook(res.took);
     } catch (e) {
       if (e instanceof ApiError) {
-        if (e.status === 429) {
+        if (e.statusCode === 429) {
           setError("请求过于频繁，请稍后再试");
           setRetryAfter(e.retryAfter ?? null);
         } else {
