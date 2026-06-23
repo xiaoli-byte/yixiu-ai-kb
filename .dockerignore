@@ -1,0 +1,42 @@
+# Dependencies
+**/node_modules
+**/.pnpm-store
+**/.npm
+
+# Build outputs
+**/.next
+**/dist
+**/build
+**/.turbo
+
+# IDE
+**/.vscode
+**/.idea
+**/*.swp
+**/*.swo
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Environment files (don't expose secrets)
+**/.env.local
+**/.env.*.local
+
+# Logs
+**/*.log
+**/npm-debug.log*
+**/pnpm-debug.log*
+
+# Git
+**/.git
+
+# Docker
+**/Dockerfile*
+**/.dockerignore
+
+# Temporary
+**/*.tmp
+**/*.temp
+**/tmp
+**/temp
