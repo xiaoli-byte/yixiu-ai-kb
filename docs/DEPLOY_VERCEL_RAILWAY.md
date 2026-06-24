@@ -67,9 +67,13 @@ API_INTERNAL_URL=https://你的-api.up.railway.app
 
 1. **新建 Service** → GitHub Repo
 2. **Settings**：
-   - **Root Directory**: `apps/api`
-   - **Dockerfile Path**: `apps/api/Dockerfile`（或留空自动检测）
-   - **Watch Paths**: `apps/api/**`
+   - **Root Directory**: 留空（monorepo 根目录）
+   - **Builder**: DOCKERFILE（自动从 `railway.toml` 读取）
+   - **Dockerfile Path**: 留空（自动从 `railway.toml` 读取）
+
+> ⚠️ **重要**：必须使用 Dockerfile 构建，不要用 Railpack。Railpack 不会先构建 `@ai-knowledge/schemas` 包，会导致 API 找不到模块。
+>
+> 项目根目录已包含 `railway.toml`，指定了使用 `apps/api/Dockerfile`。
 
 ### 2.3 添加数据库插件
 
