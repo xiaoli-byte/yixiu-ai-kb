@@ -8,17 +8,22 @@ export class StorageService implements OnModuleInit {
   private client!: MinioClient;
   private bucket!: string;
   private publicUrl!: string;
+  private internalUrl!: string;
 
   constructor() {}
 
   onModuleInit() {
     const config = new ConfigService();
+    const endPoint = config.get<string>("MINIO_ENDPOINT") || "localhost";
+    const port = Number(config.get<string>("MINIO_PORT") || 9000);
+
     this.bucket = config.get<string>("S3_BUCKET") || "ai-knowledge-docs";
     this.publicUrl = config.get<string>("MINIO_PUBLIC_URL") || "http://localhost:9000";
+    this.internalUrl = `http://${endPoint}:${port}`;
 
     this.client = new MinioClient({
-      endPoint: config.get<string>("MINIO_ENDPOINT") || "localhost",
-      port: Number(config.get<string>("MINIO_PORT") || 9000),
+      endPoint,
+      port,
       useSSL: false,
       accessKey: config.get<string>("S3_ACCESS_KEY") || "minio_admin",
       secretKey: config.get<string>("S3_SECRET_KEY") || "minio_password",
@@ -56,7 +61,13 @@ export class StorageService implements OnModuleInit {
   }
 
   async presignedGet(key: string, expirySeconds = 3600): Promise<string> {
-    return this.client.presignedGetObject(this.bucket, key, expirySeconds);
+    const signedUrl = await this.client.presignedGetObject(
+      this.bucket,
+      key,
+      expirySeconds,
+    );
+    // 将内部 MinIO 地址替换为外部可访问的公共地址
+    return signedUrl.replace(this.internalUrl, this.publicUrl);
   }
 
   get publicBaseUrl() {
