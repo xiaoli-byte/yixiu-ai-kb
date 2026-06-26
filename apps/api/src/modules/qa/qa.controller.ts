@@ -79,12 +79,22 @@ export class QaController {
     @CurrentUser("sub") userId: string,
     @Res() res: Response,
   ) {
+    const question = (body.question || "").trim();
+    if (!question) {
+      res.setHeader("Content-Type", "application/json");
+      res.statusCode = 400;
+      res.end(JSON.stringify({ message: "question 不能为空" }));
+      return;
+    }
+
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
+    res.setHeader('Content-Encoding', 'none');
     res.flushHeaders?.();
 
+    
     const write = (event: any) => {
       res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
@@ -93,7 +103,7 @@ export class QaController {
       userId,
       tenantId: this.db.tenantId!,
       conversationId: body.conversationId,
-      question: body.question,
+      question,
       topK: body.topK,
       onChunk: (content) => write({ type: "chunk", content }),
       // citations 在 LLM 完成后由 service 调用，此时才发往前端

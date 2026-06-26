@@ -1,3 +1,13 @@
+// pdfjs-dist v6 Worker 依赖 Bluebird 的 Promise.try (Node.js v22 原生不支持)
+// 必须在任何 pdfjs-dist import 之前打上 polyfill
+if (typeof (Promise as any).try === "undefined") {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  void require("bluebird").config({ warnings: false });
+  (Promise as any).try = function <T>(fn: () => T | Promise<T>): Promise<T> {
+    return new Promise<T>((resolve) => resolve(fn()));
+  };
+}
+
 // pdfjs-dist v6 需要 DOMMatrix（浏览器 API），Node.js 环境用 @napi-rs/canvas polyfill
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 if (typeof (globalThis as any).DOMMatrix === "undefined") {
@@ -201,7 +211,14 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
    * 按页解析 PDF 文本，返回每页内容及页码
    */
   private async parsePdfPages(buffer: Buffer): Promise<{ page: number; text: string }[]> {
-    const PDFJS = await import("pdfjs-dist");
+    // legacy 构建专为 Node.js 环境设计，修复 toHex 等 Node 24+ 兼容性问题
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    const PDFJS = await import(
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      require.resolve("pdfjs-dist/legacy/build/pdf.mjs")
+    );
 
     const data = await PDFJS.getDocument({ data: new Uint8Array(buffer) }).promise;
     const pages: { page: number; text: string }[] = [];

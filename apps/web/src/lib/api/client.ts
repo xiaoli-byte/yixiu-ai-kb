@@ -177,9 +177,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 // API 基础路径
+// 生产环境通过 nginx 反代走相对路径 /api
 // 开发环境使用绝对 URL 直连 API，避免 Next.js 代理的文件大小限制
-// 生产环境使用相对路径，通过 Nginx/Next.js 代理
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:9999/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
 
 // 构建带查询参数的 URL
 function buildUrl(path: string, query?: Record<string, unknown>): string {

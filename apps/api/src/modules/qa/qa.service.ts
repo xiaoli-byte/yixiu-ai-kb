@@ -229,27 +229,27 @@ export class QaService {
           full += delta;
           opts.onChunk(delta);
         },
+        onDone: () => {
+          // 6. 落库（此时才发送 citations，确保前端在 LLM 完成前不渲染参考资料）
+          const messageId = uuid();
+          this.prisma.qAMessage.create({
+            data: {
+              id: messageId,
+              conversationId: finalConvId,
+              role: "assistant",
+              content: full,
+              citations: citations as any,
+            },
+          }).then(() => {
+            opts.onCitations(citations);
+            opts.onDone(messageId, finalConvId!);
+          });
+        },
         onError: (e) => {
           this.logger.error(`LLM stream error: ${e.message}`);
           opts.onError(e);
         },
       });
-
-      // 6. 落库（此时才发送 citations，确保前端在 LLM 完成前不渲染参考资料）
-      const messageId = uuid();
-      await this.prisma.qAMessage.create({
-        data: {
-          id: messageId,
-          conversationId: finalConvId,
-          role: "assistant",
-          content: full,
-          citations: citations as any,
-        },
-      });
-
-      // 7. LLM 完成后才发送 citations，前端此时才渲染参考资料区域
-      opts.onCitations(citations);
-      opts.onDone(messageId, finalConvId!);
     } catch (e: any) {
       this.logger.error(`ask error: ${e.message}`, e.stack);
       opts.onError(e);

@@ -103,14 +103,9 @@ export class LlmService implements OnModuleInit {
       let full = "";
 
       for await (const chunk of stream) {
-        // chunk 是 ChatGenerationChunk，content 属性就是增量文本字符串
-        const text = typeof chunk === "string"
-          ? chunk
-          : (chunk as any).content ?? (chunk as any).text ?? "";
-        if (text) {
-          full += text;
-          cb.onChunk(text);
-        }
+        const c = (chunk as any);
+        const text = (c.content || c.kwargs?.content || "") as string;
+        if (text) cb.onChunk(text);
       }
 
       cb.onDone?.(full);

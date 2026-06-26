@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
 // ts-node 解析下 __dirname 行为不稳定,逐级向上找仓库根的 .env
@@ -36,16 +36,24 @@ import { v4 as uuid } from "uuid";
 const prisma = new PrismaClient();
 
 async function main() {
+  // 用文件锁做幂等标记，避免重复执行 seed
+  const lockDir = resolve(__dirname, "../../../../.seed_locks");
+  const lockFile = resolve(lockDir, "0001_seed_data.lock");
+
+  if (existsSync(lockFile)) {
+    console.log("[seed] 已执行，跳过");
+    return;
+  }
+
   const tenantId = process.env.BOOTSTRAP_TENANT_ID || "tenant_demo";
   const email = process.env.BOOTSTRAP_ADMIN_EMAIL || "admin@demo.com";
   const password = process.env.BOOTSTRAP_ADMIN_PASSWORD || "demo123";
   const name = process.env.BOOTSTRAP_ADMIN_NAME || "Demo Admin";
 
-  // admin user
   const passwordHash = await bcrypt.hash(password, 10);
   const admin = await prisma.user.upsert({
     where: { tenantId_email: { tenantId, email } },
-    update: { name, passwordHash, role: "super_admin" },
+    update: {},
     create: {
       id: uuid(),
       tenantId,
@@ -77,6 +85,13 @@ async function main() {
     { title: "新人入职指南.md", mime: "text/markdown" },
   ];
   for (const s of samples) {
+    const existing = await prisma.document.findFirst({
+      where: { tenantId, title: s.title },
+    });
+    if (existing) {
+      console.log(`✓ 文档已存在: ${s.title}`);
+      continue;
+    }
     const id = uuid();
     const doc = await prisma.document.create({
       data: {
@@ -95,6 +110,11 @@ async function main() {
 
   console.log("\nSeed 完成！");
   console.log("登录: admin@demo.com / demo123");
+
+  // 写入锁文件，确保重复执行时跳过
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(lockFile, JSON.stringify({ applied_at: new Date().toISOString() }), "utf-8");
+  console.log(`[seed] 锁文件已写入: ${lockFile}`);
 }
 
 main()

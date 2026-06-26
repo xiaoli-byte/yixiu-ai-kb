@@ -1,8 +1,8 @@
-FROM node:25 AS builder
-ARG NEXT_PUBLIC_API_BASE=/api
-ENV NEXT_PUBLIC_API_BASE=$NEXT_PUBLIC_API_BASE
+FROM node:24-alpine AS builder
+ARG NEXT_PUBLIC_API_URL=/api
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 WORKDIR /app
-RUN npm install -g pnpm@9
+RUN apk add --no-cache python3 make g++ curl openssl && npm install -g pnpm@9
 
 # 复制 workspace 配置（包括 .npmrc）
 COPY .npmrc ./
@@ -22,7 +22,7 @@ WORKDIR /app/apps/web
 RUN pnpm install --shamefully-hoist && pnpm build
 
 # 运行阶段
-FROM node:25 AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV API_INTERNAL_URL=http://api:9999
