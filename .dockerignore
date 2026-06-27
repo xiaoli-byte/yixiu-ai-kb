@@ -20,8 +20,11 @@
 **/Thumbs.db
 
 # Environment files (don't expose secrets)
-**/.env.local
-**/.env.*.local
+.env
+.env.production
+.env.local
+.env.*.local
+.env.example
 
 # Logs
 **/*.log
@@ -30,13 +33,24 @@
 
 # Git
 **/.git
+**/.gitignore
+**/.gitattributes
 
-# Docker
-**/Dockerfile*
-**/.dockerignore
-
-# Temporary
+# Temporary files
 **/*.tmp
 **/*.temp
 **/tmp
 **/temp
+
+# Coverage
+**/coverage
+**/.nyc_output
+
+# Documentation
+**/README.md
+**/docs/
+**/*.md
+
+# Local data
+**/data/
+**/uploads/

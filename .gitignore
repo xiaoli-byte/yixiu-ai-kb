@@ -25,9 +25,16 @@ apps/api/src/database/prisma/migrations/dev/
 infra/docker/postgres/data/
 infra/docker/neo4j/data/
 
+# SSL Certificates (生产环境)
+ssl/
+*.pem
+*.crt
+*.key
+
 # Misc
 coverage/
 .nyc_output/
 
 # docker
 docker-compose.prod.yml
+docker-compose.infra.yml
