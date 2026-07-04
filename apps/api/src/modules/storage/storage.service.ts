@@ -61,16 +61,11 @@ export class StorageService implements OnModuleInit {
   }
 
   async presignedGet(key: string, expirySeconds = 3600): Promise<string> {
-    const signedUrl = await this.client.presignedGetObject(
-      this.bucket,
-      key,
-      expirySeconds,
-    );
-    // 将内部 MinIO 地址替换为外部可访问的公共地址
-    return signedUrl.replace(this.internalUrl, this.publicUrl);
+    // bucket 已设为公开下载，无需签名
+    return `/minio/${this.bucket}/${key}`;
   }
 
   get publicBaseUrl() {
-    return `${this.publicUrl}/${this.bucket}`;
+    return `/minio/${this.bucket}`;
   }
 }
