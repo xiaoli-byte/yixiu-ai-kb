@@ -111,8 +111,45 @@ services:
       timeout: 5s
       retries: 10
 
+  # ===== PaddleOCR 已迁移到本地 Windows 安装 =====
+  # 启动方式: .\services\paddleocr-server\start.ps1
+  # 如需恢复 Docker 部署，取消以下注释即可
+  #
+  # paddleocr:
+  #   build:
+  #     context: ./services/paddleocr-server
+  #     dockerfile: Dockerfile
+  #   container_name: ai-knowledge-paddleocr
+  #   restart: unless-stopped
+  #   environment:
+  #     PADDLEOCR_LANG: ${PADDLEOCR_LANG:-ch}
+  #     # AMD CPU 上 PaddlePaddle 的 cls 方向分类器会触发 SIGILL，默认关闭
+  #     PADDLEOCR_USE_ANGLE_CLS: ${PADDLEOCR_USE_ANGLE_CLS:-false}
+  #     PADDLEOCR_HOME: /models
+  #     # 使用 GPU 推理
+  #     FLAGS_use_cuda: "true"
+  #     CUDA_VISIBLE_DEVICES: "0"
+  #   ports:
+  #     - "${PADDLEOCR_PORT:-10096}:10096"
+  #   volumes:
+  #     - paddleocr_models:/models
+  #   # 挂载 NVIDIA GPU（需要主机安装 nvidia-container-toolkit）
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:10096/health', timeout=3).read()\""]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 10
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   neo4j_data:
+  # paddleocr_models:  # 已迁移到本地安装

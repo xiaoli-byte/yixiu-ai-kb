@@ -10,8 +10,10 @@ import { PRISMA } from "../../database/database.service";
 import { DatabaseService } from "../../database/database.service";
 import { StorageService } from "../storage/storage.service";
 import { QueueService } from "../queue/queue.service";
+import { Neo4jService } from "../../database/neo4j/neo4j.service";
 import { v4 as uuid } from "uuid";
 import { extname } from "path";
+import { isSupportedDocumentFile, SUPPORTED_DOCUMENT_EXTENSIONS } from "./document-file-types";
 
 @Injectable()
 export class DocumentsService {
@@ -22,6 +24,7 @@ export class DocumentsService {
     private readonly db: DatabaseService,
     private readonly storage: StorageService,
     private readonly queue: QueueService,
+    private readonly neo4j: Neo4jService,
   ) {}
 
   async list(opts: {
@@ -122,6 +125,11 @@ export class DocumentsService {
     // 把字节当 latin1 还原成 Buffer,再按 utf8 解码,英文文件名不受影响。
     const originalName = Buffer.from(file.originalname, "latin1").toString("utf8");
     const ext = extname(originalName) || "";
+    if (!isSupportedDocumentFile(file.mimetype, originalName)) {
+      throw new BadRequestException(
+        `暂不支持该文件格式。支持格式：${SUPPORTED_DOCUMENT_EXTENSIONS.join(", ")}`,
+      );
+    }
     const id = uuid();
     const key = `${tenantId}/${id}${ext}`;
     await this.storage.putObject(key, file.buffer, file.mimetype);
@@ -185,6 +193,31 @@ export class DocumentsService {
     if (!doc) throw new NotFoundException("文档不存在");
     await this.storage.removeObject(doc.storageKey).catch(() => undefined);
     await this.prisma.document.delete({ where: { id } });
+    await this.removeGraphData(id, tenantId);
     return { id };
+  }
+
+  private async removeGraphData(documentId: string, tenantId: string) {
+    try {
+      await this.neo4j.run(
+        `MATCH (:Document {id:$documentId, tenantId:$tenantId})-[:HAS_CHUNK]->(chunk:Chunk)
+         DETACH DELETE chunk`,
+        { documentId, tenantId },
+      );
+      await this.neo4j.run(
+        `MATCH (d:Document {id:$documentId, tenantId:$tenantId})
+         DETACH DELETE d`,
+        { documentId, tenantId },
+      );
+      await this.neo4j.run(
+        `MATCH (entity:Entity)
+         WHERE (entity.tenantId = $tenantId OR (entity.tenantId IS NULL AND entity.id STARTS WITH $entityIdPrefix))
+           AND NOT (entity)<-[:CONTAINS_ENTITY]-(:Document {tenantId:$tenantId})
+         DETACH DELETE entity`,
+        { tenantId, entityIdPrefix: `e-${tenantId}-` },
+      );
+    } catch (error: any) {
+      this.logger.warn(`清理文档图谱数据失败: ${error.message}`);
+    }
   }
 }

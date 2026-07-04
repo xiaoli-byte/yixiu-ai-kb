@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
+    "worker:dev": "ts-node -r tsconfig-paths/register src/worker.ts",
     "build": "nest build",
     "start": "node dist/main.js",
+    "worker": "node dist/worker.js",
     "start:prod": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\" --max-warnings 0",
     "clean": "rm -rf dist .turbo",

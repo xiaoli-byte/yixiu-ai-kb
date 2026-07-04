@@ -46,6 +46,10 @@
    │MinIO    │  │Postgres│ │ Redis  │ │ Neo4j  │
    │(文件存储)│  │+pgvector│ │(队列) │ │(图谱)  │
    └─────────┘  └────────┘ └────────┘ └────────┘
+        │
+   ┌────▼──────┐
+   │PaddleOCR  │ 图片 / 扫描 PDF OCR
+   └───────────┘
 ```
 
 ---
@@ -91,10 +95,12 @@
 
 **支持的文件格式：**
 - PDF (.pdf)
-- Markdown (.md)
-- Word (.docx)
-- Excel (.xlsx)
-- PowerPoint (.pptx)
+- Markdown / 文本 (.md, .markdown, .txt, .csv, .json, .jsonl)
+- Word (.docx, .doc, .docm)
+- Excel (.xlsx, .xls, .xlsm)
+- PowerPoint (.pptx, .ppt, .pptm)
+- 图片 OCR (.png, .jpg, .jpeg, .jpe, .jfif, .webp, .bmp, .tif, .tiff)
+- 音频/音视频 (.wav, .mp3, .m4a, .aac, .flac, .ogg, .opus, .webm, .amr, .wma, .mp4, .mov, .mkv)
 
 **上传步骤：**
 
@@ -122,7 +128,7 @@
 ```
 上传 → MinIO 存储
     → BullMQ 队列
-    → 1. 解析 (PDF/Office/Markdown)
+    → 1. 解析 (PDF/Office/Markdown/TXT/Image OCR/Audio ASR)
     → 2. 切片 (500 tokens, 50 overlap)
     → 3. 向量化 (text-embedding-v4)
     → 4. 实体抽取 (LLM)
@@ -364,6 +370,18 @@ AI 回答时会自动标注引用来源：
 1. 确保文档状态为「就绪」
 2. 在设置中调整 topK 参数
 3. 尝试使用「混合检索」模式
+
+### Q: 图片或扫描 PDF 处理失败怎么办？
+
+**可能原因：**
+1. PaddleOCR 服务未启动或 `PADDLEOCR_HTTP_URL` 不可访问
+2. 首次启动 PaddleOCR 正在下载模型
+3. 扫描 PDF 页数较多，OCR 处理超时
+
+**解决方法：**
+1. 执行 `.\services\paddleocr-server\start.ps1` 并检查 `http://localhost:10096/health`
+2. 中文文档保持 `PADDLEOCR_LANG=ch`
+3. 调整 `PADDLEOCR_TIMEOUT_MS`、`OCR_PDF_RENDER_SCALE` 或 `OCR_PDF_MAX_PAGES`
 
 ### Q: 知识图谱没有数据？
 

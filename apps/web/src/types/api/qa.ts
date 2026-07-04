@@ -40,6 +40,21 @@ export interface MarkdownContentResponse {
   mime: string;
 }
 
+export interface QaDebugRun {
+  id: string;
+  conversationId: string | null;
+  question: string;
+  rewrittenQuery: string | null;
+  intent: string;
+  domain: string;
+  facts: unknown[];
+  chunks: unknown[];
+  toolResult: unknown | null;
+  answer: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
 export interface AskRequest {
   q: string;
   conversationId?: string;

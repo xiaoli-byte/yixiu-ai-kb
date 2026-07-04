@@ -4,7 +4,7 @@
 
 ## ✨ 核心能力
 
-- **📁 文档管理** - PDF / Markdown / Word 上传，自动解析 → 切片 → 向量化 → 实体抽取，状态可视化
+- **📁 文档管理** - PDF / Markdown / Office / TXT / 图片 / 音视频上传，自动解析、OCR 或 ASR 转写 → 切片 → 向量化 → 实体抽取，状态可视化
 - **🔍 混合检索** - 关键词 (PostgreSQL 全文) + 向量 (pgvector HNSW) 双路召回，RRF 智能融合
 - **💬 AI 问答 (RAG)** - 基于通义千问 `qwen-plus` 的检索增强问答，支持流式响应与引用高亮
 - **🕸 知识图谱** - Neo4j 存储文档 / 实体 / 关系，2D 力导向图可视化探索
@@ -23,6 +23,7 @@
 | 对象存储 | MinIO (S3 协议) |
 | 图数据库 | Neo4j 5.x (APOC) |
 | AI | DashScope: `qwen-plus` + `text-embedding-v4` (1024 维) |
+| 多模态解析 | FunASR HTTP 服务（音频/音视频转写）+ PaddleOCR（图片与扫描 PDF） |
 | 鉴权 | JWT + Passport + CLS 租户上下文 |
 
 ## 🚀 快速开始
@@ -32,6 +33,7 @@
 - pnpm ≥ 9 (`npm i -g pnpm@9`)
 - Docker Desktop
 - 通义千问 DashScope API Key（[申请](https://dashscope.console.aliyun.com/)）
+- Python 3.11（PaddleOCR 本地推理需要，通过 `py -3.11` 可用）
 
 ### 2. 启动依赖
 
@@ -41,6 +43,10 @@ cp .env.example .env
 
 docker compose up -d
 # 等待 Postgres / Neo4j / Redis / MinIO 就绪
+
+# 单独启动 PaddleOCR 本地服务（首次运行会创建 venv 并安装依赖）
+.\services\paddleocr-server\start.ps1
+# 首次 OCR 请求会下载模型，耗时会比其他依赖更长
 ```
 
 ### 3. 安装 + 初始化
@@ -58,12 +64,21 @@ pnpm seed                  # 写入演示用户与文档
 pnpm dev
 ```
 
+开发模式会同时启动 Web、API 和文档处理 worker。上传接口只负责入队，解析、OCR/ASR、切片和向量化由 worker 消费，避免大文件处理时挤占 API 请求。
+
+如需只启动 Web/API、不启动 worker，可使用旧的 Turbo 启动方式：
+
+```bash
+pnpm dev:turbo
+```
+
 | 服务 | 地址 |
 |---|---|
 | 前端 Web | http://localhost:8888 |
 | 后端 API | http://localhost:9999/api |
 | 健康检查 | http://localhost:9999/health |
 | MinIO 控制台 | http://localhost:9001 (minio_admin / minio_password) |
+| PaddleOCR | http://localhost:10096/health |
 | Neo4j 浏览器 | http://localhost:7474 (neo4j / neo4j_dev_password) |
 | Postgres | localhost:5432 (ai_knowledge / dev_password) |
 
@@ -158,6 +173,12 @@ User question
 - `DASHSCOPE_API_KEY` - 千问密钥（**必填**）
 - `DASHSCOPE_LLM_MODEL` - 默认 `qwen-plus`
 - `DASHSCOPE_EMBED_MODEL` - 默认 `text-embedding-v4`
+- `FUNASR_HTTP_URL` - FunASR HTTP 服务地址，默认 `http://localhost:10095`
+- `PADDLEOCR_HTTP_URL` - PaddleOCR HTTP 识别接口，默认 `http://localhost:10096/ocr`
+- `PADDLEOCR_LANG` - PaddleOCR 语言，默认 `ch`
+- `PADDLEOCR_TIMEOUT_MS` - PaddleOCR 调用超时，默认 `600000`
+- `OCR_PDF_RENDER_SCALE` - 扫描 PDF 转图片 OCR 的渲染倍率，默认 `2`
+- `OCR_PDF_MAX_PAGES` - 扫描 PDF 最大 OCR 页数，`0` 表示不限制
 - `DASHSCOPE_EMBED_DIM` - 默认 `1024`
 - `BOOTSTRAP_ADMIN_*` - 启动管理员
 - `CHUNK_SIZE` / `CHUNK_OVERLAP` - 切片参数
@@ -199,7 +220,7 @@ User question
 ### P2 - 增强功能
 
 - [ ] 多模型支持（OpenAI / Claude / 本地模型）
-- [ ] 多模态（图片 OCR、视频摘要）
+- [ ] 视频摘要与关键帧理解
 - [ ] Prometheus + Grafana 监控
 - [ ] Kubernetes 部署
 

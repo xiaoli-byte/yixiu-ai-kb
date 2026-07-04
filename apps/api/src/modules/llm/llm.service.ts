@@ -47,13 +47,7 @@ export class LlmService implements OnModuleInit {
     if (this.mock) {
       this.logger.warn("LLM mock 模式");
     } else {
-      this.chatModel = new ChatAlibabaTongyi({
-        model: this.model,
-        alibabaApiKey: this.apiKey,
-        temperature: 0.3,
-        topP: 0.8,
-        maxTokens: 2048,
-      });
+      this.chatModel = this.createChatModel();
       this.logger.log(`LLM 就绪: ${this.model}`);
     }
   }
@@ -68,7 +62,8 @@ export class LlmService implements OnModuleInit {
       return `(mock) 我是基于 Qwen 的助手。基于您提供的 ${messages.length} 条消息，给出一个示例回答。`;
     }
     const lcMessages = toLangChainMessages(messages);
-    const res = await this.chatModel.invoke(lcMessages);
+    const model = this.getChatModel(opts);
+    const res = await model.invoke(lcMessages);
     return res.content as string;
   }
 
@@ -99,13 +94,17 @@ export class LlmService implements OnModuleInit {
 
     try {
       const lcMessages = toLangChainMessages(messages);
-      const stream = await this.chatModel.stream(lcMessages);
+      const model = this.getChatModel(opts);
+      const stream = await model.stream(lcMessages);
       let full = "";
 
       for await (const chunk of stream) {
         const c = (chunk as any);
         const text = (c.content || c.kwargs?.content || "") as string;
-        if (text) cb.onChunk(text);
+        if (text) {
+          full += text;
+          cb.onChunk(text);
+        }
       }
 
       cb.onDone?.(full);
@@ -114,5 +113,26 @@ export class LlmService implements OnModuleInit {
       cb.onError?.(e as Error);
       throw e;
     }
+  }
+
+  private createChatModel(opts: ChatOptions = {}) {
+    return new ChatAlibabaTongyi({
+      model: this.model,
+      alibabaApiKey: this.apiKey,
+      temperature: opts.temperature ?? 0.3,
+      topP: opts.topP ?? 0.8,
+      maxTokens: opts.maxTokens ?? 2048,
+    });
+  }
+
+  private getChatModel(opts: ChatOptions = {}) {
+    if (
+      opts.temperature === undefined &&
+      opts.topP === undefined &&
+      opts.maxTokens === undefined
+    ) {
+      return this.chatModel;
+    }
+    return this.createChatModel(opts);
   }
 }

@@ -29,5 +29,11 @@ infra/docker/neo4j/data/
 coverage/
 .nyc_output/
 
+# PaddleOCR local cache (model weights, ~200MB)
+services/paddleocr-server/.paddlex_cache/
+services/paddleocr-server/.venv/
+
 # docker
 docker-compose.prod.yml
+
+.venv

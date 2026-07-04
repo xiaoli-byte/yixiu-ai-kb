@@ -63,7 +63,7 @@ export class DocumentsController {
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.CREATE })
   @UseInterceptors(
     FileInterceptor("file", {
-      limits: { fileSize: 50 * 1024 * 1024 },
+      limits: { fileSize: Number(process.env.DOCUMENT_UPLOAD_MAX_MB || 100) * 1024 * 1024 },
     }),
   )
   @RateLimit({ ...RateLimitPolicies.upload, message: "上传过于频繁，请稍后再试" })

@@ -12,10 +12,21 @@ export type { Folder, CreateFolderData, UpdateFolderData } from "./folders";
 export type { Tag, CreateTagData } from "./tags";
 
 // Graph types
-export type { GraphNode, GraphEdge, GraphData, GraphSearchQuery } from "./graph";
+export type {
+  GraphCategory,
+  GraphData,
+  GraphEdge,
+  GraphExploreQuery,
+  GraphNode,
+  GraphRecentNode,
+  GraphSearchQuery,
+  GraphStats,
+  GraphTopNode,
+  GraphWorkspaceResponse,
+} from "./graph";
 
 // QA types
-export type { Citation, ChatMessage, Conversation, ConversationDetail, PdfUrlResponse, MarkdownContentResponse } from "./qa";
+export type { Citation, ChatMessage, Conversation, ConversationDetail, PdfUrlResponse, MarkdownContentResponse, QaDebugRun } from "./qa";
 
 // Search types
 export type { SearchHit, SearchResponse, SearchRequest } from "./search";

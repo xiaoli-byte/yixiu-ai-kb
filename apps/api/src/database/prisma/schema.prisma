@@ -69,6 +69,7 @@ model Document {
   owner User           @relation("Owner", fields: [ownerId], references: [id])
   tags  DocumentTag[]
   chunks Chunk[]
+  structuredFacts StructuredFact[]
 
   @@index([tenantId])
   @@index([status])
@@ -88,6 +89,7 @@ model Chunk {
   createdAt  DateTime @default(now()) @map("created_at")
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  structuredFacts StructuredFact[]
 
   @@index([documentId, idx])
   @@map("chunks")
@@ -125,6 +127,7 @@ model QAConversation {
 
   user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages QAMessage[]
+  runLogs  QARunLog[]
 
   @@index([userId, updatedAt(sort: Desc)])
   @@map("qa_conversations")
@@ -142,6 +145,49 @@ model QAMessage {
 
   @@index([conversationId, createdAt])
   @@map("qa_messages")
+}
+
+model StructuredFact {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  documentId  String   @map("document_id")
+  chunkId     String?  @map("chunk_id")
+  domain      String
+  entityType  String   @map("entity_type")
+  entityName  String   @map("entity_name")
+  attributes  Json     @default("{}")
+  confidence  Float    @default(0.5)
+  sourceText  String   @map("source_text")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunk    Chunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, domain, entityType])
+  @@index([documentId])
+  @@map("structured_facts")
+}
+
+model QARunLog {
+  id             String   @id @default(cuid())
+  tenantId       String   @map("tenant_id")
+  userId         String?  @map("user_id")
+  conversationId String?  @map("conversation_id")
+  question       String
+  rewrittenQuery String?  @map("rewritten_query")
+  intent         String
+  domain         String
+  facts          Json     @default("[]")
+  chunks         Json     @default("[]")
+  toolResult     Json?    @map("tool_result")
+  answer         String?
+  error          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation QAConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@map("qa_run_logs")
 }
 
 model RefreshToken {

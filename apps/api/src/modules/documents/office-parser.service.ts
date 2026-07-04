@@ -1,7 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import * as mammoth from "mammoth";
 import * as xlsx from "xlsx";
-import { Readable } from "stream";
 
 @Injectable()
 export class OfficeParserService {
@@ -19,13 +18,16 @@ export class OfficeParserService {
 
     switch (ext) {
       case ".docx":
+      case ".docm":
         return this.parseDocx(buffer);
       case ".doc":
         return this.parseDoc(buffer, mime);
       case ".xlsx":
       case ".xls":
+      case ".xlsm":
         return this.parseExcel(buffer);
       case ".pptx":
+      case ".pptm":
         return this.parsePptx(buffer);
       case ".ppt":
         return this.parsePpt(buffer, mime);
@@ -359,7 +361,7 @@ export class OfficeParserService {
 
     return (
       officeMimes.includes(mime) ||
-      [".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt"].includes(ext)
+      [".docx", ".doc", ".docm", ".xlsx", ".xls", ".xlsm", ".pptx", ".ppt", ".pptm"].includes(ext)
     );
   }
 }

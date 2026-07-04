@@ -28,6 +28,55 @@ import MarkdownPreviewModal from "@/components/MarkdownPreviewModal";
 import { EditorOrAbove, AdminOnly } from "@/components/PermissionGate";
 import { Resource, Action } from "@/types/permissions";
 
+const SUPPORTED_UPLOAD_ACCEPT = [
+  ".pdf",
+  ".md",
+  ".markdown",
+  ".txt",
+  ".csv",
+  ".json",
+  ".jsonl",
+  ".docx",
+  ".doc",
+  ".docm",
+  ".xlsx",
+  ".xls",
+  ".xlsm",
+  ".pptx",
+  ".ppt",
+  ".pptm",
+  ".wav",
+  ".mp3",
+  ".m4a",
+  ".aac",
+  ".flac",
+  ".ogg",
+  ".opus",
+  ".webm",
+  ".amr",
+  ".wma",
+  ".mp4",
+  ".mov",
+  ".mkv",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".jpe",
+  ".jfif",
+  ".webp",
+  ".bmp",
+  ".tif",
+  ".tiff",
+  "image/*",
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/pjpeg",
+  "image/webp",
+  "image/bmp",
+  "image/tiff",
+].join(",");
+
 interface DocumentDto {
   id: string;
   title: string;
@@ -84,6 +133,10 @@ export default function DocumentsPage() {
 
   function isMarkdownDoc(mime: string, title: string): boolean {
     return mime.includes("markdown") || mime === "text/markdown" || title.toLowerCase().endsWith(".md");
+  }
+
+  function isPdfDoc(mime: string, title: string): boolean {
+    return mime === "application/pdf" || title.toLowerCase().endsWith(".pdf");
   }
 
   async function fetchFolders() {
@@ -180,6 +233,16 @@ export default function DocumentsPage() {
 
   function openMdPreview(id: string, title: string) {
     setMdPreview({ id, title });
+  }
+
+  function viewDocument(doc: DocumentDto) {
+    if (isMarkdownDoc(doc.mime, doc.title)) {
+      openMdPreview(doc.id, doc.title);
+    } else if (isPdfDoc(doc.mime, doc.title)) {
+      openPdfPreview(doc.id, doc.title);
+    } else {
+      openDetail(doc.id);
+    }
   }
 
   async function handleEditDoc(id: string, data: { title?: string; folderId?: string | null }) {
@@ -433,7 +496,7 @@ export default function DocumentsPage() {
                       <td className="px-4 py-3 text-right">
                         <button
                           className="btn-ghost px-2 py-1"
-                          onClick={() => isMarkdownDoc(d.mime, d.title) ? openMdPreview(d.id, d.title) : openPdfPreview(d.id, d.title)}
+                          onClick={() => viewDocument(d)}
                           title="查看"
                         >
                           <Eye size={14} />
@@ -584,10 +647,9 @@ function UploadModal({
   onClose: () => void;
   onUpload: (files: FileList | null, folderId?: string) => void;
   uploading: boolean;
-  fileRef: React.RefObject<HTMLInputElement | null>;
+  fileRef: React.RefObject<HTMLInputElement>;
 }) {
   const [selectedFolder, setSelectedFolder] = useState<string>("");
-  const localRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-6" onClick={onClose}>
@@ -613,10 +675,10 @@ function UploadModal({
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">选择文件</label>
             <input
-              ref={localRef}
+              ref={fileRef}
               type="file"
               multiple
-              accept=".pdf,.md"
+              accept={SUPPORTED_UPLOAD_ACCEPT}
               className="hidden"
               onChange={(e) => {
                 onUpload(e.target.files, selectedFolder || undefined);
@@ -624,12 +686,12 @@ function UploadModal({
             />
             <button
               className="w-full btn-ghost border border-slate-300 justify-center py-8 flex flex-col items-center gap-2"
-              onClick={() => localRef.current?.click()}
+              onClick={() => fileRef.current?.click()}
               disabled={uploading}
             >
               <Upload size={24} className="text-slate-400" />
-              <span className="text-sm text-slate-500">点击选择文件 或 拖拽文件到此处</span>
-              <span className="text-xs text-slate-400">目前暂时仅支持 PDF、Markdown文件</span>
+              <span className="text-sm text-slate-500">点击选择文件</span>
+              <span className="text-xs text-slate-400">支持 PDF、Markdown、Office、TXT、图片 OCR、音频/音视频文件</span>
             </button>
           </div>
         </div>

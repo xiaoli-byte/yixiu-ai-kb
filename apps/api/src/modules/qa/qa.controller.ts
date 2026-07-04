@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Res,
   UseGuards,
 } from "@nestjs/common";
@@ -44,6 +45,19 @@ export class QaController {
   @Get("chunks/:id")
   async getChunk(@Param("id") id: string) {
     return this.qa.getChunk(id);
+  }
+
+  @Get("debug/runs")
+  async listDebugRuns(
+    @CurrentUser("sub") userId: string,
+    @Query("conversationId") conversationId?: string,
+    @Query("limit") limit?: string,
+  ) {
+    const tenantId = this.db.tenantId!;
+    return this.qa.listDebugRuns(tenantId, userId, {
+      conversationId,
+      limit: limit ? Number(limit) : undefined,
+    });
   }
 
   @Get("documents/:id/pdf-url")
@@ -91,12 +105,23 @@ export class QaController {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
-    res.setHeader('Content-Encoding', 'none');
+    res.setHeader("Content-Encoding", "none");
     res.flushHeaders?.();
 
-    
+    let closed = false;
+    res.on("close", () => {
+      closed = true;
+    });
+
     const write = (event: any) => {
+      if (closed || res.destroyed || res.writableEnded) return;
       res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+
+    const end = () => {
+      if (closed || res.destroyed || res.writableEnded) return;
+      closed = true;
+      res.end();
     };
 
     await this.qa.ask({
@@ -112,11 +137,11 @@ export class QaController {
       onNoResults: () => write({ type: "no_results" }),
       onDone: (messageId, conversationId) => {
         write({ type: "done", messageId, conversationId });
-        res.end();
+        end();
       },
       onError: (e) => {
         write({ type: "error", message: e.message });
-        res.end();
+        end();
       },
     });
   }

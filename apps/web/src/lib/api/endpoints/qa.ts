@@ -4,6 +4,7 @@ import type {
   ConversationDetail,
   PdfUrlResponse,
   MarkdownContentResponse,
+  QaDebugRun,
 } from "@/types/api";
 
 // 获取会话列表
@@ -39,6 +40,18 @@ export async function getDocumentMarkdown(
   return apiClient.get<MarkdownContentResponse>(
     `/qa/documents/${documentId}/markdown`
   );
+}
+
+export async function getDebugRuns(params?: {
+  conversationId?: string | null;
+  limit?: number;
+}): Promise<QaDebugRun[]> {
+  return apiClient.get<QaDebugRun[]>("/qa/debug/runs", {
+    query: {
+      conversationId: params?.conversationId || undefined,
+      limit: params?.limit,
+    },
+  });
 }
 
 // 获取问答接口地址（用于 SSE 流式请求）

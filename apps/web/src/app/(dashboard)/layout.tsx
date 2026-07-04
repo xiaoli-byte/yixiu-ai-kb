@@ -9,6 +9,8 @@ import {
   LogOut,
   Files,
   Settings,
+  LayoutDashboard,
+  Network,
 } from "lucide-react";
 import { useAuth } from "@/lib/store";
 import { Role, ROLE_LABELS } from "@/types/permissions";
@@ -34,11 +36,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // 支持 super_admin 和 admin
   const isAdmin = user?.role === Role.SUPER_ADMIN || user?.role === Role.ADMIN;
 
-  // TODO: 暂时隐藏图谱功能，待 Neo4j 服务稳定后开启
   const NAV = [
+    { href: "/overview", label: "数据总览", icon: LayoutDashboard },
     { href: "/documents", label: "文档管理", icon: Files },
     { href: "/search", label: "智能检索", icon: Search },
     { href: "/qa", label: "AI 问答", icon: MessageSquare },
+    { href: "/graph", label: "知识图谱", icon: Network },
     ...(isAdmin ? [{ href: "/settings", label: "系统设置", icon: Settings }] : []),
   ];
 
@@ -64,7 +67,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
           <nav className="flex-1 p-3 space-y-1">
             {NAV.map((n) => {
-              const active = pathname.startsWith(n.href);
+              const active = pathname === n.href || pathname.startsWith(`${n.href}/`);
               const Icon = n.icon;
               return (
                 <Link

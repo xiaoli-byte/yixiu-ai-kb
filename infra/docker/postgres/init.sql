@@ -97,6 +97,24 @@ CREATE TABLE IF NOT EXISTS chunks (
   FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 
+-- 结构化事实表（跨行业 RAG 控制层使用）
+CREATE TABLE IF NOT EXISTS structured_facts (
+  id            VARCHAR(36)  NOT NULL,
+  tenant_id     VARCHAR(36)  NOT NULL,
+  document_id   VARCHAR(36)  NOT NULL,
+  chunk_id      VARCHAR(36),
+  domain        VARCHAR(50)  NOT NULL,
+  entity_type   VARCHAR(80)  NOT NULL,
+  entity_name   VARCHAR(500) NOT NULL,
+  attributes    JSONB        NOT NULL DEFAULT '{}'::jsonb,
+  confidence    DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+  source_text   TEXT         NOT NULL,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
+);
+
 -- 标签表
 CREATE TABLE IF NOT EXISTS tags (
   id   VARCHAR(36) NOT NULL,
@@ -139,6 +157,26 @@ CREATE TABLE IF NOT EXISTS qa_messages (
   FOREIGN KEY (conversation_id) REFERENCES qa_conversations(id) ON DELETE CASCADE
 );
 
+-- QA 运行日志：记录路由、事实、chunk、工具结果和错误，支持评测闭环
+CREATE TABLE IF NOT EXISTS qa_run_logs (
+  id              VARCHAR(36) NOT NULL,
+  tenant_id       VARCHAR(36) NOT NULL,
+  user_id         VARCHAR(36),
+  conversation_id VARCHAR(36),
+  question        TEXT        NOT NULL,
+  rewritten_query TEXT,
+  intent          VARCHAR(50) NOT NULL,
+  domain          VARCHAR(50) NOT NULL,
+  facts           JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  chunks          JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  tool_result     JSONB,
+  answer          TEXT,
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (conversation_id) REFERENCES qa_conversations(id) ON DELETE SET NULL
+);
+
 -- Refresh Token 表
 CREATE TABLE IF NOT EXISTS refresh_tokens (
   id         VARCHAR(36)  NOT NULL,
@@ -167,6 +205,16 @@ CREATE INDEX IF NOT EXISTS chunks_tsv_zh_idx ON chunks USING gin (tsv_zh);
 -- chunks 英文/通用全文检索
 CREATE INDEX IF NOT EXISTS chunks_tsv_simple_idx ON chunks USING gin (tsv_simple);
 
+-- structured_facts 查询索引
+CREATE INDEX IF NOT EXISTS structured_facts_tenant_domain_idx
+  ON structured_facts (tenant_id, domain, entity_type);
+CREATE INDEX IF NOT EXISTS structured_facts_document_idx
+  ON structured_facts (document_id);
+CREATE INDEX IF NOT EXISTS structured_facts_attributes_idx
+  ON structured_facts USING gin (attributes);
+CREATE INDEX IF NOT EXISTS structured_facts_source_trgm_idx
+  ON structured_facts USING gin (source_text gin_trgm_ops);
+
 -- documents 按租户 + 状态索引（文档列表常用）
 CREATE INDEX IF NOT EXISTS documents_tenant_status_idx ON documents (tenant_id, status);
 
@@ -180,6 +228,10 @@ CREATE INDEX IF NOT EXISTS qa_conv_user_updated_idx
 -- qa_messages 按对话索引（消息历史）
 CREATE INDEX IF NOT EXISTS qa_messages_conv_created_idx
   ON qa_messages (conversation_id, created_at);
+
+-- qa_run_logs 按租户 + 时间索引
+CREATE INDEX IF NOT EXISTS qa_run_logs_tenant_created_idx
+  ON qa_run_logs (tenant_id, created_at DESC);
 
 -- refresh_tokens 按 userId 和 tokenHash 索引
 CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx ON refresh_tokens (user_id);

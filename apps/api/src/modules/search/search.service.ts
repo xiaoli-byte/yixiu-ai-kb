@@ -51,6 +51,62 @@ export class SearchService {
     "管理": ["管控", "治理"],
   };
 
+  private readonly BUSINESS_TERMS = [
+    "SKU",
+    "SPU",
+    "CRM",
+    "KTV",
+    "FOB",
+    "CIF",
+    "EXW",
+    "DDP",
+    "OA",
+    "T/T",
+    "商品",
+    "规格",
+    "价格",
+    "库存",
+    "售后",
+    "包厢",
+    "房型",
+    "套餐",
+    "低消",
+    "预订",
+    "外贸",
+    "报价",
+    "付款方式",
+    "交期",
+    "贸易术语",
+    "客户",
+    "联系人",
+    "商机",
+    "销售阶段",
+    "跟进",
+    "跟进记录",
+    "工单",
+  ];
+
+  private readonly QUERY_STOPWORDS = new Set([
+    "这个",
+    "这份",
+    "哪些",
+    "什么",
+    "怎么",
+    "如何",
+    "是否",
+    "可以",
+    "资料",
+    "里面",
+    "里的",
+    "当前",
+    "最近",
+    "一下",
+    "请问",
+    "以及",
+    "或者",
+    "还有",
+  ]);
+
   constructor(
     private readonly db: DatabaseService,
     private readonly embeddings: EmbeddingsService,
@@ -72,7 +128,7 @@ export class SearchService {
       return { hits: deduped, took: Date.now() - t0, hasRelevantResults: deduped.length > 0 };
     }
     if (opts.mode === "semantic") {
-      const hits = await this.vector(tenantId, opts.q, 50);
+      const hits = await this.safeVector(tenantId, opts.q, 50);
       const filtered = hits.filter((h) => h.score >= this.VECTOR_THRESHOLD);
       const deduped = this.deduplicateByDoc(filtered, this.MAX_CHUNKS_PER_DOC);
       return { hits: deduped.slice(0, k), took: Date.now() - t0, hasRelevantResults: deduped.length > 0 };
@@ -81,7 +137,7 @@ export class SearchService {
     // hybrid - 多策略检索：BM25 精确 + 向量 + trigram 兜底
     const [bm25Hits, vecHits] = await Promise.all([
       this.bm25(tenantId, opts.q, 50),
-      this.vector(tenantId, opts.q, 50),
+      this.safeVector(tenantId, opts.q, 50),
     ]);
 
     // 向量结果过滤低分（阈值降低以提高召回）
@@ -144,10 +200,16 @@ export class SearchService {
       const expandedHits = await this.bm25Chinese(tenantId, expanded, k);
       if (expandedHits.length > 0) return expandedHits;
 
-      // 3. 扩展仍无结果，降级到 simple 分词（英文分词器也可处理中文字符）
+      // 3. 自然问句常包含"这个/是什么/有哪些"和领域 boost 词，AND 查询过严时降级为关键词 OR 检索。
+      const keywordHits = await this.bm25KeywordFallback(tenantId, q, k);
+      if (keywordHits.length > 0) return keywordHits;
+
+      // 4. 关键词仍无结果，降级到 simple 分词（英文分词器也可处理中文字符）
       return this.bm25English(tenantId, q, k);
     } else {
-      return this.bm25English(tenantId, q, k);
+      const hits = await this.bm25English(tenantId, q, k);
+      if (hits.length > 0) return hits;
+      return this.bm25KeywordFallback(tenantId, q, k);
     }
   }
 
@@ -180,6 +242,81 @@ export class SearchService {
    */
   private containsChinese(text: string): boolean {
     return /[\u4e00-\u9fa5]/.test(text);
+  }
+
+  private buildKeywordTerms(q: string) {
+    const text = q.replace(/[^\u4e00-\u9fa5a-zA-Z0-9/_+-]+/g, " ");
+    const terms: string[] = [];
+
+    for (const term of this.BUSINESS_TERMS) {
+      if (q.includes(term)) terms.push(term);
+    }
+
+    for (const match of text.matchAll(/[A-Za-z][A-Za-z0-9/_+-]{1,30}|[0-9][A-Za-z0-9/_+-]{1,30}/g)) {
+      terms.push(match[0]);
+    }
+
+    const cleaned = text
+      .replace(/这个|这份|哪些|什么|怎么|如何|是否|可以|里面|里的|当前|最近|一下|请问|以及|或者|还有/g, " ")
+      .replace(/\s+/g, " ");
+    for (const match of cleaned.matchAll(/[\u4e00-\u9fa5]{2,12}/g)) {
+      const term = match[0];
+      if (!this.QUERY_STOPWORDS.has(term)) terms.push(term);
+    }
+
+    const seen = new Set<string>();
+    return terms
+      .map((term) => term.trim())
+      .filter(Boolean)
+      .filter((term) => {
+        const key = term.toLowerCase();
+        if (this.QUERY_STOPWORDS.has(term) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 8);
+  }
+
+  private async bm25KeywordFallback(tenantId: string, q: string, k: number) {
+    const terms = this.buildKeywordTerms(q);
+    if (terms.length === 0) return [];
+
+    const preciseQuery = terms.slice(0, 4).join(" ");
+    const preciseHits = this.containsChinese(preciseQuery)
+      ? await this.bm25Chinese(tenantId, preciseQuery, k)
+      : await this.bm25English(tenantId, preciseQuery, k);
+    if (preciseHits.length > 0) return preciseHits;
+
+    const tsQuery = terms
+      .map((term) => term.replace(/[^\u4e00-\u9fa5a-zA-Z0-9_]/g, ""))
+      .filter((term) => term.length >= 2)
+      .slice(0, 8)
+      .join(" | ");
+    if (!tsQuery) return [];
+
+    const rows = await this.db.query<any>(
+      `SELECT c.id              AS "chunkId",
+              c.document_id     AS "documentId",
+              c.idx             AS idx,
+              c.text            AS text,
+              c.page            AS page,
+              d.title           AS "documentTitle",
+              d.mime            AS mime,
+              ts_rank_cd(c.tsv_zh, to_tsquery('zhcfg', $1)) +
+              ts_rank_cd(c.tsv_simple, to_tsquery('simple', lower($1))) AS rank,
+              c.text AS highlight
+       FROM chunks c
+       JOIN documents d ON d.id = c.document_id
+       WHERE d.tenant_id = $2
+         AND (
+           c.tsv_zh @@ to_tsquery('zhcfg', $1)
+           OR c.tsv_simple @@ to_tsquery('simple', lower($1))
+         )
+       ORDER BY rank DESC
+       LIMIT $3`,
+      [tsQuery, tenantId, k],
+    );
+    return rows.map((r) => this.mapRowToHit(r, "bm25"));
   }
 
   /**
@@ -273,6 +410,15 @@ export class SearchService {
       sources: ["vector"] as const,
       page: r.page ?? null,
     }));
+  }
+
+  private async safeVector(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
+    try {
+      return await this.vector(tenantId, q, k);
+    } catch (e: any) {
+      this.logger.warn(`向量检索失败，降级为关键词/模糊检索: ${e.message}`);
+      return [];
+    }
   }
 
   /**
