@@ -32,6 +32,7 @@ const processes = [
 const reset = "\x1b[0m";
 const children = [];
 let shuttingDown = false;
+let forceExitTimer;
 
 function writePrefix(name, color, line, stream = process.stdout) {
   if (line.length === 0) return;
@@ -56,13 +57,44 @@ function pipeWithPrefix(child, name, color) {
   }
 }
 
-function stopAll(exitCode = 0) {
+function isChildRunning(child) {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+function killProcessTree(child) {
+  if (!child.pid || !isChildRunning(child)) return Promise.resolve();
+
+  if (isWindows) {
+    return new Promise((resolveKill) => {
+      const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      killer.on("exit", () => resolveKill());
+      killer.on("error", () => resolveKill());
+    });
+  }
+
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    try {
+      child.kill("SIGTERM");
+    } catch {}
+  }
+  return Promise.resolve();
+}
+
+async function stopAll(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  for (const child of children) {
-    if (!child.killed) child.kill(isWindows ? undefined : "SIGTERM");
-  }
-  setTimeout(() => process.exit(exitCode), 3000).unref();
+
+  forceExitTimer = setTimeout(() => process.exit(exitCode), 5000);
+  forceExitTimer.unref();
+
+  await Promise.all(children.map((child) => killProcessTree(child)));
+  clearTimeout(forceExitTimer);
+  process.exit(exitCode);
 }
 
 function parseEnvFile(path) {
@@ -121,6 +153,7 @@ for (const config of processes) {
     cwd: root,
     env: createEnv(config.env),
     stdio: ["inherit", "pipe", "pipe"],
+    detached: !isWindows,
   });
   children.push(child);
   pipeWithPrefix(child, config.name, config.color);
@@ -140,3 +173,12 @@ for (const config of processes) {
 
 process.on("SIGINT", () => stopAll(0));
 process.on("SIGTERM", () => stopAll(0));
+process.on("uncaughtException", (error) => {
+  writePrefix("dev", "\x1b[31m", `uncaught exception: ${error.message}`, process.stderr);
+  stopAll(1);
+});
+process.on("unhandledRejection", (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  writePrefix("dev", "\x1b[31m", `unhandled rejection: ${message}`, process.stderr);
+  stopAll(1);
+});
