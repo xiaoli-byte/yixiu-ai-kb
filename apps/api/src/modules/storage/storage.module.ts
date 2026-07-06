@@ -1,14 +1,14 @@
 import { Global, Module } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { StorageService } from "./storage.service";
+import { AppConfigService } from "../../config/app-config.service";
 
 @Global()
 @Module({
   providers: [
     {
       provide: StorageService,
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => new StorageService(config),
+      inject: [AppConfigService],
+      useFactory: (config: AppConfigService) => new StorageService(config),
     },
   ],
   exports: [StorageService],

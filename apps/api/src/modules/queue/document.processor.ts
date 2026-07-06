@@ -18,7 +18,6 @@ if (typeof (globalThis as any).DOMMatrix === "undefined") {
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { Worker, Job } from "bullmq";
 import IORedis from "ioredis";
-import { ConfigService } from "@nestjs/config";
 import { DatabaseService } from "../../database/database.service";
 import { PRISMA } from "../../database/database.service";
 import { PrismaClient } from "@prisma/client";
@@ -34,6 +33,7 @@ import { Neo4jService } from "../../database/neo4j/neo4j.service";
 import { DocumentJobPayload, DOCUMENT_QUEUE } from "./queue.service";
 import { RagFactExtractionService } from "../rag/rag-fact-extraction.service";
 import { RagFactsService } from "../rag/rag-facts.service";
+import { AppConfigService } from "../../config/app-config.service";
 import { v4 as uuid } from "uuid";
 import {
   canonicalKey,
@@ -60,7 +60,7 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
     private readonly llm: LlmService,
     private readonly neo4j: Neo4jService,
     private readonly db: DatabaseService,
-    private readonly config: ConfigService,
+    private readonly config: AppConfigService,
     private readonly chunker: TextChunkerService,
     private readonly officeParser: OfficeParserService,
     private readonly funAsr: FunAsrService,
@@ -70,27 +70,22 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit() {
-    const enabled =
-      this.config.getOrThrow<string>("DOCUMENT_WORKER_ENABLED").toLowerCase() !== "false";
-    if (!enabled) {
+    const workerConfig = this.config.documentWorker;
+    if (!workerConfig.enabled) {
       this.logger.log("文档处理 Worker 已禁用（DOCUMENT_WORKER_ENABLED=false）");
       return;
     }
 
-    const concurrency = Math.max(
-      1,
-      Number(this.config.getOrThrow<string>("DOCUMENT_WORKER_CONCURRENCY")),
-    );
     this.worker = new Worker<DocumentJobPayload>(
       DOCUMENT_QUEUE,
       async (job) => this.process(job),
       {
         connection: this.redis,
-        concurrency,
+        concurrency: workerConfig.concurrency,
         lockDuration: 5 * 60 * 1000, // 5分钟锁，防止处理时间过长导致锁过期
       },
     );
-    this.logger.log(`文档处理 Worker 已启动，并发数: ${concurrency}`);
+    this.logger.log(`文档处理 Worker 已启动，并发数: ${workerConfig.concurrency}`);
     this.worker.on("failed", (job, err) =>
       this.logger.error(`任务 ${job?.id} 失败: ${err.message}`),
     );
@@ -683,12 +678,12 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
     const PDFJS = await this.loadPdfJs();
     const { createCanvas } = await import("@napi-rs/canvas");
     const data = await PDFJS.getDocument({ data: new Uint8Array(buffer) }).promise;
-    const configuredMaxPages = Number(this.config.getOrThrow<string>("OCR_PDF_MAX_PAGES"));
+    const configuredMaxPages = this.config.ocr.pdfMaxPages;
     const maxPages =
       Number.isFinite(configuredMaxPages) && configuredMaxPages > 0
         ? Math.min(data.numPages, configuredMaxPages)
         : data.numPages;
-    const configuredScale = Number(this.config.getOrThrow<string>("OCR_PDF_RENDER_SCALE"));
+    const configuredScale = this.config.ocr.pdfRenderScale;
     const scale =
       Number.isFinite(configuredScale) && configuredScale > 0
         ? Math.min(Math.max(configuredScale, 0.5), 4)

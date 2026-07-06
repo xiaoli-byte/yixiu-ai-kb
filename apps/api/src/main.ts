@@ -7,14 +7,16 @@ import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
 import { Logger as PinoLogger } from "nestjs-pino";
 import { AppModule } from "./app.module";
+import { AppConfigService } from "./config/app-config.service";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(PinoLogger));
 
-  const webOrigin = process.env.WEB_ORIGIN!;
+  const appConfig = app.get(AppConfigService);
+  const { apiPort, webOrigin, isProduction } = appConfig.server;
   const corsOrigins =
-    process.env.NODE_ENV === "production"
+    isProduction
       ? [webOrigin]
       : [webOrigin, "http://localhost:8888"];
   app.enableCors({
@@ -31,9 +33,8 @@ async function bootstrap() {
     }),
   );
 
-  const port = Number(process.env.API_PORT);
-  await app.listen(port, "0.0.0.0");
-  Logger.log(`API running on http://localhost:${port}/api`, "Bootstrap");
+  await app.listen(apiPort, "0.0.0.0");
+  Logger.log(`API running on http://localhost:${apiPort}/api`, "Bootstrap");
 }
 bootstrap().catch((e) => {
   // eslint-disable-next-line no-console

@@ -22,6 +22,8 @@ import { LlmModule } from "./modules/llm/llm.module";
 import { StorageModule } from "./modules/storage/storage.module";
 import { HealthController } from "./common/health.controller";
 import { loadRootEnv, validateEnv } from "./config/env";
+import { AppConfigModule } from "./config/app-config.module";
+import { AppConfigService } from "./config/app-config.service";
 
 loadRootEnv();
 
@@ -32,18 +34,22 @@ loadRootEnv();
       ignoreEnvFile: true,
       validate: validateEnv,
     }),
-    LoggerModule.forRoot({
-      pinoHttp: {
-        level: process.env.LOG_LEVEL,
-        transport:
-          process.env.NODE_ENV === "production"
+    AppConfigModule,
+    LoggerModule.forRootAsync({
+      imports: [AppConfigModule],
+      inject: [AppConfigService],
+      useFactory: (appConfig: AppConfigService) => ({
+        pinoHttp: {
+          level: appConfig.server.logLevel,
+          transport: appConfig.isProduction
             ? undefined
             : { target: "pino-pretty", options: { singleLine: true, colorize: true } },
-        customProps: () => ({ context: "HTTP" }),
-        genReqId: (req) =>
-          (req.headers["x-correlation-id"] as string) ||
-          `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      },
+          customProps: () => ({ context: "HTTP" }),
+          genReqId: (req) =>
+            (req.headers["x-correlation-id"] as string) ||
+            `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        },
+      }),
     }),
     ClsModule.forRoot({ global: true, middleware: { mount: true } }),
 

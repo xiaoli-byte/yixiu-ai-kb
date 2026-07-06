@@ -146,8 +146,11 @@ pnpm graph:migrate
 pnpm seed
 ```
 
+> 知识图谱治理能力依赖 PostgreSQL 迁移 `0005_graph_governance_views` 和 Neo4j 迁移 `0002_graph_governance`；检索历史和问答反馈依赖 PostgreSQL 迁移 `0006_search_qa_enhancements`。升级已有环境时，先执行 `pnpm --filter @ai-knowledge/api prisma:migrate:deploy`，再执行 `pnpm graph:migrate`，确保图谱治理、检索历史和问答反馈相关字段/索引已就绪。
+
 > 数据库业务结构变更必须先更新 `apps/api/src/database/prisma/schema.prisma`，再通过 Prisma Migrate 生成/部署迁移。禁止使用散落 SQL 脚本、手动 `psql` 或 `prisma db push` 修改业务表结构；Prisma Migrate 生成的迁移 SQL 除外。
 > Neo4j 约束和索引通过 `apps/api/src/database/neo4j/migrations` 下的 Cypher migrations 管理；API/worker 启动时不负责图数据库 schema 变更。
+> API 运行时代码通过 `AppConfigService` 读取类型化配置；新增基础设施配置时先更新 env schema，再暴露 typed getter。
 
 ### 2.5 启动开发服务
 
@@ -361,7 +364,7 @@ ai-knowledge/
 │   │       └── default.conf   # 反向代理配置
 │   └── docker/
 │       └── postgres/
-│           └── init.sql       # PostgreSQL 首次初始化历史基线；后续业务结构变更走 Prisma Migrate
+│           └── init.sql       # PostgreSQL 历史基线参考；运行时结构由 Prisma migrations 回放
 └── apps/
     ├── api/Dockerfile         # API 服务 Dockerfile（包含 Prisma/Neo4j migrations）
     └── web/Dockerfile         # Web 前端 Dockerfile
@@ -670,6 +673,8 @@ kubectl logs -f deployment/api -n ai-knowledge
 ### 6.1 完整环境变量列表
 
 > **注意**：生产环境使用 Docker Compose 时，变量值从 `.env.production` 插值，但 compose 不再使用全量 `env_file` 注入；每个 service 只显式接收自己需要的最小变量集。API 服务使用 `DATABASE_URL`、`REDIS_URL` 等标准格式；PostgreSQL、Redis 等基础服务使用独立配置变量（如 `POSTGRES_USER`、`POSTGRES_PASSWORD` 等）。生产 compose 会拆分 API 与文档处理 worker，并通过一次性 `graph-init` 服务执行 Neo4j schema migrations：API 覆盖为 `DOCUMENT_WORKER_ENABLED=false`，独立 `worker` 服务覆盖为 `true`。
+
+生产服务启动后建议执行 `pnpm smoke:deploy -- --env-file .env.production`，确认 `db-init`、`graph-init`、API/Web、Redis、Neo4j、MinIO 都处于可用状态。若自动化环境的 pnpm 包装层在进入项目脚本前触发非交互安装确认，可直接执行 `node scripts/smoke-deploy.mjs --env-file .env.production`。
 
 | 变量名 | 说明 | 默认值 | 必填 |
 | --- | --- | --- | --- |

@@ -6,6 +6,7 @@ import {
   getDocumentMarkdown as mdApi,
   getDebugRuns as debugRunsApi,
   getAskEndpoint as askEndpointApi,
+  updateMessageFeedback as updateMessageFeedbackApi,
 } from "@/lib/api/endpoints/qa";
 
 // 类型
@@ -17,6 +18,9 @@ export type {
   PdfUrlResponse,
   MarkdownContentResponse,
   QaDebugRun,
+  MessageFeedback,
+  MessageFeedbackRating,
+  UpdateMessageFeedbackRequest,
 } from "@/types/api";
 
 // 导出 API 函数
@@ -27,6 +31,7 @@ export const getDocumentPdfUrl = pdfUrlApi;
 export const getDocumentMarkdown = mdApi;
 export const getDebugRuns = debugRunsApi;
 export const getAskEndpoint = askEndpointApi;
+export const updateMessageFeedback = updateMessageFeedbackApi;
 
 // 默认导出
 const qaApi = {
@@ -37,5 +42,6 @@ const qaApi = {
   getDocumentMarkdown,
   getDebugRuns,
   getAskEndpoint,
+  updateMessageFeedback,
 };
 export default qaApi;

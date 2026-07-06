@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tongyi";
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { AppConfigService } from "../../config/app-config.service";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -36,14 +36,13 @@ export class LlmService implements OnModuleInit {
   private mock = false;
   private chatModel!: ChatAlibabaTongyi;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly config: AppConfigService) {}
 
   onModuleInit() {
-    this.apiKey = this.config.get<string>("DASHSCOPE_API_KEY") || "";
-    this.model = this.config.getOrThrow<string>("DASHSCOPE_LLM_MODEL");
-    this.mock =
-      this.config.getOrThrow<string>("DASHSCOPE_LLM_MOCK").toLowerCase() === "true" ||
-      this.apiKey.startsWith("sk-replace");
+    const dashscope = this.config.dashscope;
+    this.apiKey = dashscope.apiKey;
+    this.model = dashscope.llmModel;
+    this.mock = dashscope.llmMock || this.apiKey.startsWith("sk-replace");
 
     if (this.mock) {
       this.logger.warn("LLM mock 模式");

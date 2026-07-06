@@ -56,7 +56,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     { resource: Resource.USERS, actions: [Action.MANAGE] },
     { resource: Resource.DEPARTMENTS, actions: [Action.MANAGE] },
     { resource: Resource.CONVERSATIONS, actions: [Action.READ] },
-    { resource: Resource.GRAPH, actions: [Action.READ] },
+    { resource: Resource.GRAPH, actions: [Action.MANAGE] },
     { resource: Resource.SETTINGS, actions: [Action.MANAGE] },
   ],
   [Role.EDITOR]: [
@@ -64,7 +64,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     { resource: Resource.FOLDERS, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE] },
     { resource: Resource.TAGS, actions: [Action.READ, Action.UPDATE] },
     { resource: Resource.CONVERSATIONS, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE] },
-    { resource: Resource.GRAPH, actions: [Action.READ] },
+    { resource: Resource.GRAPH, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE] },
   ],
   [Role.VIEWER]: [
     { resource: Resource.DOCUMENTS, actions: [Action.READ] },

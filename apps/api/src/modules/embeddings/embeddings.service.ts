@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { AppConfigService } from "../../config/app-config.service";
 
 @Injectable()
 export class EmbeddingsService implements OnModuleInit {
@@ -10,16 +10,15 @@ export class EmbeddingsService implements OnModuleInit {
   private dim = 1024;
   private mock = false;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly config: AppConfigService) {}
 
   onModuleInit() {
-    this.apiKey = this.config.get<string>("DASHSCOPE_API_KEY") || "";
-    this.baseUrl = this.config.getOrThrow<string>("DASHSCOPE_BASE_URL");
-    this.model = this.config.getOrThrow<string>("DASHSCOPE_EMBED_MODEL");
-    this.dim = Number(this.config.getOrThrow<string>("DASHSCOPE_EMBED_DIM"));
-    this.mock =
-      this.config.getOrThrow<string>("DASHSCOPE_EMBED_MOCK").toLowerCase() === "true" ||
-      this.apiKey.startsWith("sk-replace");
+    const dashscope = this.config.dashscope;
+    this.apiKey = dashscope.apiKey;
+    this.baseUrl = dashscope.baseUrl;
+    this.model = dashscope.embedModel;
+    this.dim = dashscope.embedDim;
+    this.mock = dashscope.embedMock || this.apiKey.startsWith("sk-replace");
     if (this.mock) {
       this.logger.warn("DashScope API key 未配置或启用了 mock 模式，Embeddings 将返回零向量（仅用于联调）");
     } else {

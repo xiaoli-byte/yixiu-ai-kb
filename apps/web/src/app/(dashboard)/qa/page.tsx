@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Send, Loader2, MessageSquare, Plus, Trash2, ChevronLeft, BookOpen, Quote, ExternalLink, Bug, RefreshCw, X, AlertTriangle } from "lucide-react";
+import { Send, Loader2, MessageSquare, Plus, Trash2, ChevronLeft, BookOpen, Quote, ExternalLink, Bug, RefreshCw, X, AlertTriangle, ThumbsUp, ThumbsDown, Check } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { apiBaseUrl, ApiError } from "@/lib/api-client";
@@ -27,7 +27,16 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations: Citation[];
+  feedback?: MessageFeedback;
   createdAt: string;
+}
+
+type MessageFeedbackRating = "up" | "down" | "none";
+
+interface MessageFeedback {
+  rating: MessageFeedbackRating;
+  text: string | null;
+  updatedAt: string | null;
 }
 
 interface Conversation {
@@ -46,6 +55,7 @@ export default function QaPage() {
   const [streaming, setStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [streamingCitations, setStreamingCitations] = useState<Citation[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pdfDoc, setPdfDoc] = useState<{ id: string; title: string; page?: number } | null>(null);
   const [mdDoc, setMdDoc] = useState<{ id: string; title: string } | null>(null);
@@ -126,6 +136,7 @@ export default function QaPage() {
   async function openConversation(id: string) {
     try {
       setActiveId(id);
+      setSuggestions([]);
       const c = await qaApi.conversationGet(id);
       setMessages(c?.messages || []);
       setError(null);
@@ -139,6 +150,7 @@ export default function QaPage() {
     setMessages([]);
     setStreamingText("");
     setStreamingCitations([]);
+    setSuggestions([]);
     setError(null);
   }
 
@@ -152,11 +164,33 @@ export default function QaPage() {
     }
   }
 
-  const send = useCallback(async () => {
-    if (!input.trim() || streaming) return;
-    const q = input.trim();
+  const handleFeedback = useCallback(async (
+    messageId: string,
+    rating: MessageFeedbackRating,
+    feedbackText?: string | null,
+  ) => {
+    try {
+      const feedback = await qaApi.updateMessageFeedback(messageId, {
+        rating,
+        feedbackText,
+      });
+      setMessages((items) =>
+        items.map((item) => (item.id === messageId ? { ...item, feedback } : item)),
+      );
+      return feedback;
+    } catch (e: any) {
+      setError(e?.message || "Feedback failed");
+      throw e;
+    }
+  }, []);
+
+  const send = useCallback(async (overrideQuestion?: string) => {
+    const rawQuestion = typeof overrideQuestion === "string" ? overrideQuestion : input;
+    if (!rawQuestion.trim() || streaming) return;
+    const q = rawQuestion.trim();
     setInput("");
     setError(null);
+    setSuggestions([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -166,6 +200,7 @@ export default function QaPage() {
       role: "user",
       content: q,
       citations: [],
+      feedback: { rating: "none", text: null, updatedAt: null },
       createdAt: new Date().toISOString(),
     };
     setMessages((m) => [...m, tempUserMsg]);
@@ -193,7 +228,6 @@ export default function QaPage() {
       let assembled = "";
       let convId = activeId;
       let messageId = "";
-      let noRelevantResults = false;
       let citations: Citation[] = [];
 
       while (true) {
@@ -221,7 +255,7 @@ export default function QaPage() {
             } else if (evt.type === "error") {
               throw new Error(evt.message);
             } else if (evt.type === "no_results") {
-              noRelevantResults = true;
+              setSuggestions(Array.isArray(evt.suggestions) ? evt.suggestions.filter(Boolean) : []);
             }
           } catch (e) {
             if ((e as Error).message !== "Unexpected end of JSON input") {
@@ -237,6 +271,7 @@ export default function QaPage() {
         role: "assistant",
         content: assembled,
         citations,
+        feedback: { rating: "none", text: null, updatedAt: null },
         createdAt: new Date().toISOString(),
       };
       setMessages((m) => [...m, finalMsg]);
@@ -325,6 +360,14 @@ export default function QaPage() {
           </button>
           <MessageSquare size={18} className="text-brand-600" />
           <span className="font-semibold">AI 知识问答</span>
+          {activeId && (
+            <span
+              className="hidden rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-500 sm:inline-flex"
+              title={activeId}
+            >
+              Conversation {activeId.slice(0, 8)}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2">
             <button
               className={cn(
@@ -378,7 +421,12 @@ export default function QaPage() {
           )}
 
           {messages.map((m) => (
-            <MessageBubble key={m.id} msg={m} onCitationClick={openDocument} />
+            <MessageBubble
+              key={m.id}
+              msg={m}
+              onCitationClick={openDocument}
+              onFeedback={handleFeedback}
+            />
           ))}
 
           {streaming && (
@@ -393,6 +441,25 @@ export default function QaPage() {
               onCitationClick={openDocument}
               streaming
             />
+          )}
+
+          {suggestions.length > 0 && (
+            <div className="max-w-2xl mx-auto rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <div className="text-xs font-medium text-amber-800">Suggested rewrites</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {suggestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className="rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs text-amber-900 transition hover:border-amber-300 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={streaming}
+                    onClick={() => void send(suggestion)}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
@@ -410,7 +477,7 @@ export default function QaPage() {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    send();
+                    void send();
                   }
                 }}
               />
@@ -422,7 +489,7 @@ export default function QaPage() {
                     : "bg-slate-200 text-slate-400 cursor-not-allowed",
                 )}
                 disabled={!input.trim() || streaming}
-                onClick={send}
+                onClick={() => void send()}
               >
                 {streaming ? (
                   <Loader2 size={12} className="animate-spin" />
@@ -475,10 +542,16 @@ function MessageBubble({
   msg,
   streaming,
   onCitationClick,
+  onFeedback,
 }: {
   msg: ChatMessage;
   streaming?: boolean;
   onCitationClick: (documentId: string, documentTitle: string, mime: string, page?: number) => void;
+  onFeedback?: (
+    messageId: string,
+    rating: MessageFeedbackRating,
+    feedbackText?: string | null,
+  ) => Promise<MessageFeedback>;
 }) {
   const isUser = msg.role === "user";
 
@@ -566,11 +639,109 @@ function MessageBubble({
               </div>
             </div>
           )}
+
+          {!isUser && !streaming && onFeedback && (
+            <FeedbackControls
+              messageId={msg.id}
+              feedback={msg.feedback}
+              onSubmit={onFeedback}
+            />
+          )}
         </div>
       </div>
 
       {/* 引用详情弹窗 */}
     </>
+  );
+}
+
+function FeedbackControls({
+  messageId,
+  feedback,
+  onSubmit,
+}: {
+  messageId: string;
+  feedback?: MessageFeedback;
+  onSubmit: (
+    messageId: string,
+    rating: MessageFeedbackRating,
+    feedbackText?: string | null,
+  ) => Promise<MessageFeedback>;
+}) {
+  const current = feedback ?? { rating: "none" as const, text: null, updatedAt: null };
+  const [note, setNote] = useState(current.text || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setNote(current.text || "");
+  }, [current.text, messageId]);
+
+  const submit = async (rating: MessageFeedbackRating, text = note) => {
+    setSaving(true);
+    try {
+      await onSubmit(messageId, rating, text);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selected = current.rating;
+  const showNote = selected !== "none" || note.trim().length > 0;
+
+  return (
+    <div className="mt-3 border-t border-slate-100 pt-2">
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          className={cn(
+            "rounded-md p-1.5 text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-600",
+            selected === "up" && "bg-emerald-50 text-emerald-600",
+          )}
+          disabled={saving}
+          title="Thumbs up"
+          onClick={() => void submit(selected === "up" ? "none" : "up")}
+        >
+          <ThumbsUp size={14} />
+        </button>
+        <button
+          type="button"
+          className={cn(
+            "rounded-md p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600",
+            selected === "down" && "bg-red-50 text-red-600",
+          )}
+          disabled={saving}
+          title="Thumbs down"
+          onClick={() => void submit(selected === "down" ? "none" : "down")}
+        >
+          <ThumbsDown size={14} />
+        </button>
+        {selected !== "none" && (
+          <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+            <Check size={12} /> Saved
+          </span>
+        )}
+      </div>
+
+      {showNote && (
+        <div className="mt-2 flex items-center gap-2">
+          <input
+            className="min-w-0 flex-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-700 outline-none transition focus:border-brand-300 focus:bg-white"
+            value={note}
+            disabled={saving}
+            placeholder="Optional feedback"
+            onChange={(event) => setNote(event.target.value)}
+          />
+          <button
+            type="button"
+            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition hover:border-brand-300 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={saving || selected === "none"}
+            onClick={() => void submit(selected)}
+          >
+            Save
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1,10 +1,10 @@
 import { Injectable, UnauthorizedException, Inject } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcrypt";
 import { PrismaClient } from "@prisma/client";
 import { PRISMA } from "../../database/database.service";
 import { ClsService } from "nestjs-cls";
+import { AppConfigService } from "../../config/app-config.service";
 
 export interface JwtPayload {
   sub: string;
@@ -18,13 +18,13 @@ export class AuthService {
   constructor(
     @Inject(PRISMA) private readonly prisma: PrismaClient,
     private readonly jwt: JwtService,
-    private readonly config: ConfigService,
+    private readonly config: AppConfigService,
     private readonly cls: ClsService,
   ) {}
 
   async validateUser(email: string, password: string, tenantId?: string) {
     const user = await this.prisma.user.findFirst({
-      where: { email, tenantId: tenantId || this.config.getOrThrow<string>("BOOTSTRAP_TENANT_ID") },
+      where: { email, tenantId: tenantId || this.config.bootstrap.tenantId },
     });
     if (!user) return null;
     const ok = await bcrypt.compare(password, user.passwordHash);
@@ -44,8 +44,8 @@ export class AuthService {
     };
     const accessToken = this.jwt.sign(payload);
     const refreshToken = this.jwt.sign(payload, {
-      secret: this.config.getOrThrow<string>("JWT_REFRESH_SECRET"),
-      expiresIn: this.config.getOrThrow<string>("JWT_REFRESH_TTL"),
+      secret: this.config.jwt.refreshSecret,
+      expiresIn: this.config.jwt.refreshTtl,
     });
 
     await this.storeRefreshToken(user.id, refreshToken);
@@ -66,7 +66,7 @@ export class AuthService {
   async refresh(token: string) {
     try {
       const payload = this.jwt.verify<JwtPayload>(token, {
-        secret: this.config.getOrThrow<string>("JWT_REFRESH_SECRET"),
+        secret: this.config.jwt.refreshSecret,
       });
       const stored = await this.prisma.refreshToken.findFirst({
         where: {

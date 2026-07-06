@@ -3,14 +3,14 @@ import { resolve } from "path";
 import { loadRootEnv, projectRootDir, validateEnv } from "../config/env";
 
 loadRootEnv();
-validateEnv(process.env);
+const env = validateEnv(process.env);
 
 import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { v4 as uuid } from "uuid";
 
 const prisma = new PrismaClient({
-  datasources: { db: { url: process.env.DATABASE_URL! } },
+  datasources: { db: { url: env.DATABASE_URL } },
 });
 
 async function main() {
@@ -23,10 +23,10 @@ async function main() {
     return;
   }
 
-  const tenantId = process.env.BOOTSTRAP_TENANT_ID!;
-  const email = process.env.BOOTSTRAP_ADMIN_EMAIL!;
-  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD!;
-  const name = process.env.BOOTSTRAP_ADMIN_NAME!;
+  const tenantId = env.BOOTSTRAP_TENANT_ID;
+  const email = env.BOOTSTRAP_ADMIN_EMAIL;
+  const password = env.BOOTSTRAP_ADMIN_PASSWORD;
+  const name = env.BOOTSTRAP_ADMIN_NAME;
 
   const passwordHash = await bcrypt.hash(password, 10);
   const admin = await prisma.user.upsert({

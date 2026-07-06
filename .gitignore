@@ -19,6 +19,7 @@ apps/**/.env*
 .idea/
 .DS_Store
 .cursor
+.codex/
 
 # Prisma
 apps/api/src/database/prisma/migrations/dev/

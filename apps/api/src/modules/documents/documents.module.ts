@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { MulterModule } from "@nestjs/platform-express";
 import { DocumentsController } from "./documents.controller";
 import { DocumentsService } from "./documents.service";
 import { OfficeParserService } from "./office-parser.service";
@@ -6,9 +7,19 @@ import { FunAsrService } from "./funasr.service";
 import { OcrService } from "./ocr.service";
 import { TagsModule } from "../tags/tags.module";
 import { PermissionsModule } from "../../common/permissions/permissions.module";
+import { AppConfigService } from "../../config/app-config.service";
 
 @Module({
-  imports: [TagsModule, PermissionsModule],
+  imports: [
+    TagsModule,
+    PermissionsModule,
+    MulterModule.registerAsync({
+      inject: [AppConfigService],
+      useFactory: (config: AppConfigService) => ({
+        limits: { fileSize: config.documentWorker.uploadMaxBytes },
+      }),
+    }),
+  ],
   controllers: [DocumentsController],
   providers: [DocumentsService, OfficeParserService, FunAsrService, OcrService],
   exports: [DocumentsService, OfficeParserService, FunAsrService, OcrService],

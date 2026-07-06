@@ -5,9 +5,9 @@
 ## ✨ 核心能力
 
 - **📁 文档管理** - PDF / Markdown / Office / TXT / 图片 / 音视频上传，自动解析、OCR 或 ASR 转写 → 切片 → 向量化 → 实体抽取，状态可视化
-- **🔍 混合检索** - 关键词 (PostgreSQL 全文) + 向量 (pgvector HNSW) 双路召回，RRF 智能融合
-- **💬 AI 问答 (RAG)** - 基于通义千问 `qwen-plus` 的检索增强问答，支持流式响应与引用高亮
-- **🕸 知识图谱** - Neo4j 存储文档 / 实体 / 关系，2D 力导向图可视化探索
+- **🔍 混合检索** - 关键词 (PostgreSQL 全文) + 向量 (pgvector HNSW) 双路召回，RRF 智能融合，支持安全高亮、排序和检索历史
+- **💬 AI 问答 (RAG)** - 基于通义千问 `qwen-plus` 的检索增强问答，支持流式响应、引用高亮、多轮追问、无结果改写建议和满意度反馈
+- **🕸 知识图谱** - Neo4j 存储和查询图结构，PostgreSQL 作为证据/治理/审计权威源，支持证据面板、路径查询、实体合并、关系审核、视图保存和 PNG/SVG/JSON 导出
 - **🔐 鉴权** - JWT 双 token + 多租户 (CLS 注入 tenantId)
 - **🎨 现代 UI** - Next.js 15 App Router + Tailwind + shadcn 风格 + Lucide Icons
 
@@ -65,7 +65,7 @@ Neo4j 约束和索引通过 `pnpm graph:migrate` 管理，迁移文件位于 `ap
 
 环境变量只从仓库根目录加载：本地使用 `.env`，个人覆盖使用 `.env.local`，不要在 `apps/*` 下维护额外 `.env`。Prisma、API、worker、seed 和维护脚本都应通过根目录配置连接同一套服务。
 
-提交前建议运行 `pnpm check:architecture`，它会拦截旧环境变量、app 子目录 env、生产 compose 默认值、非 Prisma migration 的 PostgreSQL DDL、非 Neo4j migration 的图 schema DDL 等架构漂移。
+提交前建议运行 `pnpm check:ci`，它会执行架构约束、Prisma schema validate、API/Web 类型检查和生产 compose 配置解析；其中 `pnpm check:architecture` 会拦截旧环境变量、app 子目录 env、生产 compose 默认值、非 Prisma migration 的 PostgreSQL DDL、非 Neo4j migration 的图 schema DDL 等架构漂移。若自动化环境的 pnpm 包装层在进入项目脚本前触发非交互安装确认，可直接运行 `node scripts/check-ci.mjs`。
 
 ### 4. 启动开发环境
 
@@ -74,6 +74,8 @@ pnpm dev
 ```
 
 开发模式会同时启动 Web、API 和文档处理 worker。上传接口只负责入队，解析、OCR/ASR、切片和向量化由 worker 消费，避免大文件处理时挤占 API 请求。
+
+生产部署后可运行 `pnpm smoke:deploy -- --env-file .env.production` 做一次部署冒烟检查，覆盖 `db-init`、`graph-init`、API/Web 健康检查以及 Redis/Neo4j/MinIO 可达性。
 
 如需只启动 Web/API、不启动 worker，可使用旧的 Turbo 启动方式：
 
@@ -110,8 +112,8 @@ bash infra/scripts/bootstrap.sh   # 等价于以上 1-3 步
 
 1. **登录** → 进入 Dashboard
 2. **文档管理** - 上传 1-2 份 Markdown / PDF，等待状态变为「就绪」
-3. **智能检索** - 输入关键词，切换「关键词 / 语义 / 混合」三种模式
-4. **AI 问答** - 基于上传的文档提问，查看引用卡片
+3. **智能检索** - 输入关键词，切换「关键词 / 语义 / 混合」三种模式，尝试按相关性/时间/名称排序并从历史中重搜
+4. **AI 问答** - 基于上传的文档提问，查看引用卡片，继续追问上下文并对回答点赞/点踩
 5. **知识图谱** - 探索从文档中抽取的实体关系
 
 ## 📂 目录结构
@@ -146,13 +148,22 @@ bash infra/scripts/bootstrap.sh   # 等价于以上 1-3 步
 | 文档 | GET | `/documents/:id` | 详情（含 chunks） |
 | 文档 | POST | `/documents/upload` | multipart 上传 |
 | 文档 | DELETE | `/documents/:id` | 删除 |
-| 检索 | POST | `/search` | `{q, mode: hybrid/semantic/keyword, topK}` |
-| 问答 | POST | `/qa/ask` | SSE 流式问答 |
+| 检索 | POST | `/search` | `{q, mode: hybrid/semantic/keyword, sortBy: relevance/time/name, topK}`，返回安全高亮片段 |
+| 检索 | GET/DELETE | `/search/history`、`/search/history/:id` | 查询、清空或删除当前用户检索历史 |
+| 问答 | POST | `/qa/ask` | SSE 流式问答，`no_results` 事件携带改写建议 |
 | 问答 | GET | `/qa/conversations` | 会话列表 |
 | 问答 | GET | `/qa/conversations/:id` | 会话详情 |
+| 问答 | PATCH | `/qa/messages/:id/feedback` | 对助手回答点赞/点踩和提交文字反馈 |
+| 图谱 | GET | `/graph/explore?keyword=&nodeType=&documentId=&entityType=&relationType=&categoryId=&createdFrom=&createdTo=&updatedFrom=&updatedTo=&depth=&limit=` | 工作台图谱、统计、筛选选项和命中节点 |
 | 图谱 | GET | `/graph/search?keyword=&type=&depth=&limit=` | 子图查询 |
 | 图谱 | GET | `/graph/top?limit=` | 高频实体 |
 | 图谱 | GET | `/graph/document/:id` | 文档关联实体 |
+| 图谱 | GET | `/graph/edges/:id/evidence` | 关系证据面板 |
+| 图谱 | GET | `/graph/nodes/:id/evidence` | 节点证据面板 |
+| 图谱 | GET | `/graph/path?sourceId=&targetId=&maxDepth=` | 最短路径查询 |
+| 图谱 | GET/POST/PATCH/DELETE | `/graph/views`、`/graph/views/:id` | 保存、恢复和删除图谱视图 |
+| 图谱 | POST/PATCH | `/graph/entities/:id/merge`、`/graph/entities/:id/aliases` | 实体软合并与别名管理 |
+| 图谱 | POST/PATCH/DELETE | `/graph/relations`、`/graph/relations/:id`、`/graph/relations/:id/review` | 人工关系新增、编辑、审核和删除 |
 
 ## 🧩 关键流程
 
@@ -171,9 +182,10 @@ Upload (multipart)
 ```
 User question
   → hybridSearch(topK=5)  [BM25 + 向量 + RRF]
+  → 无结果时返回问题改写建议
   → 拼装 prompt [context with [1][2] markers]
   → qwen-plus streamChat (SSE)
-  → 保存消息 + citations
+  → 保存消息 + citations + 可选满意度反馈
 ```
 
 ## ⚙️ 环境变量
@@ -211,12 +223,19 @@ User question
 
 ### P0 - 核心功能
 
-- [ ] 知识图谱 3D 可视化
-- [ ] 图谱节点筛选与搜索定位
-- [ ] 图谱节点编辑（增删改）
-- [ ] 图谱路径查询
-- [ ] 问答满意度评价
-- [ ] 多轮对话
+- [x] 图谱证据面板（关系来源、证据原文、置信度）
+- [x] 图谱筛选与搜索定位增强
+- [x] 实体合并与别名管理
+- [x] 图谱路径查询
+- [x] 关系编辑与审核
+- [x] 图谱视图保存
+- [x] 图谱 PNG/SVG/JSON 导出
+- [x] 检索结果高亮
+- [x] 检索结果排序
+- [x] 检索历史
+- [x] 问答满意度评价
+- [x] 问题改写推荐
+- [x] 多轮对话
 
 ### P1 - 重要功能
 

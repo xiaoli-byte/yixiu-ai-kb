@@ -53,10 +53,16 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
       loading,
       error,
       centerNodeId,
+      selectedNodeId = null,
+      selectedEdgeId = null,
+      highlightNodeIds = [],
+      highlightEdgeIds = [],
       maxNodes,
       maxEdges,
       onCenterChange,
       onExpand,
+      onNodeSelect,
+      onEdgeSelect,
     } = props;
 
     const shellRef = useRef<HTMLElement>(null);
@@ -110,6 +116,7 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
           if (Date.now() - lastInteractionAt.current < DBLCLICK_DEBOUNCE_MS) {
             return;
           }
+          onNodeSelect?.(id);
           if (id === centerId) return;
           setCenterId(id);
           onCenterChange?.(id);
@@ -118,13 +125,14 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
           lastInteractionAt.current = Date.now();
           onExpand?.(id);
         },
+        onEdgeClick: (id) => onEdgeSelect?.(id),
       }),
-      [centerId, onCenterChange, onExpand],
+      [centerId, onCenterChange, onEdgeSelect, onExpand, onNodeSelect],
     );
 
     useEffect(() => {
       let disposed = false;
-        let unbind: (() => void) | null = null;
+      let unbind: (() => void) | null = null;
 
       async function mountOrUpdate(): Promise<() => void> {
         const canvas = canvasRef.current;
@@ -147,6 +155,8 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
               state: {
                 hover: { lineWidth: 4, halo: true, haloStrokeOpacity: 0.4 },
                 related: { lineWidth: 3 },
+                highlighted: { lineWidth: 4, stroke: "#0ea5e9" },
+                selected: { lineWidth: 5, stroke: "#0f172a", halo: true, haloStrokeOpacity: 0.3 },
                 dim: { opacity: 0.18 },
               },
             },
@@ -157,6 +167,8 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
               state: {
                 hover: { lineWidth: 3, stroke: "#475569" },
                 related: { lineWidth: 2.4, stroke: "#64748b" },
+                highlighted: { lineWidth: 3, stroke: "#0ea5e9" },
+                selected: { lineWidth: 3.4, stroke: "#0f172a" },
                 dim: { opacity: 0.12 },
               },
             },
@@ -200,8 +212,33 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
       const instance = graphRef.current;
       if (!instance || display.nodes.length === 0) return;
 
+      const states: Record<string, string[]> = {};
+      const protectedIds = new Set<string>();
+      const addState = (id: string | null | undefined, state: string) => {
+        if (!id) return;
+        states[id] = states[id] ?? [];
+        if (!states[id].includes(state)) states[id].push(state);
+      };
+
+      for (const id of highlightNodeIds) {
+        protectedIds.add(id);
+        addState(id, "highlighted");
+      }
+      for (const id of highlightEdgeIds) {
+        protectedIds.add(id);
+        addState(id, "highlighted");
+      }
+      if (selectedNodeId) {
+        protectedIds.add(selectedNodeId);
+        addState(selectedNodeId, "selected");
+      }
+      if (selectedEdgeId) {
+        protectedIds.add(selectedEdgeId);
+        addState(selectedEdgeId, "selected");
+      }
+
       if (!hoveredId) {
-        instance.setElementState({}, true);
+        instance.setElementState(states, true);
         return;
       }
 
@@ -211,28 +248,27 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
         if (edge.target === hoveredId) neighborIds.add(edge.source);
       }
 
-      const states: Record<string, string[]> = {};
-      states[hoveredId] = ["hover"];
+      addState(hoveredId, "hover");
       for (const id of neighborIds) {
         if (id === hoveredId) continue;
-        states[id] = ["related"];
+        addState(id, "related");
       }
       for (const node of display.nodes) {
-        if (!neighborIds.has(node.id)) {
-          states[node.id] = ["dim"];
+        if (!neighborIds.has(node.id) && !protectedIds.has(node.id)) {
+          addState(node.id, "dim");
         }
       }
       for (const edge of display.edges) {
         const isHoverEdge =
           edge.source === hoveredId || edge.target === hoveredId;
         if (isHoverEdge) {
-          states[edge.id] = ["hover"];
-        } else {
-          states[edge.id] = ["dim"];
+          addState(edge.id, "hover");
+        } else if (!protectedIds.has(edge.id)) {
+          addState(edge.id, "dim");
         }
       }
       instance.setElementState(states, true);
-    }, [hoveredId, display]);
+    }, [hoveredId, display, highlightNodeIds, highlightEdgeIds, selectedNodeId, selectedEdgeId]);
 
     useEffect(
       () => () => {

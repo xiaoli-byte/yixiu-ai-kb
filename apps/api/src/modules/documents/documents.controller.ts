@@ -61,11 +61,7 @@ export class DocumentsController {
 
   @Post("upload")
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.CREATE })
-  @UseInterceptors(
-    FileInterceptor("file", {
-      limits: { fileSize: Number(process.env.DOCUMENT_UPLOAD_MAX_MB) * 1024 * 1024 },
-    }),
-  )
+  @UseInterceptors(FileInterceptor("file"))
   @RateLimit({ ...RateLimitPolicies.upload, message: "上传过于频繁，请稍后再试" })
   async upload(
     @UploadedFile() file: Express.Multer.File,

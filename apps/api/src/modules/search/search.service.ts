@@ -1,6 +1,9 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { randomUUID } from "crypto";
 import { DatabaseService } from "../../database/database.service";
 import { EmbeddingsService } from "../embeddings/embeddings.service";
+
+export type SearchSortBy = "relevance" | "time" | "name";
 
 export interface SearchHit {
   chunkId: string;
@@ -14,6 +17,18 @@ export interface SearchHit {
   score: number;
   sources: Array<"bm25" | "vector" | "trgm">;
   page: number | null;  // PDF 页码（1-based）
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+
+export interface SearchHistoryItem {
+  id: string;
+  query: string;
+  mode: "hybrid" | "semantic" | "keyword";
+  sortBy: SearchSortBy;
+  topK: number;
+  resultCount: number;
+  createdAt: string;
 }
 
 @Injectable()
@@ -116,53 +131,59 @@ export class SearchService {
   async search(opts: {
     q: string;
     mode: "hybrid" | "semantic" | "keyword";
+    sortBy?: SearchSortBy;
     topK: number;
     tags?: string[];
   }): Promise<{ hits: SearchHit[]; took: number; hasRelevantResults: boolean }> {
     const t0 = Date.now();
     const tenantId = this.db.tenantId!;
     const k = Math.min(opts.topK || 10, 50);
+    const candidateLimit = 50;
+    const sortBy = opts.sortBy ?? "relevance";
 
     if (opts.mode === "keyword") {
-      const hits = await this.bm25(tenantId, opts.q, k);
+      const hits = await this.bm25(tenantId, opts.q, candidateLimit);
       const deduped = this.deduplicateByDoc(hits, this.MAX_CHUNKS_PER_DOC);
-      return { hits: deduped, took: Date.now() - t0, hasRelevantResults: deduped.length > 0 };
+      const sorted = this.sortHits(deduped, sortBy).slice(0, k);
+      return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
     }
     if (opts.mode === "semantic") {
-      const hits = await this.safeVector(tenantId, opts.q, 50);
+      const hits = await this.safeVector(tenantId, opts.q, candidateLimit);
       const filtered = hits.filter((h) => h.score >= this.VECTOR_THRESHOLD);
       const deduped = this.deduplicateByDoc(filtered, this.MAX_CHUNKS_PER_DOC);
-      return { hits: deduped.slice(0, k), took: Date.now() - t0, hasRelevantResults: deduped.length > 0 };
+      const sorted = this.sortHits(deduped, sortBy).slice(0, k);
+      return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
     }
 
     // hybrid - 多策略检索：BM25 精确 + 向量 + trigram 兜底
     const [bm25Hits, vecHits] = await Promise.all([
-      this.bm25(tenantId, opts.q, 50),
-      this.safeVector(tenantId, opts.q, 50),
+      this.bm25(tenantId, opts.q, candidateLimit),
+      this.safeVector(tenantId, opts.q, candidateLimit),
     ]);
 
     // 向量结果过滤低分（阈值降低以提高召回）
     const filteredVec = vecHits.filter((h) => h.score >= this.VECTOR_THRESHOLD);
 
     // 两路 RRF 融合
-    let rrf = this.rrfFuse(bm25Hits, filteredVec, this.RRF_K, k);
+    let rrf = this.rrfFuse(bm25Hits, filteredVec, this.RRF_K, candidateLimit);
 
     // 如果 RRF 结果为空，使用 trigram 模糊搜索作为兜底
     if (rrf.length === 0) {
       this.logger.debug("RRF 无结果，触发 trigram 兜底检索");
-      const trgmHits = await this.trgmSearch(tenantId, opts.q, k);
+      const trgmHits = await this.trgmSearch(tenantId, opts.q, candidateLimit);
       if (trgmHits.length > 0) {
-        rrf = this.rrfFuseTrgm(trgmHits, this.RRF_K, k);
+        rrf = this.rrfFuseTrgm(trgmHits, this.RRF_K, candidateLimit);
       }
     }
 
     const deduped = this.deduplicateByDoc(rrf, this.MAX_CHUNKS_PER_DOC);
+    const sorted = this.sortHits(deduped, sortBy).slice(0, k);
 
     this.logger.debug(
-      `search: bm25=${bm25Hits.length} vec=${filteredVec.length} -> rrf=${rrf.length} deduped=${deduped.length}`,
+      `search: bm25=${bm25Hits.length} vec=${filteredVec.length} -> rrf=${rrf.length} deduped=${deduped.length} sorted=${sorted.length}`,
     );
 
-    return { hits: deduped, took: Date.now() - t0, hasRelevantResults: deduped.length > 0 };
+    return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
   }
 
   /**
@@ -304,6 +325,8 @@ export class SearchService {
               c.page            AS page,
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
+              GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
+              COALESCE(dc.created_at, d.created_at) AS "createdAt",
               ts_rank_cd(c.tsv_zh, to_tsquery('zhcfg', $1)) +
               ts_rank_cd(c.tsv_simple, to_tsquery('simple', lower($1))) AS rank,
               c.text AS highlight
@@ -319,7 +342,7 @@ export class SearchService {
        LIMIT $3`,
       [tsQuery, tenantId, k],
     );
-    return rows.map((r) => this.mapRowToHit(r, "bm25"));
+    return rows.map((r) => this.mapRowToHit(r, "bm25", q));
   }
 
   /**
@@ -336,6 +359,8 @@ export class SearchService {
                 c.page            AS page,
                 COALESCE(dc.title, d.title) AS "documentTitle",
                 COALESCE(dc.mime, d.mime) AS mime,
+                GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
+                COALESCE(dc.created_at, d.created_at) AS "createdAt",
                 ts_rank_cd(c.tsv_zh, plainto_tsquery('zhcfg', $1)) AS rank,
                 ts_headline('zhcfg', c.text, plainto_tsquery('zhcfg', $1),
                   'StartSel=<mark>,StopSel=</mark>,MaxWords=50,MinWords=10,ShortWord=1,HighlightAll=0') AS highlight
@@ -348,7 +373,7 @@ export class SearchService {
          LIMIT $3`,
         [q, tenantId, k],
       );
-      return rows.map((r) => this.mapRowToHit(r, "bm25"));
+      return rows.map((r) => this.mapRowToHit(r, "bm25", q));
     } catch (e: any) {
       this.logger.warn(`中文检索失败，尝试降级到通用分词: ${e.message}`);
       return this.bm25English(tenantId, q, k);
@@ -368,6 +393,8 @@ export class SearchService {
               c.page            AS page,
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
+              GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
+              COALESCE(dc.created_at, d.created_at) AS "createdAt",
               ts_rank_cd(c.tsv_simple, plainto_tsquery('simple', lower($1))) AS rank,
               ts_headline('simple', c.text, plainto_tsquery('simple', lower($1)),
                 'StartSel=<mark>,StopSel=</mark>,MaxWords=50,MinWords=10') AS highlight
@@ -380,7 +407,7 @@ export class SearchService {
        LIMIT $3`,
       [q, tenantId, k],
     );
-    return rows.map((r) => this.mapRowToHit(r, "bm25"));
+    return rows.map((r) => this.mapRowToHit(r, "bm25", q));
   }
 
   /**
@@ -398,6 +425,8 @@ export class SearchService {
               c.page            AS page,
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
+              GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
+              COALESCE(dc.created_at, d.created_at) AS "createdAt",
               1 - (c.embedding <=> $1::vector) AS similarity
        FROM chunks c
        LEFT JOIN document_contents dc ON dc.id = c.content_id
@@ -415,10 +444,12 @@ export class SearchService {
       mime: r.mime,
       idx: r.idx,
       text: r.text,
-      highlight: r.text.slice(0, 200),
+      highlight: this.buildSafeHighlight(r.text, q),
       score: Number(r.similarity) || 0,
       sources: ["vector"] as const,
       page: r.page ?? null,
+      updatedAt: this.toIsoString(r.updatedAt),
+      createdAt: this.toIsoString(r.createdAt),
     }));
   }
 
@@ -449,6 +480,8 @@ export class SearchService {
                 c.page            AS page,
                 COALESCE(dc.title, d.title) AS "documentTitle",
                 COALESCE(dc.mime, d.mime) AS mime,
+                GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
+                COALESCE(dc.created_at, d.created_at) AS "createdAt",
                 similarity(c.text, $1) AS similarity,
                 ts_headline('simple', c.text, plainto_tsquery('simple', $1),
                   'StartSel=<mark>,StopSel=</mark>,MaxWords=50,MinWords=10') AS highlight
@@ -469,10 +502,12 @@ export class SearchService {
         mime: r.mime,
         idx: r.idx,
         text: r.text,
-        highlight: r.highlight || r.text.slice(0, 200),
+        highlight: this.normalizeHighlight(r.highlight, r.text, q),
         score: Number(r.similarity) || 0,
         sources: ["trgm"] as const,
         page: r.page ?? null,
+        updatedAt: this.toIsoString(r.updatedAt),
+        createdAt: this.toIsoString(r.createdAt),
       }));
     } catch (e: any) {
       this.logger.warn(`Trigram 检索失败: ${e.message}`);
@@ -483,7 +518,7 @@ export class SearchService {
   /**
    * 将数据库行映射为 SearchHit
    */
-  private mapRowToHit(r: any, source: "bm25" | "vector"): SearchHit {
+  private mapRowToHit(r: any, source: "bm25" | "vector", q: string): SearchHit {
     return {
       chunkId: r.chunkId,
       documentId: r.documentId,
@@ -492,10 +527,12 @@ export class SearchService {
       mime: r.mime || "application/pdf",
       idx: r.idx,
       text: r.text,
-      highlight: r.highlight || r.text.slice(0, 200),
+      highlight: this.normalizeHighlight(r.highlight, r.text, q),
       score: Number(r.rank) || 0,
       sources: [source],
       page: r.page ?? null,
+      updatedAt: this.toIsoString(r.updatedAt),
+      createdAt: this.toIsoString(r.createdAt),
     };
   }
 
@@ -511,11 +548,247 @@ export class SearchService {
       mime: r.mime || "application/pdf",
       idx: r.idx,
       text: r.text,
-      highlight: r.highlight || r.text.slice(0, 200),
+      highlight: this.normalizeHighlight(r.highlight, r.text, ""),
       score: Number(r.similarity) || 0,
       sources: ["trgm"],
       page: r.page ?? null,
+      updatedAt: this.toIsoString(r.updatedAt),
+      createdAt: this.toIsoString(r.createdAt),
     };
+  }
+
+  private normalizeHighlight(highlight: unknown, text: unknown, q: string): string {
+    const rawHighlight = String(highlight ?? "");
+    const sanitized = rawHighlight.trim() ? this.sanitizeHighlight(rawHighlight) : "";
+    if (sanitized.includes("<mark>")) return sanitized;
+    return this.buildSafeHighlight(String(text ?? rawHighlight), q);
+  }
+
+  private buildSafeHighlight(text: string, q: string, maxChars = 220): string {
+    const terms = this.buildHighlightTerms(q);
+    const snippet = this.extractSnippet(text, terms, maxChars);
+    if (terms.length === 0) return this.escapeHtml(snippet);
+
+    const pattern = this.buildHighlightPattern(terms);
+    let result = "";
+    let lastIndex = 0;
+
+    for (const match of snippet.matchAll(pattern)) {
+      const value = match[0];
+      const index = match.index ?? 0;
+      result += this.escapeHtml(snippet.slice(lastIndex, index));
+      result += `<mark>${this.escapeHtml(value)}</mark>`;
+      lastIndex = index + value.length;
+    }
+
+    result += this.escapeHtml(snippet.slice(lastIndex));
+    return result;
+  }
+
+  private sanitizeHighlight(value: string): string {
+    return value
+      .split(/(<\/?mark>)/gi)
+      .map((part) => {
+        const tag = part.toLowerCase();
+        if (tag === "<mark>" || tag === "</mark>") return tag;
+        return this.escapeHtml(part);
+      })
+      .join("");
+  }
+
+  private buildHighlightTerms(q: string): string[] {
+    const terms = [...this.buildKeywordTerms(q)];
+    const trimmed = q.trim();
+    if (trimmed.length >= 2 && trimmed.length <= 80) terms.push(trimmed);
+
+    const seen = new Set<string>();
+    return terms
+      .map((term) => term.trim())
+      .filter((term) => term.length >= 2)
+      .filter((term) => {
+        const key = term.toLocaleLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 12);
+  }
+
+  private extractSnippet(text: string, terms: string[], maxChars: number): string {
+    if (text.length <= maxChars) return text;
+
+    const lowerText = text.toLocaleLowerCase();
+    const firstMatch = terms.reduce<number>((best, term) => {
+      const index = lowerText.indexOf(term.toLocaleLowerCase());
+      if (index === -1) return best;
+      return best === -1 ? index : Math.min(best, index);
+    }, -1);
+
+    if (firstMatch === -1) return text.slice(0, maxChars);
+
+    const contextBefore = Math.floor(maxChars * 0.35);
+    let start = Math.max(0, firstMatch - contextBefore);
+    let end = Math.min(text.length, start + maxChars);
+    start = Math.max(0, end - maxChars);
+
+    const prefix = start > 0 ? "..." : "";
+    const suffix = end < text.length ? "..." : "";
+    return `${prefix}${text.slice(start, end)}${suffix}`;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  private buildHighlightPattern(terms: string[]): RegExp {
+    const keywordChars = "[A-Za-z0-9/_+-]";
+    const parts = terms.map((term) => {
+      const escaped = this.escapeRegExp(term);
+      if (/^[A-Za-z0-9/_+-]+$/.test(term)) {
+        return `(?<!${keywordChars})${escaped}(?!${keywordChars})`;
+      }
+      return escaped;
+    });
+    return new RegExp(parts.join("|"), "giu");
+  }
+
+  private sortHits(hits: SearchHit[], sortBy: SearchSortBy): SearchHit[] {
+    return [...hits].sort((a, b) => {
+      if (sortBy === "time") {
+        return this.timestampOf(b) - this.timestampOf(a) || b.score - a.score || a.idx - b.idx;
+      }
+      if (sortBy === "name") {
+        return (
+          a.documentTitle.localeCompare(b.documentTitle, undefined, { sensitivity: "base" }) ||
+          a.idx - b.idx ||
+          b.score - a.score
+        );
+      }
+      return b.score - a.score || this.timestampOf(b) - this.timestampOf(a) || a.idx - b.idx;
+    });
+  }
+
+  private timestampOf(hit: SearchHit): number {
+    const value = hit.updatedAt || hit.createdAt;
+    if (!value) return 0;
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  private toIsoString(value: unknown): string | null {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString();
+    const date = new Date(String(value));
+    return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+  }
+
+  async recordHistory(opts: {
+    q: string;
+    mode: "hybrid" | "semantic" | "keyword";
+    sortBy: SearchSortBy;
+    topK: number;
+    resultCount: number;
+    tenantId?: string;
+    userId?: string;
+  }): Promise<void> {
+    const tenantId = opts.tenantId || this.db.tenantId;
+    const userId = opts.userId || this.db.userId;
+    if (!tenantId || !userId) return;
+
+    try {
+      await this.db.query(
+        `INSERT INTO search_histories
+           (id, tenant_id, user_id, query, mode, sort_by, top_k, result_count)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          randomUUID(),
+          tenantId,
+          userId,
+          opts.q.trim(),
+          opts.mode,
+          opts.sortBy,
+          opts.topK,
+          opts.resultCount,
+        ],
+      );
+    } catch (e: any) {
+      this.logger.warn(`记录搜索历史失败: ${e.message}`);
+    }
+  }
+
+  async listHistory(opts: { limit?: number; tenantId?: string; userId?: string } = {}): Promise<SearchHistoryItem[]> {
+    const tenantId = opts.tenantId || this.db.tenantId;
+    const userId = opts.userId || this.db.userId;
+    if (!tenantId || !userId) return [];
+
+    const limit = this.clampHistoryLimit(opts.limit);
+    const rows = await this.db.query<any>(
+      `SELECT id,
+              query,
+              mode,
+              sort_by AS "sortBy",
+              top_k AS "topK",
+              result_count AS "resultCount",
+              created_at AS "createdAt"
+       FROM search_histories
+       WHERE tenant_id = $1 AND user_id = $2
+       ORDER BY created_at DESC
+       LIMIT $3`,
+      [tenantId, userId, limit],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      query: row.query,
+      mode: row.mode,
+      sortBy: row.sortBy || "relevance",
+      topK: Number(row.topK) || 10,
+      resultCount: Number(row.resultCount) || 0,
+      createdAt: this.toIsoString(row.createdAt) || new Date(0).toISOString(),
+    }));
+  }
+
+  async deleteHistory(id: string, opts: { tenantId?: string; userId?: string } = {}): Promise<{ deleted: number }> {
+    const tenantId = opts.tenantId || this.db.tenantId;
+    const userId = opts.userId || this.db.userId;
+    if (!tenantId || !userId) return { deleted: 0 };
+
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM search_histories
+       WHERE tenant_id = $1 AND user_id = $2 AND id = $3
+       RETURNING id`,
+      [tenantId, userId, id],
+    );
+    return { deleted: rows.length };
+  }
+
+  async clearHistory(opts: { tenantId?: string; userId?: string } = {}): Promise<{ deleted: number }> {
+    const tenantId = opts.tenantId || this.db.tenantId;
+    const userId = opts.userId || this.db.userId;
+    if (!tenantId || !userId) return { deleted: 0 };
+
+    const rows = await this.db.query<{ id: string }>(
+      `DELETE FROM search_histories
+       WHERE tenant_id = $1 AND user_id = $2
+       RETURNING id`,
+      [tenantId, userId],
+    );
+    return { deleted: rows.length };
+  }
+
+  private clampHistoryLimit(limit = 20): number {
+    if (!Number.isFinite(limit)) return 20;
+    return Math.min(Math.max(Math.trunc(limit), 1), 100);
   }
 
   /**

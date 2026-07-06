@@ -160,6 +160,8 @@ const envShape = z
   })
   .passthrough();
 
+export type AppEnv = z.infer<typeof envShape>;
+
 export function projectRootDir() {
   return resolve(__dirname, "../../../..");
 }

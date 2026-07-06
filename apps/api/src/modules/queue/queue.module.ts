@@ -1,11 +1,11 @@
 import { Global, Module } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Queue, Worker, QueueEvents } from "bullmq";
 import IORedis from "ioredis";
 import { QueueService } from "./queue.service";
 import { DocumentProcessor } from "./document.processor";
 import { DocumentsModule } from "../documents/documents.module";
 import { RagModule } from "../rag/rag.module";
+import { AppConfigService } from "../../config/app-config.service";
 
 @Global()
 @Module({
@@ -13,9 +13,9 @@ import { RagModule } from "../rag/rag.module";
   providers: [
     {
       provide: "REDIS",
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) =>
-        new IORedis(config.getOrThrow<string>("REDIS_URL"), {
+      inject: [AppConfigService],
+      useFactory: (config: AppConfigService) =>
+        new IORedis(config.redis.url, {
           maxRetriesPerRequest: null,
         }),
     },

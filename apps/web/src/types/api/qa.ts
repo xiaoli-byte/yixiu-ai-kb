@@ -15,7 +15,21 @@ export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   citations: Citation[];
+  feedback: MessageFeedback;
   createdAt: string;
+}
+
+export type MessageFeedbackRating = "up" | "down" | "none";
+
+export interface MessageFeedback {
+  rating: MessageFeedbackRating;
+  text: string | null;
+  updatedAt: string | null;
+}
+
+export interface UpdateMessageFeedbackRequest {
+  rating: MessageFeedbackRating;
+  feedbackText?: string | null;
 }
 
 export interface Conversation {

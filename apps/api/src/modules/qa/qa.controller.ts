@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Res,
@@ -39,7 +40,22 @@ export class QaController {
 
   @Get("conversations/:id")
   async get(@Param("id") id: string, @CurrentUser("sub") userId: string) {
-    return this.qa.getConversation(id, userId);
+    return this.qa.getConversation(id, userId, this.db.tenantId!);
+  }
+
+  @Patch("messages/:id/feedback")
+  async updateMessageFeedback(
+    @Param("id") id: string,
+    @Body() body: { rating?: string; feedbackText?: string | null },
+    @CurrentUser("sub") userId: string,
+  ) {
+    return this.qa.updateMessageFeedback({
+      messageId: id,
+      tenantId: this.db.tenantId!,
+      userId,
+      rating: body.rating || "none",
+      feedbackText: body.feedbackText,
+    });
   }
 
   @Get("chunks/:id")
@@ -67,6 +83,32 @@ export class QaController {
   ) {
     const tenantId = this.db.tenantId!;
     return this.qa.getDocumentPresignedUrl(id, tenantId, userId);
+  }
+
+  @Get("documents/:id/file")
+  async getDocumentFile(
+    @Param("id") id: string,
+    @Res() res: Response,
+  ) {
+    const tenantId = this.db.tenantId!;
+    const file = await this.qa.getDocumentFile(id, tenantId);
+    const encodedTitle = encodeURIComponent(file.title);
+
+    res.setHeader("Content-Type", file.mime);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${encodedTitle}"; filename*=UTF-8''${encodedTitle}`,
+    );
+    res.setHeader("Cache-Control", "private, no-store");
+
+    file.stream.on("error", () => {
+      if (!res.headersSent) {
+        res.status(500).end();
+        return;
+      }
+      res.destroy();
+    });
+    file.stream.pipe(res);
   }
 
   @Get("documents/:id/markdown")
@@ -134,7 +176,7 @@ export class QaController {
       // citations 在 LLM 完成后由 service 调用，此时才发往前端
       onCitations: (citations) => write({ type: "citations", citations }),
       // 无检索结果时通知前端，前端显示提示但不中断流程
-      onNoResults: () => write({ type: "no_results" }),
+      onNoResults: (suggestions) => write({ type: "no_results", suggestions }),
       onDone: (messageId, conversationId) => {
         write({ type: "done", messageId, conversationId });
         end();

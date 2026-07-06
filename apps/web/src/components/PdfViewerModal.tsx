@@ -11,6 +11,7 @@ import {
   FileText,
   Download,
 } from "lucide-react";
+import { useAuth } from "@/lib/store";
 import qaApi from "@/services/qa";
 
 interface PdfViewerProps {
@@ -33,6 +34,7 @@ export default function PdfViewerModal({
   const [page, setPage] = useState(initialPage ?? 1);
   const [scale, setScale] = useState(1.2);
   const [downloading, setDownloading] = useState(false);
+  const { accessToken } = useAuth();
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -50,7 +52,10 @@ export default function PdfViewerModal({
     if (!pdfUrl || downloading) return;
     setDownloading(true);
     try {
-      const res = await fetch(pdfUrl);
+      const res = await fetch(pdfUrl, {
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`Download failed with ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -76,7 +81,10 @@ export default function PdfViewerModal({
         // v6 ESM: named export, workerSrc still required
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = `${window.location.origin}/pdf.worker.min.mjs`;
-        const pdf = await pdfjsLib.getDocument({ url: pdfUrl }).promise;
+        const pdf = await pdfjsLib.getDocument({
+          url: pdfUrl,
+          httpHeaders: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+        }).promise;
         if (cancelled) return;
         pdfDocRef.current = pdf;
         setNumPages(pdf.numPages);
@@ -89,7 +97,7 @@ export default function PdfViewerModal({
     return () => {
       cancelled = true;
     };
-  }, [pdfUrl]);
+  }, [pdfUrl, accessToken]);
 
   useEffect(() => {
     const pdf = pdfDocRef.current;

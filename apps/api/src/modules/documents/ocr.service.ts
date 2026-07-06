@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { AppConfigService } from "../../config/app-config.service";
 
 type OcrResponse = Record<string, unknown>;
 
@@ -7,7 +7,7 @@ type OcrResponse = Record<string, unknown>;
 export class OcrService {
   private readonly logger = new Logger(OcrService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly config: AppConfigService) {}
 
   async recognizeImage(buffer: Buffer, mime: string, filename: string): Promise<string> {
     const text = await this.recognizeViaPaddleOcr(buffer, mime, filename);
@@ -22,10 +22,7 @@ export class OcrService {
 
   private async recognizeViaPaddleOcr(buffer: Buffer, mime: string, filename: string): Promise<string> {
     const url = this.buildRecognizeUrl();
-    const timeoutMs = Number(this.config.getOrThrow<string>("PADDLEOCR_TIMEOUT_MS"));
-    const uploadField = this.config.getOrThrow<string>("PADDLEOCR_UPLOAD_FIELD");
-    const language = this.config.getOrThrow<string>("PADDLEOCR_LANG");
-    const languageField = this.config.getOrThrow<string>("PADDLEOCR_LANG_FIELD");
+    const { timeoutMs, uploadField, language, languageField } = this.config.ocr;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -74,7 +71,7 @@ export class OcrService {
   }
 
   private buildRecognizeUrl(): string {
-    return this.config.getOrThrow<string>("PADDLEOCR_HTTP_URL").trim();
+    return this.config.ocr.httpUrl;
   }
 
   private parseResponseBody(body: string): OcrResponse {

@@ -185,12 +185,32 @@ model QAMessage {
   role           String
   content        String
   citations      Json?
+  feedbackRating String?  @map("feedback_rating") @db.VarChar(20)
+  feedbackText   String?  @map("feedback_text")
+  feedbackAt     DateTime? @map("feedback_at") @db.Timestamptz(6)
   createdAt      DateTime @default(now()) @map("created_at")
 
   conversation QAConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
+  @@index([feedbackRating], map: "qa_messages_feedback_rating_idx")
   @@map("qa_messages")
+}
+
+model SearchHistory {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  userId      String   @map("user_id")
+  query       String
+  mode        String   @default("hybrid") @db.VarChar(30)
+  sortBy      String   @default("relevance") @map("sort_by") @db.VarChar(30)
+  topK        Int      @default(10) @map("top_k")
+  resultCount Int      @default(0) @map("result_count")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, userId, createdAt(sort: Desc)], map: "search_histories_tenant_user_created_idx")
+  @@index([tenantId, userId, query], map: "search_histories_tenant_user_query_idx")
+  @@map("search_histories")
 }
 
 model StructuredFact {
@@ -227,6 +247,11 @@ model KnowledgeNode {
   name         String
   type         String
   aliases      Json     @default("[]")
+  mergeStatus  String   @default("ACTIVE") @map("merge_status")
+  mergedIntoNodeId String? @map("merged_into_node_id")
+  mergedBy     String?  @map("merged_by")
+  mergedReason String?  @map("merged_reason")
+  mergedAt     DateTime? @map("merged_at")
   sourceCount  Int      @default(0) @map("source_count")
   mentionCount Int      @default(0) @map("mention_count")
   createdAt    DateTime @default(now()) @map("created_at")
@@ -234,9 +259,11 @@ model KnowledgeNode {
 
   outgoingEdges KnowledgeEdge[] @relation("KnowledgeEdgeSource")
   incomingEdges KnowledgeEdge[] @relation("KnowledgeEdgeTarget")
+  changes       KnowledgeGraphChange[] @relation("KnowledgeGraphChangeNode")
 
   @@unique([tenantId, canonicalKey])
   @@index([tenantId, type])
+  @@index([tenantId, mergeStatus])
   @@map("knowledge_nodes")
 }
 
@@ -250,15 +277,23 @@ model KnowledgeEdge {
   weight       Int      @default(1)
   evidenceCount Int    @default(0) @map("evidence_count")
   sourceCount   Int    @default(0) @map("source_count")
+  status       String   @default("ACTIVE")
+  reviewStatus String   @default("APPROVED") @map("review_status")
+  sourceType   String   @default("AI") @map("source_type")
+  editedBy     String?  @map("edited_by")
+  editedReason String?  @map("edited_reason")
+  deletedAt    DateTime? @map("deleted_at")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   sourceNode KnowledgeNode @relation("KnowledgeEdgeSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
   targetNode KnowledgeNode @relation("KnowledgeEdgeTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
   evidences  EdgeEvidence[]
+  changes    KnowledgeGraphChange[] @relation("KnowledgeGraphChangeEdge")
 
   @@unique([tenantId, edgeKey])
   @@index([tenantId, relationType])
+  @@index([tenantId, status, reviewStatus])
   @@map("knowledge_edges")
 }
 
@@ -271,6 +306,8 @@ model EdgeEvidence {
   chunkId           String?  @map("chunk_id")
   evidenceHash      String   @map("evidence_hash")
   evidenceText      String?  @map("evidence_text")
+  confidence        Float?
+  sourceType        String   @default("AI") @map("source_type")
   createdAt         DateTime @default(now()) @map("created_at")
 
   edge    KnowledgeEdge @relation(fields: [edgeId], references: [id], onDelete: Cascade)
@@ -280,6 +317,44 @@ model EdgeEvidence {
   @@index([tenantId, documentContentId])
   @@index([chunkId])
   @@map("edge_evidences")
+}
+
+model KnowledgeGraphChange {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  userId    String?  @map("user_id")
+  action    String
+  nodeId    String?  @map("node_id")
+  edgeId    String?  @map("edge_id")
+  reason    String?
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  node KnowledgeNode? @relation("KnowledgeGraphChangeNode", fields: [nodeId], references: [id], onDelete: SetNull)
+  edge KnowledgeEdge? @relation("KnowledgeGraphChangeEdge", fields: [edgeId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([nodeId])
+  @@index([edgeId])
+  @@map("knowledge_graph_changes")
+}
+
+model KnowledgeGraphView {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  userId      String   @map("user_id")
+  name        String
+  description String?
+  visibility  String   @default("PRIVATE")
+  filters     Json     @default("{}")
+  layout      Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, userId])
+  @@index([tenantId, visibility])
+  @@map("knowledge_graph_views")
 }
 
 model QARunLog {

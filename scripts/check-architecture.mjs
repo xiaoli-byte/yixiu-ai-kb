@@ -108,6 +108,24 @@ function checkPostgresDdl() {
   }
 }
 
+function checkPostgresBaseline() {
+  const baseline = join(
+    root,
+    "apps/api/src/database/prisma/migrations/0001_initial_baseline/migration.sql",
+  );
+  if (!existsSync(baseline)) {
+    addFailure("Prisma baseline migration is required at 0001_initial_baseline/migration.sql");
+  }
+
+  const dockerfile = join(root, "infra/docker/postgres/Dockerfile");
+  if (existsSync(dockerfile)) {
+    const text = readText(dockerfile);
+    if (/docker-entrypoint-initdb\.d\/init\.sql|COPY\s+init\.sql/i.test(text)) {
+      addFailure("Postgres Docker image must not auto-run historical init.sql business DDL");
+    }
+  }
+}
+
 function checkNeo4jDdl() {
   const allowedPrefixes = ["apps/api/src/database/neo4j/migrations/"];
   const allowedFiles = new Set(["apps/api/src/database/neo4j/migrate.ts"]);
@@ -141,6 +159,7 @@ checkAppEnvFiles();
 checkLegacyEnvKeys();
 checkProductionCompose();
 checkPostgresDdl();
+checkPostgresBaseline();
 checkNeo4jDdl();
 checkPackageScripts();
 

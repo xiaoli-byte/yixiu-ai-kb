@@ -8,10 +8,16 @@ export interface KnowledgeGraphProps {
   error?: string;
 
   centerNodeId?: string;
+  selectedNodeId?: string | null;
+  selectedEdgeId?: string | null;
+  highlightNodeIds?: string[];
+  highlightEdgeIds?: string[];
   maxNodes?: number;
   maxEdges?: number;
   onCenterChange?: (nodeId: string) => void;
   onExpand?: (nodeId: string) => void;
+  onNodeSelect?: (nodeId: string) => void;
+  onEdgeSelect?: (edgeId: string) => void;
 }
 
 export interface PositionedNode extends GraphNode {
@@ -54,6 +60,7 @@ export interface GraphInteractionHandlers {
   onHover: (id: string | null) => void;
   onClick: (id: string) => void;
   onDblClick: (id: string) => void;
+  onEdgeClick?: (id: string) => void;
 }
 
 export type { GraphData, GraphEdge, GraphNode };

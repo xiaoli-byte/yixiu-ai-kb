@@ -1,11 +1,10 @@
-import { Injectable, Logger, Inject, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, Inject, ForbiddenException } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
 import { PRISMA } from "../../database/database.service";
 import { DatabaseService } from "../../database/database.service";
 import { SearchService, SearchHit } from "../search/search.service";
 import { LlmService, ChatMessage } from "../llm/llm.service";
 import { StorageService } from "../storage/storage.service";
-import { ConfigService } from "@nestjs/config";
 import { RagFactExtractionService } from "../rag/rag-fact-extraction.service";
 import { RagFactsService } from "../rag/rag-facts.service";
 import { RagRouterService } from "../rag/rag-router.service";
@@ -17,6 +16,7 @@ import type {
   StructuredFactInput,
 } from "../rag/rag.types";
 import { v4 as uuid } from "uuid";
+import { AppConfigService } from "../../config/app-config.service";
 
 export interface Citation {
   index: number;
@@ -27,6 +27,28 @@ export interface Citation {
   mime: string;        // 文档 MIME 类型
   snippet: string;
   page: number | null;  // PDF 页码
+}
+
+export type QAMessageFeedbackRating = "up" | "down" | "none";
+
+export interface QAMessageFeedback {
+  rating: QAMessageFeedbackRating;
+  text: string | null;
+  updatedAt: string | null;
+}
+
+interface FeedbackRow {
+  feedbackRating: string | null;
+  feedbackText: string | null;
+  feedbackAt: Date | string | null;
+}
+
+interface QAMessageRow extends FeedbackRow {
+  id: string;
+  role: string;
+  content: string;
+  citations: unknown;
+  createdAt: Date;
 }
 
 @Injectable()
@@ -70,7 +92,7 @@ export class QaService {
     private readonly search: SearchService,
     private readonly llm: LlmService,
     private readonly storage: StorageService,
-    private readonly config: ConfigService,
+    private readonly config: AppConfigService,
     private readonly ragRouter: RagRouterService,
     private readonly ragFacts: RagFactsService,
     private readonly ragTools: RagToolsService,
@@ -85,26 +107,83 @@ export class QaService {
     });
   }
 
-  async getConversation(id: string, userId: string) {
+  async getConversation(id: string, userId: string, tenantId?: string) {
     const conv = await this.prisma.qAConversation.findFirst({
-      where: { id, userId },
-      include: { messages: { orderBy: { createdAt: "asc" } } },
+      where: { id, userId, ...(tenantId ? { tenantId } : {}) },
+      select: { id: true, title: true, createdAt: true, updatedAt: true },
     });
     if (!conv) return null;
+    const messages = await this.db.query<QAMessageRow>(
+      `SELECT id,
+              role,
+              content,
+              citations,
+              feedback_rating AS "feedbackRating",
+              feedback_text AS "feedbackText",
+              feedback_at AS "feedbackAt",
+              created_at AS "createdAt"
+       FROM qa_messages
+       WHERE conversation_id = $1
+       ORDER BY created_at ASC`,
+      [id],
+    );
     return {
       id: conv.id,
       title: conv.title,
       createdAt: conv.createdAt.toISOString(),
       updatedAt: conv.updatedAt.toISOString(),
-      messageCount: conv.messages.length,
-      messages: conv.messages.map((m: typeof conv.messages[number]) => ({
+      messageCount: messages.length,
+      messages: messages.map((m) => ({
         id: m.id,
         role: m.role as "user" | "assistant",
         content: m.content,
         citations: (m.citations as unknown as Citation[]) || [],
+        feedback: this.normalizeFeedback(m),
         createdAt: m.createdAt.toISOString(),
       })),
     };
+  }
+
+  async updateMessageFeedback(input: {
+    messageId: string;
+    tenantId: string;
+    userId: string;
+    rating: string;
+    feedbackText?: string | null;
+  }): Promise<QAMessageFeedback> {
+    const rating = this.normalizeFeedbackRating(input.rating);
+    const text = rating === "none" ? null : this.normalizeFeedbackText(input.feedbackText);
+    const message = await this.db.queryOne<{ id: string; role: string }>(
+      `SELECT m.id, m.role
+       FROM qa_messages m
+       JOIN qa_conversations c ON c.id = m.conversation_id
+       WHERE m.id = $1
+         AND c.user_id = $2
+         AND c.tenant_id = $3`,
+      [input.messageId, input.userId, input.tenantId],
+    );
+
+    if (!message) {
+      throw new ForbiddenException("Message not found or access denied");
+    }
+    if (message.role !== "assistant") {
+      throw new BadRequestException("Feedback is only allowed for assistant messages");
+    }
+
+    const persistedRating = rating === "none" ? null : rating;
+    const updated = await this.db.queryOne<FeedbackRow>(
+      `UPDATE qa_messages
+       SET feedback_rating = $2,
+           feedback_text = $3,
+           feedback_at = CASE WHEN $2 IS NULL THEN NULL ELSE NOW() END
+       WHERE id = $1
+       RETURNING feedback_rating AS "feedbackRating",
+                 feedback_text AS "feedbackText",
+                 feedback_at AS "feedbackAt"`,
+      [input.messageId, persistedRating, text],
+    );
+
+    return this.normalizeFeedback(updated);
   }
 
   async getChunk(id: string) {
@@ -183,11 +262,20 @@ export class QaService {
   async getDocumentPresignedUrl(docId: string, tenantId: string, userId: string) {
     const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
     if (!doc) throw new ForbiddenException("文档不存在");
-    const url = await this.storage.presignedGet(doc.storageKey, 3600);
     return {
-      url,
+      url: `/api/qa/documents/${encodeURIComponent(docId)}/file`,
       title: doc.title,
       mime: doc.mime,
+    };
+  }
+
+  async getDocumentFile(docId: string, tenantId: string) {
+    const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
+    if (!doc) throw new ForbiddenException("Document not found");
+    return {
+      stream: await this.storage.getObjectStream(doc.storageKey),
+      title: doc.title,
+      mime: doc.mime || "application/octet-stream",
     };
   }
 
@@ -241,7 +329,7 @@ export class QaService {
     topK?: number;
     onChunk: (content: string) => void;
     onCitations: (citations: Citation[]) => void;
-    onNoResults: () => void;
+    onNoResults: (suggestions: string[]) => void;
     onDone: (messageId: string, conversationId: string) => void;
     onError: (e: Error) => void;
   }) {
@@ -294,7 +382,8 @@ export class QaService {
       if (!hasRelevantResults) {
         // 无检索结果时，通知前端但不立即返回
         // 仍调用 LLM 生成有帮助的回复（基于通用知识）
-        opts.onNoResults();
+        const suggestions = this.buildNoResultSuggestions(opts.question, runRoute.retrievalQuery);
+        opts.onNoResults(suggestions);
       }
 
       // 3. 加载结构化事实并执行确定性工具
@@ -696,6 +785,65 @@ export class QaService {
     return this.compactText(withoutLabel, 300);
   }
 
+  private normalizeFeedback(row?: FeedbackRow | null): QAMessageFeedback {
+    const rating =
+      row?.feedbackRating === "up" || row?.feedbackRating === "down"
+        ? row.feedbackRating
+        : "none";
+    const updatedAt = row?.feedbackAt ? new Date(row.feedbackAt).toISOString() : null;
+    return {
+      rating,
+      text: row?.feedbackText || null,
+      updatedAt,
+    };
+  }
+
+  private normalizeFeedbackRating(rating: string): QAMessageFeedbackRating {
+    if (rating === "up" || rating === "down" || rating === "none") {
+      return rating;
+    }
+    throw new BadRequestException("rating must be one of: up, down, none");
+  }
+
+  private normalizeFeedbackText(text?: string | null) {
+    const normalized = (text || "").trim();
+    return normalized ? normalized.slice(0, 2000) : null;
+  }
+
+  private buildNoResultSuggestions(question: string, retrievalQuery?: string) {
+    const original = this.compactText(question, 180);
+    const retrieval = this.compactText(retrievalQuery || question, 180);
+    const focus = this.extractSuggestionFocus(retrieval || original) || "this topic";
+    const candidates = [
+      `Search exact keywords: ${focus}`,
+      `Which uploaded documents mention ${focus}?`,
+      `Summarize any records related to ${focus}.`,
+      `Broaden the question: what information is available about ${focus}?`,
+      `Try related terms for ${focus}.`,
+    ];
+    const seen = new Set<string>([original.toLowerCase()]);
+    return candidates.filter((item) => {
+      const key = item.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, 5);
+  }
+
+  private extractSuggestionFocus(text: string) {
+    const tokens = text.match(/[A-Za-z0-9][A-Za-z0-9/_+-]{1,30}|[\u4e00-\u9fa5]{2,12}/g) || [];
+    const unique: string[] = [];
+    const seen = new Set<string>();
+    for (const token of tokens) {
+      const key = token.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(token);
+      if (unique.length >= 8) break;
+    }
+    return this.compactText(unique.join(" ") || text, 120);
+  }
+
   private compactText(text: string, maxLength: number) {
     const compact = text
       .replace(/<[^>]+>/g, " ")
@@ -723,7 +871,7 @@ export class QaService {
   }
 
   private getCurrentDateContext() {
-    const timeZone = this.config.getOrThrow<string>("APP_TIME_ZONE");
+    const timeZone = this.config.appTimeZone;
     const now = new Date();
     const parts = new Intl.DateTimeFormat("zh-CN", {
       timeZone,

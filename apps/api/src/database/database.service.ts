@@ -1,5 +1,4 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Pool } from "pg";
 import { PrismaClient } from "@prisma/client";
 import { ClsService } from "nestjs-cls";
@@ -13,7 +12,6 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     @Inject(PG_POOL) public readonly pool: Pool,
     @Inject(PRISMA) public readonly prisma: PrismaClient,
     private readonly cls: ClsService,
-    private readonly config: ConfigService,
   ) {}
 
   async onModuleInit() {
@@ -33,6 +31,11 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   /** 当前请求的用户 ID（来自 CLS） */
   get userId(): string | undefined {
     return this.cls.get("userId");
+  }
+
+  /** 当前请求的用户角色（来自 CLS） */
+  get role(): string | undefined {
+    return this.cls.get("role");
   }
 
   async query<T = any>(sql: string, params: any[] = []): Promise<T[]> {

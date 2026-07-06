@@ -16,20 +16,38 @@ export type {
   GraphCategory,
   GraphData,
   GraphEdge,
+  GraphEdgeEvidenceResponse,
+  GraphEvidenceItem,
   GraphExploreQuery,
+  GraphFilterOptions,
   GraphNode,
+  GraphNodeEvidenceResponse,
+  GraphPathResponse,
   GraphRecentNode,
+  GraphSavedView,
   GraphSearchQuery,
   GraphStats,
   GraphTopNode,
   GraphWorkspaceResponse,
+  SaveGraphViewInput,
 } from "./graph";
 
 // QA types
-export type { Citation, ChatMessage, Conversation, ConversationDetail, PdfUrlResponse, MarkdownContentResponse, QaDebugRun } from "./qa";
+export type {
+  Citation,
+  ChatMessage,
+  Conversation,
+  ConversationDetail,
+  MessageFeedback,
+  MessageFeedbackRating,
+  MarkdownContentResponse,
+  PdfUrlResponse,
+  QaDebugRun,
+  UpdateMessageFeedbackRequest,
+} from "./qa";
 
 // Search types
-export type { SearchHit, SearchResponse, SearchRequest } from "./search";
+export type { SearchHit, SearchResponse, SearchRequest, SearchHistoryItem, SearchMode, SearchSortBy } from "./search";
 
 // User types
 export type { User as UserType, CreateUserData, UpdateUserData } from "./users";

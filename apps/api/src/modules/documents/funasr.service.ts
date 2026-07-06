@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { AppConfigService } from "../../config/app-config.service";
 
 interface FunAsrRecognizeResponse {
   text?: string;
@@ -12,11 +12,11 @@ interface FunAsrRecognizeResponse {
 export class FunAsrService {
   private readonly logger = new Logger(FunAsrService.name);
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly config: AppConfigService) {}
 
   async transcribe(buffer: Buffer, mime: string, filename: string): Promise<string> {
     const url = this.buildRecognizeUrl();
-    const timeoutMs = Number(this.config.getOrThrow<string>("FUNASR_TIMEOUT_MS"));
+    const { timeoutMs } = this.config.asr;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -66,7 +66,7 @@ export class FunAsrService {
   }
 
   private buildRecognizeUrl(): string {
-    const baseUrl = this.config.getOrThrow<string>("FUNASR_HTTP_URL");
+    const baseUrl = this.config.asr.httpUrl;
     const normalized = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
     return new URL("recognize", normalized).toString();
   }

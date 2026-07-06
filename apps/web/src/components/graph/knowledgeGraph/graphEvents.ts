@@ -22,16 +22,21 @@ export function bindGraphEvents(
   const handleDbl: G6EventHandler = (e) => {
     if (e?.target?.id) handlers.onDblClick(e.target.id);
   };
+  const handleEdgeClick: G6EventHandler = (e) => {
+    if (e?.target?.id) handlers.onEdgeClick?.(e.target.id);
+  };
 
   graph.on("node:pointerenter", handleEnter);
   graph.on("node:pointerleave", handleLeave);
   graph.on("node:click", handleClick);
   graph.on("node:dblclick", handleDbl);
+  graph.on("edge:click", handleEdgeClick);
 
   return () => {
     graph.off("node:pointerenter", handleEnter);
     graph.off("node:pointerleave", handleLeave);
     graph.off("node:click", handleClick);
     graph.off("node:dblclick", handleDbl);
+    graph.off("edge:click", handleEdgeClick);
   };
 }

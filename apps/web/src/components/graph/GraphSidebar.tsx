@@ -95,8 +95,12 @@ export function GraphSidebar({ stats, topNodes, recentNodes }: GraphSidebarProps
           {topNodes.length === 0 ? (
             <EmptyRow text="暂无热门知识点" />
           ) : (
-            topNodes.map((node, index) => (
-              <div key={node.id} className="grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2 text-sm">
+            topNodes.slice(0, 5).map((node, index) => (
+              <div
+                key={node.id}
+                className="grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2 text-sm"
+                title={node.label}
+              >
                 <span
                   className={cn(
                     "grid h-5 w-5 place-items-center rounded-full text-[11px] font-semibold",
@@ -107,7 +111,7 @@ export function GraphSidebar({ stats, topNodes, recentNodes }: GraphSidebarProps
                 </span>
                 <span className="truncate font-medium text-slate-700">{node.label}</span>
                 <span className="text-xs tabular-nums text-slate-400">
-                  关联数：{numberFormat.format(node.relationCount || node.documentCount || 0)}
+                  {numberFormat.format(node.relationCount || node.documentCount || 0)}
                 </span>
               </div>
             ))
@@ -117,9 +121,9 @@ export function GraphSidebar({ stats, topNodes, recentNodes }: GraphSidebarProps
 
       <section className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-soft">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-800">最近更新的节点</h2>
+          <h2 className="text-sm font-semibold text-slate-800">最近更新节点</h2>
           <Link href="/documents" className="text-xs font-medium text-brand-600 hover:text-brand-700">
-            更多
+            文档库
           </Link>
         </div>
         <div className="space-y-3">

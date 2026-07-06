@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
-const require = createRequire(import.meta.url);
+const apiRequire = createRequire(resolve(root, "apps/api/package.json"));
 const isWindows = process.platform === "win32";
 const pnpm = "pnpm";
 const rootEnv = loadRootEnv();
@@ -180,7 +180,7 @@ async function checkPostgres() {
     throw new Error("Missing DATABASE_URL in root .env/.env.local");
   }
 
-  const { Client } = require("pg");
+  const { Client } = apiRequire("pg");
   const client = new Client({
     connectionString,
     connectionTimeoutMillis: 3000,
@@ -262,15 +262,32 @@ try {
   process.exit(1);
 }
 
+writePrefix(
+  "dev",
+  "\x1b[90m",
+  "starting api, worker, and web. Run this script from the repository root with npm run dev or pnpm dev.",
+);
+
 for (const config of processes) {
   const spawnConfig = createSpawnConfig(config.args);
+  const childEnv = createEnv(config.env);
+  const workerFlag =
+    childEnv.DOCUMENT_WORKER_ENABLED == null
+      ? ""
+      : ` DOCUMENT_WORKER_ENABLED=${childEnv.DOCUMENT_WORKER_ENABLED}`;
+  writePrefix(
+    "dev",
+    "\x1b[90m",
+    `starting ${config.name}: pnpm ${config.args.join(" ")}${workerFlag}`,
+  );
   const child = spawn(spawnConfig.command, spawnConfig.args, {
     cwd: root,
-    env: createEnv(config.env),
+    env: childEnv,
     stdio: ["inherit", "pipe", "pipe"],
     detached: !isWindows,
   });
   children.push(child);
+  writePrefix(config.name, config.color, `started pid=${child.pid ?? "unknown"}${workerFlag}`);
   pipeWithPrefix(child, config.name, config.color);
 
   child.on("error", (error) => {
