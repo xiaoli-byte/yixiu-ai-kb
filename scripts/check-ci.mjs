@@ -22,12 +22,12 @@ const checks = [
   {
     name: "api types",
     command: "node",
-    args: [tscBin, "-p", "apps/api/tsconfig.json", "--noEmit"],
+    args: [tscBin, "-p", "apps/api/tsconfig.json", "--noEmit", "--incremental", "false"],
   },
   {
     name: "web types",
     command: "node",
-    args: [tscBin, "-p", "apps/web/tsconfig.json", "--noEmit"],
+    args: [tscBin, "-p", "apps/web/tsconfig.json", "--noEmit", "--incremental", "false"],
   },
   {
     name: "production compose config",
