@@ -49,7 +49,6 @@ __pycache__/
 *.pyc
 
 # docker
-docker-compose.prod.yml
 docker-compose.infra.yml
 
 .venv

@@ -4,6 +4,7 @@ RUN apk add --no-cache python3 make g++ curl openssl && npm install -g pnpm@9
 
 COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY .npmrc ./
+COPY config/ config/
 COPY packages/ packages/
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
@@ -29,9 +30,7 @@ COPY --from=builder /app/apps/api/src/database/prisma ./apps/api/src/database/pr
 COPY --from=builder /app/apps/api/dist/seed ./apps/api/dist/seed
 COPY --from=builder /app/apps/api/src/seed ./apps/api/src/seed
 COPY --from=builder /app/packages ./packages
-
-# .env.production 由 docker-compose 通过 env_file 挂载到容器根目录
-# seed.ts 里 findEnv() 会自动找到它
+COPY --from=builder /app/config ./config
 WORKDIR /app/apps/api
 EXPOSE 9999
 ENTRYPOINT ["/sbin/tini", "--"]

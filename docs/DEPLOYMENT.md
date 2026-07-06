@@ -107,7 +107,7 @@ DASHSCOPE_API_KEY=your_api_key_here
 
 # Bootstrap 管理员账号
 BOOTSTRAP_ADMIN_EMAIL=admin@yourcompany.com
-BOOTSTRAP_ADMIN_PASSWORD=your_secure_password
+BOOTSTRAP_ADMIN_PASSWORD=CHANGE_ME_use_a_strong_unique_admin_password
 ```
 
 ### 2.3 启动基础设施
@@ -139,11 +139,15 @@ pnpm --filter @ai-knowledge/api prisma:generate
 # 执行 Prisma Migrate 迁移
 pnpm --filter @ai-knowledge/api prisma:migrate:deploy
 
+# 执行 Neo4j schema migrations
+pnpm graph:migrate
+
 # 初始化演示数据（可选）
 pnpm seed
 ```
 
 > 数据库业务结构变更必须先更新 `apps/api/src/database/prisma/schema.prisma`，再通过 Prisma Migrate 生成/部署迁移。禁止使用散落 SQL 脚本、手动 `psql` 或 `prisma db push` 修改业务表结构；Prisma Migrate 生成的迁移 SQL 除外。
+> Neo4j 约束和索引通过 `apps/api/src/database/neo4j/migrations` 下的 Cypher migrations 管理；API/worker 启动时不负责图数据库 schema 变更。
 
 ### 2.5 启动开发服务
 
@@ -163,7 +167,7 @@ pnpm --filter @ai-knowledge/web dev    # 前端 (端口 8888)
 | 前端 | [http://localhost:8888](http://localhost:8888) | 浏览器访问 |
 | 后端 API | [http://localhost:9999/api](http://localhost:9999/api) | 返回 API 信息 |
 | 健康检查 | [http://localhost:9999/health](http://localhost:9999/health) | 返回 `{"status":"ok"}` |
-| MinIO Console | [http://localhost:9001](http://localhost:9001) | 登录界面 |
+| MinIO Console | [http://localhost:9101](http://localhost:9101) | 登录界面 |
 | Neo4j Browser | [http://localhost:7474](http://localhost:7474) | 登录界面 |
 
 
@@ -231,7 +235,7 @@ LOG_LEVEL=info
 
 # ===== PostgreSQL =====
 POSTGRES_USER=ai_knowledge
-POSTGRES_PASSWORD=your_secure_password
+POSTGRES_PASSWORD=CHANGE_ME_use_a_strong_postgres_password
 POSTGRES_DB=ai_knowledge
 POSTGRES_PORT=55432
 
@@ -240,7 +244,7 @@ REDIS_PORT=6379
 
 # ===== MinIO =====
 MINIO_ROOT_USER=minio_admin
-MINIO_ROOT_PASSWORD=minio_password
+MINIO_ROOT_PASSWORD=CHANGE_ME_use_a_strong_minio_root_password
 MINIO_ENDPOINT=minio
 MINIO_PUBLIC_URL=https://your-domain.com/minio
 MINIO_PORT=9000
@@ -248,22 +252,22 @@ MINIO_CONSOLE_PORT=9001
 S3_BUCKET=ai-knowledge-docs
 S3_REGION=us-east-1
 S3_ACCESS_KEY=minio_admin
-S3_SECRET_KEY=minio_password
+S3_SECRET_KEY=CHANGE_ME_use_a_strong_s3_secret_key
 
 # ===== Neo4j =====
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=neo4j_secure_password
+NEO4J_PASSWORD=CHANGE_ME_use_a_strong_neo4j_password
 
 # ===== 鉴权 =====
-JWT_ACCESS_SECRET=your_access_secret_minimum_32_chars
-JWT_REFRESH_SECRET=your_refresh_secret_minimum_32_chars
+JWT_ACCESS_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
+JWT_REFRESH_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
 BOOTSTRAP_ADMIN_EMAIL=admin@demo.com
-BOOTSTRAP_ADMIN_PASSWORD=admin_password
+BOOTSTRAP_ADMIN_PASSWORD=CHANGE_ME_use_a_strong_unique_admin_password
 BOOTSTRAP_ADMIN_NAME=Super Admin
 BOOTSTRAP_TENANT_ID=tenant_demo
 
 # ===== DashScope (必填) =====
-DASHSCOPE_API_KEY=your_api_key
+DASHSCOPE_API_KEY=CHANGE_ME_set_real_dashscope_api_key
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 DASHSCOPE_LLM_MODEL=qwen-plus
 DASHSCOPE_EMBED_MODEL=text-embedding-v4
@@ -357,9 +361,9 @@ ai-knowledge/
 │   │       └── default.conf   # 反向代理配置
 │   └── docker/
 │       └── postgres/
-│           └── init.sql       # PostgreSQL 初始化脚本
+│           └── init.sql       # PostgreSQL 首次初始化历史基线；后续业务结构变更走 Prisma Migrate
 └── apps/
-    ├── api/Dockerfile         # API 服务 Dockerfile
+    ├── api/Dockerfile         # API 服务 Dockerfile（包含 Prisma/Neo4j migrations）
     └── web/Dockerfile         # Web 前端 Dockerfile
 ```
 
@@ -381,7 +385,7 @@ WEB_PORT=8888
 
 # ===== PostgreSQL =====
 POSTGRES_USER=ai_knowledge
-POSTGRES_PASSWORD=your_secure_password
+POSTGRES_PASSWORD=CHANGE_ME_use_a_strong_postgres_password
 POSTGRES_DB=ai_knowledge
 POSTGRES_PORT=55432
 
@@ -390,25 +394,25 @@ REDIS_PORT=6379
 
 # ===== MinIO =====
 MINIO_ROOT_USER=minio_admin
-MINIO_ROOT_PASSWORD=minio_password
+MINIO_ROOT_PASSWORD=CHANGE_ME_use_a_strong_minio_root_password
 S3_BUCKET=ai-knowledge-docs
 S3_ACCESS_KEY=minio_admin
-S3_SECRET_KEY=minio_password
+S3_SECRET_KEY=CHANGE_ME_use_a_strong_s3_secret_key
 
 # ===== Neo4j =====
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=neo4j_secure_password
+NEO4J_PASSWORD=CHANGE_ME_use_a_strong_neo4j_password
 
 # ===== 鉴权 =====
-JWT_ACCESS_SECRET=your_access_secret_minimum_32_chars
-JWT_REFRESH_SECRET=your_refresh_secret_minimum_32_chars
+JWT_ACCESS_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
+JWT_REFRESH_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
 BOOTSTRAP_ADMIN_EMAIL=admin@demo.com
-BOOTSTRAP_ADMIN_PASSWORD=admin_password
+BOOTSTRAP_ADMIN_PASSWORD=CHANGE_ME_use_a_strong_unique_admin_password
 BOOTSTRAP_ADMIN_NAME=Super Admin
 BOOTSTRAP_TENANT_ID=tenant_demo
 
 # ===== DashScope (必填) =====
-DASHSCOPE_API_KEY=your_api_key
+DASHSCOPE_API_KEY=CHANGE_ME_set_real_dashscope_api_key
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 DASHSCOPE_LLM_MODEL=qwen-plus
 DASHSCOPE_EMBED_MODEL=text-embedding-v4
@@ -474,7 +478,7 @@ docker exec ai-knowledge-minio mc anonymous set download local/ai-knowledge-docs
 | 前端 | [http://localhost](http://localhost) | 浏览器访问（通过 Nginx） |
 | 后端 API | [http://localhost/api](http://localhost/api) | 返回 API 信息 |
 | 健康检查 | [http://localhost/api/health](http://localhost/api/health) | 返回 `{"status":"ok"}` |
-| MinIO Console | [http://localhost:9001](http://localhost:9001) | 登录界面 |
+| MinIO Console | [http://localhost:9101](http://localhost:9101) | 登录界面 |
 
 ---
 
@@ -523,16 +527,16 @@ metadata:
   namespace: ai-knowledge
 type: Opaque
 stringData:
-  DATABASE_URL: "postgresql://user:password@postgres:5432/ai_knowledge"
+  DATABASE_URL: "postgresql://ai_knowledge:CHANGE_ME_use_a_strong_postgres_password@postgres:5432/ai_knowledge"
   REDIS_URL: "redis://redis:6379"
   NEO4J_URI: "bolt://neo4j:7687"
   NEO4J_USER: "neo4j"
-  NEO4J_PASSWORD: "neo4j_password"
-  JWT_ACCESS_SECRET: "your_jwt_access_secret"
-  JWT_REFRESH_SECRET: "your_jwt_refresh_secret"
-  DASHSCOPE_API_KEY: "your_dashscope_key"
-  S3_ACCESS_KEY: "minio_access_key"
-  S3_SECRET_KEY: "minio_secret_key"
+  NEO4J_PASSWORD: "CHANGE_ME_use_a_strong_neo4j_password"
+  JWT_ACCESS_SECRET: "CHANGE_ME_generate_with_openssl_rand_base64_64"
+  JWT_REFRESH_SECRET: "CHANGE_ME_generate_with_openssl_rand_base64_64"
+  DASHSCOPE_API_KEY: "CHANGE_ME_set_real_dashscope_api_key"
+  S3_ACCESS_KEY: "minio_admin"
+  S3_SECRET_KEY: "CHANGE_ME_use_a_strong_s3_secret_key"
 ```
 
 ### 5.5 Deployment (API)
@@ -665,7 +669,7 @@ kubectl logs -f deployment/api -n ai-knowledge
 
 ### 6.1 完整环境变量列表
 
-> **注意**：生产环境使用 Docker Compose 时，环境变量通过 `.env.production` 文件注入。API 服务使用 `DATABASE_URL`、`REDIS_URL` 等标准格式；PostgreSQL、Redis 等基础服务使用独立配置变量（如 `POSTGRES_USER`、`POSTGRES_PASSWORD` 等）。生产 compose 会拆分 API 与文档处理 worker：API 覆盖为 `DOCUMENT_WORKER_ENABLED=false`，独立 `worker` 服务覆盖为 `true`。
+> **注意**：生产环境使用 Docker Compose 时，变量值从 `.env.production` 插值，但 compose 不再使用全量 `env_file` 注入；每个 service 只显式接收自己需要的最小变量集。API 服务使用 `DATABASE_URL`、`REDIS_URL` 等标准格式；PostgreSQL、Redis 等基础服务使用独立配置变量（如 `POSTGRES_USER`、`POSTGRES_PASSWORD` 等）。生产 compose 会拆分 API 与文档处理 worker，并通过一次性 `graph-init` 服务执行 Neo4j schema migrations：API 覆盖为 `DOCUMENT_WORKER_ENABLED=false`，独立 `worker` 服务覆盖为 `true`。
 
 | 变量名 | 说明 | 默认值 | 必填 |
 | --- | --- | --- | --- |

@@ -55,12 +55,17 @@ docker compose up -d
 pnpm install
 pnpm --filter @ai-knowledge/api prisma:generate
 pnpm --filter @ai-knowledge/api prisma:migrate:deploy
+pnpm graph:migrate          # 初始化/升级 Neo4j 约束与索引
 pnpm seed                  # 写入演示用户与文档
 ```
 
 数据库结构以 `apps/api/src/database/prisma/schema.prisma` 为唯一声明来源。新增/修改字段、索引、约束时必须先更新 Prisma schema，再使用 Prisma Migrate 生成或部署迁移；不要通过手写散落的 SQL、`psql` 手动执行，或 `prisma db push` 修改业务表结构。
 
+Neo4j 约束和索引通过 `pnpm graph:migrate` 管理，迁移文件位于 `apps/api/src/database/neo4j/migrations`；API/worker 启动时不再隐式修改图数据库结构。
+
 环境变量只从仓库根目录加载：本地使用 `.env`，个人覆盖使用 `.env.local`，不要在 `apps/*` 下维护额外 `.env`。Prisma、API、worker、seed 和维护脚本都应通过根目录配置连接同一套服务。
+
+提交前建议运行 `pnpm check:architecture`，它会拦截旧环境变量、app 子目录 env、生产 compose 默认值、非 Prisma migration 的 PostgreSQL DDL、非 Neo4j migration 的图 schema DDL 等架构漂移。
 
 ### 4. 启动开发环境
 
@@ -81,10 +86,10 @@ pnpm dev:turbo
 | 前端 Web | http://localhost:8888 |
 | 后端 API | http://localhost:9999/api |
 | 健康检查 | http://localhost:9999/health |
-| MinIO 控制台 | http://localhost:9001 (minio_admin / minio_password) |
+| MinIO 控制台 | http://localhost:9101 (minio_admin / minio_password) |
 | PaddleOCR | http://localhost:10096/health |
 | Neo4j 浏览器 | http://localhost:7474 (neo4j / neo4j_dev_password) |
-| Postgres | localhost:5432 (ai_knowledge / dev_password) |
+| Postgres | localhost:55432 (ai_knowledge / dev_password) |
 
 ### 5. 一键脚本
 
@@ -120,7 +125,7 @@ bash infra/scripts/bootstrap.sh   # 等价于以上 1-3 步
 │   ├── schemas/     # Zod schemas（前后端共享类型）
 │   └── config/      # 共享 tsconfig
 ├── infra/
-│   ├── docker/      # Postgres init / Neo4j constraints / MinIO 脚本
+│   ├── docker/      # Postgres init / MinIO 脚本
 │   └── scripts/     # bootstrap 一键启动
 ├── docker-compose.yml
 ├── pnpm-workspace.yaml

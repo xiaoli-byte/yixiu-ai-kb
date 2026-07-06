@@ -9,6 +9,7 @@ RUN apk add --no-cache python3 make g++ curl openssl && npm install -g pnpm@9
 # 复制 workspace 配置（包括 .npmrc）
 COPY .npmrc ./
 COPY package.json pnpm-workspace.yaml turbo.json ./
+COPY config/ config/
 COPY packages/ packages/
 COPY apps/api/package.json ./apps/api/
 COPY apps/web/package.json ./apps/web/
@@ -34,6 +35,7 @@ COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/package.json ./apps/web/
 COPY --from=builder /app/apps/web/next.config.mjs ./apps/web/
 COPY --from=builder /app/apps/web/env.mjs ./apps/web/
+COPY --from=builder /app/config ./config
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/web/node_modules ./apps/web/node_modules
 WORKDIR /app/apps/web

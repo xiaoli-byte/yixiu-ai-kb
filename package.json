@@ -21,6 +21,8 @@
     "db:migrate:deploy": "pnpm --filter @ai-knowledge/api prisma:migrate:deploy",
     "db:migrate:status": "pnpm --filter @ai-knowledge/api prisma:migrate:status",
     "db:generate": "pnpm --filter @ai-knowledge/api prisma:generate",
+    "graph:migrate": "pnpm --filter @ai-knowledge/api neo4j:migrate",
+    "check:architecture": "node scripts/check-architecture.mjs",
     "postinstall": "pnpm --filter @ai-knowledge/api prisma:generate"
   },
   "devDependencies": {

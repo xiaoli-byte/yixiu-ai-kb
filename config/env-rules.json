@@ -1,0 +1,4 @@
+{
+  "rootEnvFiles": [".env", ".env.local", ".env.production"],
+  "legacyEnvKeys": ["S3_ENDPOINT", "INTERNAL_API_URL", "NEXT_PUBLIC_API_BASE"]
+}

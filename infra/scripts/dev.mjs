@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
+const require = createRequire(import.meta.url);
 const isWindows = process.platform === "win32";
 const pnpm = "pnpm";
 const rootEnv = loadRootEnv();
@@ -37,6 +39,12 @@ let forceExitTimer;
 function writePrefix(name, color, line, stream = process.stdout) {
   if (line.length === 0) return;
   stream.write(`${color}[${name}]${reset} ${line}\n`);
+}
+
+function writeBlock(name, color, text, stream = process.stdout) {
+  for (const line of String(text).split(/\r?\n/)) {
+    writePrefix(name, color, line, stream);
+  }
 }
 
 function pipeWithPrefix(child, name, color) {
@@ -122,6 +130,106 @@ function loadRootEnv() {
   };
 }
 
+function isTruthy(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function maskDatabaseUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    if (url.password) url.password = "***";
+    return url.toString();
+  } catch {
+    return "<invalid DATABASE_URL>";
+  }
+}
+
+function buildPostgresHint(connectionString, reason) {
+  const lines = [
+    `PostgreSQL preflight failed for ${maskDatabaseUrl(connectionString)}.`,
+    `Reason: ${reason}`,
+  ];
+
+  try {
+    const url = new URL(connectionString);
+    const usesDefaultLocalPostgres =
+      ["localhost", "127.0.0.1", "::1"].includes(url.hostname) &&
+      (!url.port || url.port === "5432");
+
+    if (usesDefaultLocalPostgres) {
+      const user = url.username || rootEnv.POSTGRES_USER || "ai_knowledge";
+      const dbName = url.pathname.replace(/^\//, "") || rootEnv.POSTGRES_DB || "ai_knowledge";
+      lines.push(
+        "DATABASE_URL currently points at localhost:5432, which often belongs to another local PostgreSQL instance.",
+        "If you use this project's Docker PostgreSQL, prefer the non-conflicting host port from .env.example:",
+        "  POSTGRES_PORT=55432",
+        `  DATABASE_URL=postgresql://${user}:<POSTGRES_PASSWORD>@localhost:55432/${dbName}`,
+      );
+    }
+  } catch {
+    lines.push("DATABASE_URL is not a valid PostgreSQL URL.");
+  }
+
+  lines.push("Set SKIP_DEV_PREFLIGHT=true only when you intentionally want to bypass this check.");
+  return lines.join("\n");
+}
+
+async function checkPostgres() {
+  const connectionString = rootEnv.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("Missing DATABASE_URL in root .env/.env.local");
+  }
+
+  const { Client } = require("pg");
+  const client = new Client({
+    connectionString,
+    connectionTimeoutMillis: 3000,
+  });
+
+  try {
+    await client.connect();
+  } catch (error) {
+    throw new Error(buildPostgresHint(connectionString, error.message));
+  } finally {
+    try {
+      await client.end();
+    } catch {}
+  }
+}
+
+function runNeo4jMigrations() {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(
+      process.execPath,
+      ["-r", "ts-node/register", "-r", "tsconfig-paths/register", "src/database/neo4j/migrate.ts"],
+      {
+        cwd: resolve(root, "apps/api"),
+        env: createEnv({}),
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+
+    pipeWithPrefix(child, "graph-migrate", "\x1b[90m");
+    child.on("error", rejectRun);
+    child.on("exit", (code, signal) => {
+      if (code === 0) {
+        resolveRun();
+        return;
+      }
+      const reason = signal ? `signal ${signal}` : `code ${code ?? 0}`;
+      rejectRun(new Error(`Neo4j migration failed with ${reason}`));
+    });
+  });
+}
+
+async function runPreflight() {
+  if (isTruthy(rootEnv.SKIP_DEV_PREFLIGHT)) return;
+  await checkPostgres();
+  writePrefix("preflight", "\x1b[90m", "PostgreSQL connection OK");
+  await runNeo4jMigrations();
+}
+
 function createEnv(extraEnv) {
   const env = { ...rootEnv, ...process.env, ...extraEnv };
   if (isWindows) {
@@ -145,6 +253,13 @@ function createSpawnConfig(args) {
     command: process.env.ComSpec || "cmd.exe",
     args: ["/d", "/s", "/c", pnpm, ...args],
   };
+}
+
+try {
+  await runPreflight();
+} catch (error) {
+  writeBlock("preflight", "\x1b[31m", error.message, process.stderr);
+  process.exit(1);
 }
 
 for (const config of processes) {

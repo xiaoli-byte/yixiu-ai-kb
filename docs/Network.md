@@ -164,7 +164,10 @@ async function serverFetch<T>(
   init?: RequestInit & { next?: { revalidate?: number | false; tags?: string[] } }
 ): Promise<T> {
   // 服务端直接使用完整后端地址（或内部地址）
-  const BASE_URL = process.env.API_INTERNAL_URL || 'http://localhost:8080/api';
+  const baseUrl = process.env.API_INTERNAL_URL;
+  if (!baseUrl) {
+    throw new Error('Missing API_INTERNAL_URL');
+  }
   const cookieStore = cookies();
   const token = cookieStore.get('token')?.value;
 
@@ -174,7 +177,7 @@ async function serverFetch<T>(
     ...init?.headers,
   };
 
-  const response = await fetch(`${BASE_URL}${url}`, {
+  const response = await fetch(`${baseUrl}${url}`, {
     ...init,
     headers,
   });

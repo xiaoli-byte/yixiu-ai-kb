@@ -16,13 +16,32 @@ if [ ! -f ".env" ]; then
   warn ".env 不存在，已从 .env.example 复制，请编辑 DASHSCOPE_API_KEY 等密钥"
 fi
 
+env_value() {
+  local key="$1"
+  sed -n "s/^${key}=//p" ".env" | tail -n 1
+}
+
+if [ "${POSTGRES_USER+x}" = "x" ]; then
+  POSTGRES_USER_VALUE="$POSTGRES_USER"
+else
+  POSTGRES_USER_VALUE="$(env_value POSTGRES_USER)"
+fi
+if [ -z "$POSTGRES_USER_VALUE" ]; then
+  err "POSTGRES_USER is required in .env"
+  exit 1
+fi
+MINIO_PORT_VALUE="$(env_value MINIO_PORT)"
+if [ -z "$MINIO_PORT_VALUE" ]; then
+  MINIO_PORT_VALUE="9100"
+fi
+
 bold "[2/5] 启动 Docker 服务 (Postgres / Redis / MinIO / Neo4j) ..."
 docker compose up -d
 
 bold "[3/5] 等待依赖就绪 ..."
 # Postgres
 for i in {1..30}; do
-  if docker exec ai-knowledge-postgres pg_isready -U "${POSTGRES_USER:-ai_knowledge}" >/dev/null 2>&1; then
+  if docker exec ai-knowledge-postgres pg_isready -U "$POSTGRES_USER_VALUE" >/dev/null 2>&1; then
     ok "Postgres 就绪"; break
   fi
   sleep 1
@@ -46,7 +65,7 @@ for i in {1..20}; do
 done
 # MinIO
 for i in {1..30}; do
-  if curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+  if curl -sf "http://localhost:${MINIO_PORT_VALUE}/minio/health/live" >/dev/null 2>&1; then
     ok "MinIO 就绪"; break
   fi
   sleep 1
@@ -61,9 +80,10 @@ else
   exit 1
 fi
 
-bold "[5/5] 初始化 Prisma schema + Neo4j 约束 ..."
+bold "[5/5] 初始化 Prisma schema + Neo4j schema ..."
 pnpm --filter @ai-knowledge/api prisma:generate
 pnpm --filter @ai-knowledge/api prisma:migrate:deploy || warn "Prisma migrate deploy 失败，请稍后重试"
+pnpm graph:migrate || warn "Neo4j graph migrate 失败，请确认 Neo4j 就绪后重试"
 
 ok "启动完成！下一步："
 echo "  pnpm seed           # 写入演示数据（admin@demo.com / demo123）"

@@ -31,12 +31,27 @@ function loadRootEnv() {
   }
 }
 
+function loadEnvRules() {
+  const rulesPath = resolve(rootDir, "config/env-rules.json");
+  if (!existsSync(rulesPath)) return { legacyEnvKeys: [] };
+  return JSON.parse(readFileSync(rulesPath, "utf8"));
+}
+
 function isTruthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
 export function validateWebEnv() {
   loadRootEnv();
+
+  const legacyKeys = (loadEnvRules().legacyEnvKeys || []).filter((key) =>
+    process.env[key]?.trim(),
+  );
+  if (legacyKeys.length > 0) {
+    throw new Error(
+      `Legacy environment variable(s) are no longer supported: ${legacyKeys.join(", ")}`,
+    );
+  }
 
   const required = ["API_INTERNAL_URL", "NEXT_PUBLIC_API_URL"];
   const missing = required.filter((key) => !process.env[key]?.trim());

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { v4 as uuid } from "uuid";
 import { DatabaseService } from "../../database/database.service";
 import { factHash } from "../../common/dedup/canonical";
@@ -10,18 +10,10 @@ import type {
 } from "./rag.types";
 
 @Injectable()
-export class RagFactsService implements OnModuleInit {
+export class RagFactsService {
   private readonly logger = new Logger(RagFactsService.name);
 
   constructor(private readonly db: DatabaseService) {}
-
-  async onModuleInit() {
-    try {
-      await this.ensureSchema();
-    } catch (e: any) {
-      this.logger.warn(`RAG 事实表初始化失败，后续将降级为纯检索问答: ${e.message}`);
-    }
-  }
 
   async replaceDocumentFacts(opts: {
     tenantId: string;
@@ -189,86 +181,6 @@ export class RagFactsService implements OnModuleInit {
         Math.max(0, Math.min(1, fact.confidence)),
         fact.sourceText,
       ],
-    );
-  }
-
-  private async ensureSchema() {
-    await this.db.query(`
-      CREATE TABLE IF NOT EXISTS structured_facts (
-        id            VARCHAR(36)  NOT NULL,
-        tenant_id     VARCHAR(36)  NOT NULL,
-        document_id   VARCHAR(36)  NOT NULL,
-        content_id    VARCHAR(36),
-        chunk_id      VARCHAR(36),
-        fact_hash     VARCHAR(64),
-        domain        VARCHAR(50)  NOT NULL,
-        entity_type   VARCHAR(80)  NOT NULL,
-        entity_name   VARCHAR(500) NOT NULL,
-        attributes    JSONB        NOT NULL DEFAULT '{}'::jsonb,
-        confidence    DOUBLE PRECISION NOT NULL DEFAULT 0.5,
-        source_text   TEXT         NOT NULL,
-        created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (id),
-        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
-        FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
-      )
-    `);
-    await this.db.query(`
-      ALTER TABLE structured_facts
-        ADD COLUMN IF NOT EXISTS content_id VARCHAR(36),
-        ADD COLUMN IF NOT EXISTS fact_hash VARCHAR(64)
-    `);
-    await this.db.query(`
-      CREATE TABLE IF NOT EXISTS qa_run_logs (
-        id              VARCHAR(36) NOT NULL,
-        tenant_id       VARCHAR(36) NOT NULL,
-        user_id         VARCHAR(36),
-        conversation_id VARCHAR(36),
-        question        TEXT        NOT NULL,
-        rewritten_query TEXT,
-        intent          VARCHAR(50) NOT NULL,
-        domain          VARCHAR(50) NOT NULL,
-        facts           JSONB       NOT NULL DEFAULT '[]'::jsonb,
-        chunks          JSONB       NOT NULL DEFAULT '[]'::jsonb,
-        tool_result     JSONB,
-        answer          TEXT,
-        error           TEXT,
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (id)
-      )
-    `);
-    await this.db.query(
-      `CREATE INDEX IF NOT EXISTS structured_facts_tenant_domain_idx
-       ON structured_facts (tenant_id, domain, entity_type)`,
-    );
-    await this.db.query(
-      `CREATE INDEX IF NOT EXISTS structured_facts_document_idx
-       ON structured_facts (document_id)`,
-    );
-    await this.db.query(
-      `CREATE INDEX IF NOT EXISTS structured_facts_content_idx
-       ON structured_facts (content_id)`,
-    );
-    await this.db.query(
-      `CREATE INDEX IF NOT EXISTS structured_facts_fact_hash_idx
-       ON structured_facts (fact_hash)`,
-    );
-    await this.db.query(
-      `CREATE UNIQUE INDEX IF NOT EXISTS structured_facts_content_fact_unique
-       ON structured_facts (tenant_id, content_id, fact_hash)
-       WHERE content_id IS NOT NULL AND fact_hash IS NOT NULL`,
-    );
-    await this.db.query(
-      `CREATE INDEX IF NOT EXISTS structured_facts_attributes_idx
-       ON structured_facts USING gin (attributes)`,
-    );
-    await this.db.query(
-      `CREATE INDEX IF NOT EXISTS structured_facts_source_trgm_idx
-       ON structured_facts USING gin (source_text gin_trgm_ops)`,
-    );
-    await this.db.query(
-      `CREATE INDEX IF NOT EXISTS qa_run_logs_tenant_created_idx
-       ON qa_run_logs (tenant_id, created_at DESC)`,
     );
   }
 

@@ -28,6 +28,16 @@ if (-not (Test-Path ".env")) {
     Ok ".env 已存在"
 }
 
+function Get-EnvValue($key, $defaultValue) {
+    if (-not (Test-Path ".env")) { return $defaultValue }
+    $line = Get-Content ".env" | Where-Object { $_ -match "^\s*$key\s*=" } | Select-Object -Last 1
+    if (-not $line) { return $defaultValue }
+    return (($line -replace "^\s*$key\s*=\s*", "").Trim()).Trim('"').Trim("'")
+}
+
+$MINIO_PORT_VALUE = Get-EnvValue "MINIO_PORT" "9100"
+$MINIO_CONSOLE_PORT_VALUE = Get-EnvValue "MINIO_CONSOLE_PORT" "9101"
+
 # 2. 启动 Docker 服务
 Step 2 5 "启动 Docker (Postgres / Redis / MinIO / Neo4j)"
 docker compose up -d
@@ -61,7 +71,7 @@ Write-Host "  - 等待 MinIO ..."
 $minioReady = $false
 for ($i = 1; $i -le 30; $i++) {
     try {
-        $resp = Invoke-WebRequest -Uri "http://localhost:9000/minio/health/live" -UseBasicParsing -TimeoutSec 2
+        $resp = Invoke-WebRequest -Uri "http://localhost:$MINIO_PORT_VALUE/minio/health/live" -UseBasicParsing -TimeoutSec 2
         if ($resp.StatusCode -eq 200) { $minioReady = $true; break }
     } catch {}
     Start-Sleep -Seconds 1
@@ -89,8 +99,8 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 pnpm install
 Ok "pnpm install 完成"
 
-# 5. Prisma & 启动提示
-Step 5 5 "初始化 Prisma"
+# 5. Prisma / Neo4j & 启动提示
+Step 5 5 "初始化 Prisma / Neo4j schema"
 try {
     pnpm --filter @ai-knowledge/api prisma:generate 2>&1 | Out-Host
     Ok "prisma generate 完成"
@@ -105,6 +115,13 @@ try {
     Warn "prisma migrate deploy 失败，请检查 Postgres 是否就绪后重试"
 }
 
+try {
+    pnpm graph:migrate 2>&1 | Out-Host
+    Ok "Neo4j graph migrate 完成"
+} catch {
+    Warn "Neo4j graph migrate 失败，请检查 Neo4j 是否就绪后重试"
+}
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  启动完成！接下来执行：" -ForegroundColor Green
@@ -113,5 +130,5 @@ Write-Host "  pnpm seed           # 写入演示数据 (admin@demo.com / demo123
 Write-Host "  pnpm dev            # 启动 API (9999) + Web (8888)"
 Write-Host ""
 Write-Host "  打开 http://localhost:8888 体验"
-Write-Host "  MinIO 控制台: http://localhost:9001 (minio_admin / minio_password)"
+Write-Host "  MinIO 控制台: http://localhost:$MINIO_CONSOLE_PORT_VALUE (minio_admin / minio_password)"
 Write-Host "  Neo4j 浏览器:  http://localhost:7474 (neo4j / neo4j_dev_password)"

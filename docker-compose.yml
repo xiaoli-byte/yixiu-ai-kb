@@ -1,13 +1,5 @@
 # ===== 端口策略 =====
-# 默认（推荐）：数据库只走 Docker 内部网络，不占用 host 任何端口。
-# 应用通过容器名连接：postgres://ai-knowledge-postgres:5432
-#
-# 如需在 host 上直连（TablePlus / DBeaver / redis-cli）：
-#   1. 把下面每个服务里 `expose` 那块的两行取消注释：
-#        ports:
-#          - "${POSTGRES_PORT:-5432}:5432"
-#   2. 把 .env 里的 DATABASE_URL / REDIS_URL / NEO4J_URI 改回 localhost
-#   3. docker compose up -d
+# 开发端口统一从根目录 .env / .env.local 读取；不要在 compose 内维护默认值。
 # 一个项目同时只能有一个服务占用 host 上的某端口。
 
 services:
@@ -17,9 +9,9 @@ services:
     container_name: ai-knowledge-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-ai_knowledge}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
-      POSTGRES_DB: ${POSTGRES_DB:-ai_knowledge}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     # 初始化扩展与 zhcfg；业务表结构变更通过 Prisma Migrate 管理
     command: >
       bash -c "
@@ -38,13 +30,13 @@ services:
         docker-entrypoint.sh postgres
       "
     ports:
-      - "${POSTGRES_PORT:-55432}:5432"
+      - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # 历史基线初始化；不要在该 SQL 中追加新的业务表结构变更
       - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_knowledge}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -57,7 +49,7 @@ services:
       - "6379"
     # Windows 原生 nest dev 通过 host 连入，必须暴露
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -72,12 +64,12 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio_password}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     # MinIO 控制台是开发体验必须的，始终暴露
     ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -91,7 +83,7 @@ services:
     container_name: ai-knowledge-neo4j
     restart: unless-stopped
     environment:
-      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-neo4j_dev_password}
+      NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
       NEO4J_dbms_memory_heap_initial__size: 512m
@@ -102,8 +94,8 @@ services:
       - "7687"
     # Windows 原生 nest dev 通过 host 连入，必须暴露
     ports:
-      - "${NEO4J_HTTP_PORT:-7474}:7474"
-      - "${NEO4J_BOLT_PORT:-7687}:7687"
+      - "${NEO4J_HTTP_PORT}:7474"
+      - "${NEO4J_BOLT_PORT}:7687"
     volumes:
       - neo4j_data:/data
     healthcheck:
@@ -123,15 +115,15 @@ services:
   #   container_name: ai-knowledge-paddleocr
   #   restart: unless-stopped
   #   environment:
-  #     PADDLEOCR_LANG: ${PADDLEOCR_LANG:-ch}
+  #     PADDLEOCR_LANG: ${PADDLEOCR_LANG}
   #     # AMD CPU 上 PaddlePaddle 的 cls 方向分类器会触发 SIGILL，默认关闭
-  #     PADDLEOCR_USE_ANGLE_CLS: ${PADDLEOCR_USE_ANGLE_CLS:-false}
+  #     PADDLEOCR_USE_ANGLE_CLS: ${PADDLEOCR_USE_ANGLE_CLS}
   #     PADDLEOCR_HOME: /models
   #     # 使用 GPU 推理
   #     FLAGS_use_cuda: "true"
   #     CUDA_VISIBLE_DEVICES: "0"
   #   ports:
-  #     - "${PADDLEOCR_PORT:-10096}:10096"
+  #     - "${PADDLEOCR_PORT}:10096"
   #   volumes:
   #     - paddleocr_models:/models
   #   # 挂载 NVIDIA GPU（需要主机安装 nvidia-container-toolkit）

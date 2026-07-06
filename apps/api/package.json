@@ -17,6 +17,7 @@
     "prisma:migrate:deploy": "node scripts/prisma-root-env.cjs migrate deploy --schema src/database/prisma/schema.prisma",
     "prisma:migrate:status": "node scripts/prisma-root-env.cjs migrate status --schema src/database/prisma/schema.prisma",
     "prisma:studio": "node scripts/prisma-root-env.cjs studio --schema src/database/prisma/schema.prisma",
+    "neo4j:migrate": "ts-node -r tsconfig-paths/register src/database/neo4j/migrate.ts",
     "check:dedup": "ts-node -r tsconfig-paths/register scripts/check-dedup-canonical.ts",
     "repair:dedup": "ts-node -r tsconfig-paths/register scripts/repair-content-dedup.ts",
     "seed": "ts-node -r tsconfig-paths/register src/seed/seed.ts"
