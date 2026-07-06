@@ -10,12 +10,18 @@
     "lint": "turbo run lint",
     "clean": "turbo run clean && rm -rf node_modules",
     "bootstrap": "powershell -ExecutionPolicy Bypass -File infra/scripts/bootstrap.ps1",
+    "ocr:start": "powershell -ExecutionPolicy Bypass -File services/paddleocr-server/start.ps1",
     "seed": "pnpm --filter @ai-knowledge/api seed",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
     "docker:ps": "docker compose ps",
-    "docker:reset": "docker compose down -v && docker compose up -d"
+    "docker:reset": "docker compose down -v && docker compose up -d",
+    "db:migrate:dev": "pnpm --filter @ai-knowledge/api prisma:migrate:dev",
+    "db:migrate:deploy": "pnpm --filter @ai-knowledge/api prisma:migrate:deploy",
+    "db:migrate:status": "pnpm --filter @ai-knowledge/api prisma:migrate:status",
+    "db:generate": "pnpm --filter @ai-knowledge/api prisma:generate",
+    "postinstall": "pnpm --filter @ai-knowledge/api prisma:generate"
   },
   "devDependencies": {
     "turbo": "^2.1.3",

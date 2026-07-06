@@ -26,6 +26,9 @@ FOR (c:QAConversation) REQUIRE c.id IS UNIQUE;
 // 常用索引（加速查询）
 CREATE INDEX user_tenant_email IF NOT EXISTS FOR (u:User) ON (u.tenantId, u.email);
 CREATE INDEX document_tenant_status IF NOT EXISTS FOR (d:Document) ON (d.tenantId, d.status);
+CREATE INDEX document_content_hash IF NOT EXISTS FOR (d:Document) ON (d.contentHash);
 CREATE INDEX document_owner IF NOT EXISTS FOR (d:Document) ON (d.ownerId);
 CREATE INDEX chunk_document IF NOT EXISTS FOR (c:Chunk) ON (c.documentId);
+CREATE INDEX entity_canonical_key IF NOT EXISTS FOR (e:Entity) ON (e.canonicalKey);
+CREATE INDEX relation_edge_key IF NOT EXISTS FOR ()-[r:RELATES_TO]-() ON (r.edgeKey);
 CREATE INDEX conv_user_updated IF NOT EXISTS FOR (c:QAConversation) ON (c.userId, c.updatedAt);

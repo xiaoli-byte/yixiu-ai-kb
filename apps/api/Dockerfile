@@ -23,6 +23,7 @@ RUN apk add --no-cache openssl curl tini && npm install -g pnpm@9
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/api/package.json ./apps/api/
+COPY --from=builder /app/apps/api/scripts ./apps/api/scripts
 # Prisma schema + 编译后的 seed
 COPY --from=builder /app/apps/api/src/database/prisma ./apps/api/src/database/prisma
 COPY --from=builder /app/apps/api/dist/seed ./apps/api/dist/seed

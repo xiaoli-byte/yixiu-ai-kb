@@ -1,8 +1,7 @@
 import "reflect-metadata";
-import { config as loadEnv } from "dotenv";
-import { resolve } from "path";
-// 鏄惧紡浠庨」鐩牴鍔犺浇 .env锛堜笉渚濊禆 cwd锛?
-loadEnv({ path: resolve(__dirname, "../../../.env") });
+import { loadRootEnv } from "./config/env";
+
+loadRootEnv();
 
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe, Logger } from "@nestjs/common";
@@ -13,9 +12,13 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(PinoLogger));
 
-  const webOrigin = process.env.WEB_ORIGIN || "http://localhost:8888";
+  const webOrigin = process.env.WEB_ORIGIN!;
+  const corsOrigins =
+    process.env.NODE_ENV === "production"
+      ? [webOrigin]
+      : [webOrigin, "http://localhost:8888"];
   app.enableCors({
-    origin: [webOrigin, "http://localhost:8888"],
+    origin: corsOrigins,
     credentials: true,
   });
 
@@ -28,7 +31,7 @@ async function bootstrap() {
     }),
   );
 
-  const port = Number(process.env.API_PORT || process.env.PORT || 9999);
+  const port = Number(process.env.API_PORT);
   await app.listen(port, "0.0.0.0");
   Logger.log(`API running on http://localhost:${port}/api`, "Bootstrap");
 }

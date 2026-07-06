@@ -14,12 +14,13 @@ export type SearchQuery = z.infer<typeof SearchQuery>;
 export const SearchHit = z.object({
   chunkId: z.string(),
   documentId: z.string(),
+  contentId: z.string().optional(),
   documentTitle: z.string(),
   idx: z.number().int(),
   text: z.string(),
   highlight: z.string(),
   score: z.number(),
-  sources: z.array(z.enum(["bm25", "vector"])).default([]),
+  sources: z.array(z.enum(["bm25", "vector", "trgm"])).default([]),
 });
 export type SearchHit = z.infer<typeof SearchHit>;
 

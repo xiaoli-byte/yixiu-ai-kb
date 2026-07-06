@@ -35,6 +35,17 @@ import { DocumentJobPayload, DOCUMENT_QUEUE } from "./queue.service";
 import { RagFactExtractionService } from "../rag/rag-fact-extraction.service";
 import { RagFactsService } from "../rag/rag-facts.service";
 import { v4 as uuid } from "uuid";
+import {
+  canonicalKey,
+  chunkHash,
+  contentHash,
+  edgeKey,
+  evidenceHash,
+  knowledgeNodeId,
+  normalizeContentText,
+  relationKeyPart,
+  sha256Hex,
+} from "../../common/dedup/canonical";
 
 @Injectable()
 export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
@@ -60,7 +71,7 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     const enabled =
-      (this.config.get<string>("DOCUMENT_WORKER_ENABLED") || "true").toLowerCase() !== "false";
+      this.config.getOrThrow<string>("DOCUMENT_WORKER_ENABLED").toLowerCase() !== "false";
     if (!enabled) {
       this.logger.log("文档处理 Worker 已禁用（DOCUMENT_WORKER_ENABLED=false）");
       return;
@@ -68,7 +79,7 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
 
     const concurrency = Math.max(
       1,
-      Number(this.config.get<string>("DOCUMENT_WORKER_CONCURRENCY") || 1),
+      Number(this.config.getOrThrow<string>("DOCUMENT_WORKER_CONCURRENCY")),
     );
     this.worker = new Worker<DocumentJobPayload>(
       DOCUMENT_QUEUE,
@@ -98,13 +109,14 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    let processingContentId: string | null = null;
     try {
       await this.updateStatus(documentId, "PARSING");
       const raw = await this.storage.getObject(doc.storageKey);
       
       // 根据文件类型选择解析方式
       const fileType = getDocumentFileKind(doc.mime, doc.title);
-      let chunks: { text: string; tokens: number; page?: number }[];
+      let pages: { page: number; text: string }[] | null = null;
       let fullText: string;
 
       if (!fileType) {
@@ -112,7 +124,7 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
       }
 
       if (fileType === "pdf") {
-        let pages = await this.parsePdfPages(raw);
+        pages = await this.parsePdfPages(raw);
         if (pages.every((p) => !p.text.trim())) {
           this.logger.log(`PDF ${documentId} 未提取到文本，尝试按扫描件 OCR`);
           pages = await this.ocrPdfPages(raw, doc.title);
@@ -120,42 +132,66 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
             throw new Error("PDF OCR 内容为空");
           }
         }
-        chunks = await this.chunker.chunkPages(pages, 500, 50);
         fullText = pages.map((p) => p.text).join("\n");
       } else if (fileType === "office") {
         // Office 文档（Word/Excel/PPT）
         fullText = await this.officeParser.parse(raw, doc.mime, doc.title);
-        if (!fullText.trim()) {
-          throw new Error("文档内容为空");
-        }
-        chunks = await this.chunker.chunk(fullText, 500, 50);
       } else if (fileType === "audio") {
         fullText = await this.funAsr.transcribe(raw, doc.mime, doc.title);
-        if (!fullText.trim()) {
-          throw new Error("音频转写内容为空");
-        }
-        chunks = await this.chunker.chunk(fullText, 500, 50);
       } else if (fileType === "image") {
         fullText = await this.ocr.recognizeImage(raw, doc.mime, doc.title);
-        if (!fullText.trim()) {
-          throw new Error("图片 OCR 内容为空");
-        }
-        chunks = await this.chunker.chunk(fullText, 500, 50);
       } else {
         // 纯文本文件
         fullText = await this.parseText(raw, doc.mime, doc.title);
-        if (!fullText.trim()) {
-          throw new Error("文档内容为空");
-        }
-        chunks = await this.chunker.chunk(fullText, 500, 50);
       }
+
+      fullText = normalizeContentText(fullText);
+      if (!fullText.trim()) {
+        throw new Error(fileType === "audio" ? "音频转写内容为空" : fileType === "image" ? "图片 OCR 内容为空" : "文档内容为空");
+      }
+
+      const parsedContentHash = contentHash(fullText);
+      const parsedFileHash = (doc as any).fileHash || sha256Hex(raw);
+      const reservedContent = await this.reserveContent({
+        tenantId,
+        documentId,
+        title: doc.title,
+        mime: doc.mime,
+        size: Number(doc.size),
+        storageKey: doc.storageKey,
+        fileHash: parsedFileHash,
+        contentHash: parsedContentHash,
+        createdAt: doc.createdAt,
+      });
+      processingContentId = reservedContent.id;
+
+      if (!reservedContent.shouldProcess) {
+        await this.attachDuplicateUpload({
+          tenantId,
+          documentId,
+          contentId: reservedContent.id,
+          contentHash: parsedContentHash,
+          fileHash: parsedFileHash,
+          canonicalDocumentId: reservedContent.canonicalDocumentId,
+          status: reservedContent.status,
+          reason: reservedContent.status === "READY" ? "CONTENT_HASH" : "CONTENT_IN_PROGRESS",
+        });
+        this.logger.log(`文档 ${documentId} 内容已存在，关联 content ${reservedContent.id}，跳过 chunk/embedding/graph`);
+        return;
+      }
+
+      await this.updateStatus(documentId, "CHUNKING", reservedContent.id);
+      const chunks = pages
+        ? await this.chunker.chunkPages(pages, 500, 50)
+        : await this.chunker.chunk(fullText, 500, 50);
+      if (chunks.length === 0) throw new Error("文档切分结果为空");
       
-      this.logger.log(`文档 ${documentId} -> ${chunks.length} chunks`);
+      this.logger.log(`文档 ${documentId} / content ${reservedContent.id} -> ${chunks.length} chunks`);
 
       // 清空旧 chunks
-      await this.prisma.chunk.deleteMany({ where: { documentId } });
+      await this.db.query(`DELETE FROM chunks WHERE content_id = $1`, [reservedContent.id]);
 
-      await this.updateStatus(documentId, "EMBEDDING");
+      await this.updateStatus(documentId, "EMBEDDING", reservedContent.id);
       const texts = chunks.map((c) => c.text);
       const vectors = await this.embeddings.embedBatch(texts);
 
@@ -163,56 +199,40 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
       const chunkIds: string[] = [];
       for (let i = 0; i < chunks.length; i++) {
         const id = uuid();
-        chunkIds.push(id);
         const vec = `[${vectors[i].join(",")}]`;
         const page = chunks[i].page ?? null;
-        await this.db.query(
-          `INSERT INTO chunks (id, document_id, idx, text, tokens, page, embedding, tsv_zh, tsv_simple)
-           VALUES ($1,$2,$3,$4,$5,$6,$7::vector,to_tsvector('zhcfg',$4),to_tsvector('simple',lower($4)))`,
-          [id, documentId, i, chunks[i].text, chunks[i].tokens, page, vec],
+        const inserted = await this.db.queryOne<{ id: string }>(
+          `INSERT INTO chunks (
+             id, document_id, content_id, chunk_hash, idx, text, tokens, page,
+             embedding, tsv_zh, tsv_simple
+           )
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::vector,to_tsvector('zhcfg',$6),to_tsvector('simple',lower($6)))
+           RETURNING id`,
+          [id, documentId, reservedContent.id, chunkHash(chunks[i].text), i, chunks[i].text, chunks[i].tokens, page, vec],
         );
+        chunkIds.push(inserted?.id || id);
       }
 
       // Neo4j: 文档 / chunk 节点
-      const graphUpdatedAt = new Date().toISOString();
-      await this.neo4j.run(
-        `MATCH (:Document {id:$id})-[:HAS_CHUNK]->(oldChunk:Chunk)
-         DETACH DELETE oldChunk`,
-        { id: documentId },
-      );
-      await this.neo4j.run(
-        `MERGE (d:Document {id:$id})
-         ON CREATE SET d.createdAt=$createdAt
-         SET d.tenantId=$tenantId,
-             d.title=$title,
-             d.mime=$mime,
-             d.updatedAt=$updatedAt,
-             d.chunkCount=$chunkCount
-         WITH d
-         UNWIND $chunks AS c
-         MERGE (ch:Chunk {id:c.id})
-         ON CREATE SET ch.createdAt=$updatedAt
-         SET ch.tenantId=$tenantId,
-             ch.documentId=$id,
-             ch.idx=c.idx,
-             ch.text=c.text,
-             ch.updatedAt=$updatedAt
-         MERGE (d)-[:HAS_CHUNK]->(ch)`,
-        {
-          id: documentId,
-          tenantId,
-          title: doc.title,
-          mime: doc.mime,
-          createdAt: doc.createdAt.toISOString(),
-          updatedAt: graphUpdatedAt,
-          chunkCount: chunks.length,
-          chunks: chunks.map((c, i) => ({ id: chunkIds[i], idx: i, text: c.text.slice(0, 200) })),
-        },
-      );
+      await this.writeContentGraph({
+        contentId: reservedContent.id,
+        documentId,
+        tenantId,
+        title: doc.title,
+        mime: doc.mime,
+        contentHash: parsedContentHash,
+        createdAt: doc.createdAt.toISOString(),
+        chunks: chunks.map((c, i) => ({ id: chunkIds[i], idx: i, text: c.text.slice(0, 200) })),
+      });
 
       // 结构化事实抽取：面向电商 / KTV / 外贸 / CRM，同时保留简历时间线回归能力
       try {
-        await this.ragFacts.replaceDocumentFacts({ tenantId, documentId, facts: [] });
+        await this.ragFacts.replaceDocumentFacts({
+          tenantId,
+          documentId,
+          contentId: reservedContent.id,
+          facts: [],
+        });
         const facts = await this.ragExtractor.extractDocumentFacts({
           tenantId,
           documentId,
@@ -225,35 +245,372 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
             page: c.page ?? null,
           })),
         });
-        if (facts.length > 0) {
-          await this.ragFacts.replaceDocumentFacts({ tenantId, documentId, facts });
+        const contentFacts = facts.map((fact) => ({
+          ...fact,
+          tenantId,
+          documentId,
+          contentId: reservedContent.id,
+        }));
+        if (contentFacts.length > 0) {
+          await this.ragFacts.replaceDocumentFacts({
+            tenantId,
+            documentId,
+            contentId: reservedContent.id,
+            facts: contentFacts,
+          });
         }
-        this.logger.log(`文档 ${documentId} -> ${facts.length} structured facts`);
+        this.logger.log(`content ${reservedContent.id} -> ${contentFacts.length} structured facts`);
       } catch (e: any) {
         this.logger.warn(`结构化事实抽取失败: ${e.message}`);
       }
 
       // 实体抽取（可容错：失败不影响主流程）
       try {
-        await this.extractAndLinkEntities(documentId, tenantId, fullText, chunkIds);
+        await this.extractAndLinkEntities(
+          reservedContent.id,
+          documentId,
+          tenantId,
+          fullText,
+          chunks.map((c, i) => ({ id: chunkIds[i], text: c.text, page: c.page ?? null })),
+        );
       } catch (e: any) {
         this.logger.warn(`实体抽取失败: ${e.message}`);
       }
 
-      await this.updateStatus(documentId, "READY");
-      this.logger.log(`文档 ${documentId} 处理完成`);
+      await this.markContentReady(reservedContent.id, documentId, chunks.length);
+      await this.updateStatus(documentId, "READY", reservedContent.id);
+      this.logger.log(`文档 ${documentId} / content ${reservedContent.id} 处理完成`);
     } catch (e: any) {
       this.logger.error(`文档 ${documentId} 失败: ${e.message}`, e.stack);
       await this.prisma.document.update({
         where: { id: documentId },
         data: { status: "FAILED", errorMessage: e.message?.slice(0, 500) },
       });
+      if (processingContentId) {
+        await this.db.query(
+          `UPDATE document_contents
+           SET status='FAILED', error_message=$2, updated_at=NOW()
+           WHERE id=$1`,
+          [processingContentId, e.message?.slice(0, 500)],
+        );
+        await this.db.query(
+          `UPDATE documents
+           SET status='FAILED',
+               error_message=$2,
+               updated_at=NOW()
+           WHERE content_id=$1 AND status <> 'READY'`,
+          [processingContentId, e.message?.slice(0, 500)],
+        );
+      }
       throw e;
     }
   }
 
-  private async updateStatus(id: string, status: string) {
+  private async updateStatus(id: string, status: string, contentId?: string | null) {
     await this.prisma.document.update({ where: { id }, data: { status } });
+    if (contentId) {
+      await this.db.query(
+        `UPDATE document_contents SET status=$2, updated_at=NOW() WHERE id=$1`,
+        [contentId, status],
+      );
+      await this.db.query(
+        `UPDATE documents
+         SET status=$2,
+             error_message=NULL,
+             updated_at=NOW()
+         WHERE content_id=$1
+           AND status NOT IN ('READY', 'FAILED')`,
+        [contentId, status],
+      );
+    }
+  }
+
+  private async reserveContent(opts: {
+    tenantId: string;
+    documentId: string;
+    title: string;
+    mime: string;
+    size: number;
+    storageKey: string;
+    fileHash: string;
+    contentHash: string;
+    createdAt: Date;
+  }): Promise<{
+    id: string;
+    status: string;
+    canonicalDocumentId: string | null;
+    shouldProcess: boolean;
+  }> {
+    const id = uuid();
+    const inserted = await this.db.queryOne<{
+      id: string;
+      status: string;
+      canonical_document_id: string | null;
+    }>(
+      `INSERT INTO document_contents (
+         id, tenant_id, content_hash, first_file_hash, title, mime, size, status,
+         storage_key, canonical_document_id, chunk_count, duplicate_count, source_count,
+         created_at, updated_at
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'PARSING',$8,$9,0,1,1,$10,NOW())
+       ON CONFLICT (tenant_id, content_hash) DO NOTHING
+       RETURNING id, status, canonical_document_id`,
+      [
+        id,
+        opts.tenantId,
+        opts.contentHash,
+        opts.fileHash,
+        opts.title,
+        opts.mime,
+        opts.size,
+        opts.storageKey,
+        opts.documentId,
+        opts.createdAt,
+      ],
+    );
+
+    if (inserted) {
+      await this.attachCanonicalUpload({
+        tenantId: opts.tenantId,
+        documentId: opts.documentId,
+        contentId: inserted.id,
+        contentHash: opts.contentHash,
+        fileHash: opts.fileHash,
+      });
+      return {
+        id: inserted.id,
+        status: inserted.status,
+        canonicalDocumentId: inserted.canonical_document_id,
+        shouldProcess: true,
+      };
+    }
+
+    const existing = await this.db.queryOne<{
+      id: string;
+      status: string;
+      canonical_document_id: string | null;
+      chunk_count: number | string;
+    }>(
+      `SELECT id, status, canonical_document_id, chunk_count
+       FROM document_contents
+       WHERE tenant_id=$1 AND content_hash=$2
+       LIMIT 1`,
+      [opts.tenantId, opts.contentHash],
+    );
+    if (!existing) throw new Error("内容去重记录创建失败");
+
+    const chunkCount = Number(existing.chunk_count || 0);
+    if (existing.status === "READY" && chunkCount > 0) {
+      return {
+        id: existing.id,
+        status: existing.status,
+        canonicalDocumentId: existing.canonical_document_id,
+        shouldProcess: false,
+      };
+    }
+
+    if (
+      existing.status !== "FAILED" &&
+      existing.canonical_document_id &&
+      existing.canonical_document_id !== opts.documentId
+    ) {
+      return {
+        id: existing.id,
+        status: existing.status,
+        canonicalDocumentId: existing.canonical_document_id,
+        shouldProcess: false,
+      };
+    }
+
+    await this.db.query(
+      `UPDATE document_contents
+       SET status='PARSING',
+           canonical_document_id=$2,
+           title=$3,
+           mime=$4,
+           size=$5,
+           storage_key=$6,
+           first_file_hash=COALESCE(first_file_hash, $7),
+           error_message=NULL,
+           updated_at=NOW()
+       WHERE id=$1`,
+      [
+        existing.id,
+        opts.documentId,
+        opts.title,
+        opts.mime,
+        opts.size,
+        opts.storageKey,
+        opts.fileHash,
+      ],
+    );
+    await this.attachCanonicalUpload({
+      tenantId: opts.tenantId,
+      documentId: opts.documentId,
+      contentId: existing.id,
+      contentHash: opts.contentHash,
+      fileHash: opts.fileHash,
+    });
+    return {
+      id: existing.id,
+      status: "PARSING",
+      canonicalDocumentId: opts.documentId,
+      shouldProcess: true,
+    };
+  }
+
+  private async attachCanonicalUpload(opts: {
+    tenantId: string;
+    documentId: string;
+    contentId: string;
+    contentHash: string;
+    fileHash: string;
+  }) {
+    await this.db.query(
+      `UPDATE documents
+       SET content_id=$3,
+           content_hash=$4,
+           file_hash=COALESCE(file_hash, $5),
+           duplicate_of_document_id=NULL,
+           dedup_reason=NULL,
+           updated_at=NOW()
+       WHERE tenant_id=$1 AND id=$2`,
+      [opts.tenantId, opts.documentId, opts.contentId, opts.contentHash, opts.fileHash],
+    );
+  }
+
+  private async attachDuplicateUpload(opts: {
+    tenantId: string;
+    documentId: string;
+    contentId: string;
+    contentHash: string;
+    fileHash: string;
+    canonicalDocumentId: string | null;
+    status: string;
+    reason: string;
+  }) {
+    const status = this.statusFromContentStatus(opts.status);
+    await this.db.query(
+      `UPDATE documents
+       SET content_id=$3,
+           content_hash=$4,
+           file_hash=COALESCE(file_hash, $5),
+           duplicate_of_document_id=$6,
+           dedup_reason=$7,
+           status=$8,
+           updated_at=NOW()
+       WHERE tenant_id=$1 AND id=$2`,
+      [
+        opts.tenantId,
+        opts.documentId,
+        opts.contentId,
+        opts.contentHash,
+        opts.fileHash,
+        opts.canonicalDocumentId,
+        opts.reason,
+        status,
+      ],
+    );
+    await this.refreshContentStats(opts.contentId);
+  }
+
+  private statusFromContentStatus(status: string | null | undefined) {
+    if (status === "READY") return "READY";
+    if (status === "PARSING" || status === "CHUNKING" || status === "EMBEDDING") return status;
+    if (status === "FAILED") return "FAILED";
+    return "PENDING";
+  }
+
+  private async refreshContentStats(contentId: string) {
+    await this.db.query(
+      `UPDATE document_contents dc
+       SET duplicate_count = stats.upload_count,
+           source_count = stats.upload_count,
+           updated_at = NOW()
+       FROM (
+         SELECT content_id, COUNT(*)::int AS upload_count
+         FROM documents
+         WHERE content_id = $1
+         GROUP BY content_id
+       ) stats
+       WHERE dc.id = stats.content_id`,
+      [contentId],
+    );
+  }
+
+  private async markContentReady(contentId: string, documentId: string, chunkCount: number) {
+    await this.db.query(
+      `UPDATE document_contents
+       SET status='READY',
+           canonical_document_id=$2,
+           chunk_count=$3,
+           error_message=NULL,
+           updated_at=NOW()
+       WHERE id=$1`,
+      [contentId, documentId, chunkCount],
+    );
+    await this.db.query(
+      `UPDATE documents
+       SET status='READY',
+           error_message=NULL,
+           updated_at=NOW()
+       WHERE content_id=$1`,
+      [contentId],
+    );
+    await this.refreshContentStats(contentId);
+  }
+
+  private async writeContentGraph(opts: {
+    contentId: string;
+    documentId: string;
+    tenantId: string;
+    title: string;
+    mime: string;
+    contentHash: string;
+    createdAt: string;
+    chunks: Array<{ id: string; idx: number; text: string }>;
+  }) {
+    const graphUpdatedAt = new Date().toISOString();
+    await this.neo4j.run(
+      `MATCH (:Document {id:$id})-[:HAS_CHUNK]->(oldChunk:Chunk)
+       DETACH DELETE oldChunk`,
+      { id: opts.contentId },
+    );
+    await this.neo4j.run(
+      `MERGE (d:Document {id:$id})
+       ON CREATE SET d.createdAt=$createdAt
+       SET d.tenantId=$tenantId,
+           d.title=$title,
+           d.mime=$mime,
+           d.contentId=$id,
+           d.canonicalDocumentId=$documentId,
+           d.contentHash=$contentHash,
+           d.updatedAt=$updatedAt,
+           d.chunkCount=$chunkCount
+       WITH d
+       UNWIND $chunks AS c
+       MERGE (ch:Chunk {id:c.id})
+       ON CREATE SET ch.createdAt=$updatedAt
+       SET ch.tenantId=$tenantId,
+           ch.documentId=$documentId,
+           ch.contentId=$id,
+           ch.idx=c.idx,
+           ch.text=c.text,
+           ch.updatedAt=$updatedAt
+       MERGE (d)-[:HAS_CHUNK]->(ch)`,
+      {
+        id: opts.contentId,
+        documentId: opts.documentId,
+        tenantId: opts.tenantId,
+        title: opts.title,
+        mime: opts.mime,
+        contentHash: opts.contentHash,
+        createdAt: opts.createdAt,
+        updatedAt: graphUpdatedAt,
+        chunkCount: opts.chunks.length,
+        chunks: opts.chunks,
+      },
+    );
   }
 
   private async parseText(buffer: Buffer, mime: string, title: string): Promise<string> {
@@ -326,12 +683,12 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
     const PDFJS = await this.loadPdfJs();
     const { createCanvas } = await import("@napi-rs/canvas");
     const data = await PDFJS.getDocument({ data: new Uint8Array(buffer) }).promise;
-    const configuredMaxPages = Number(this.config.get<string>("OCR_PDF_MAX_PAGES") || 0);
+    const configuredMaxPages = Number(this.config.getOrThrow<string>("OCR_PDF_MAX_PAGES"));
     const maxPages =
       Number.isFinite(configuredMaxPages) && configuredMaxPages > 0
         ? Math.min(data.numPages, configuredMaxPages)
         : data.numPages;
-    const configuredScale = Number(this.config.get<string>("OCR_PDF_RENDER_SCALE") || 2);
+    const configuredScale = Number(this.config.getOrThrow<string>("OCR_PDF_RENDER_SCALE"));
     const scale =
       Number.isFinite(configuredScale) && configuredScale > 0
         ? Math.min(Math.max(configuredScale, 0.5), 4)
@@ -374,10 +731,11 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
   }
 
   private async extractAndLinkEntities(
+    contentId: string,
     documentId: string,
     tenantId: string,
     text: string,
-    chunkIds: string[],
+    chunks: Array<{ id: string; text: string; page?: number | null }>,
   ) {
     const sample = text.slice(0, 4000);
     const messages: ChatMessage[] = [
@@ -395,64 +753,210 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return;
     const data = JSON.parse(jsonMatch[0]);
-    const entityMap = new Map<string, { id: string; name: string; type: string }>();
+    const entityMap = new Map<string, { id: string; name: string; type: string; canonicalKey: string }>();
+    const nameToCanonicalKey = new Map<string, string>();
     for (const item of data.entities || []) {
       const name = String(item?.name || "").trim();
       if (!name) continue;
-      entityMap.set(name, {
-        id: `e-${tenantId}-${name}`,
+      const type = String(item?.type || "Concept").trim() || "Concept";
+      const key = canonicalKey(type, name);
+      if (!key.split(":")[1]) continue;
+      entityMap.set(key, {
+        id: knowledgeNodeId(tenantId, key),
         name,
-        type: String(item?.type || "Concept").trim() || "Concept",
+        type,
+        canonicalKey: key,
       });
+      nameToCanonicalKey.set(name, key);
     }
     const entities = Array.from(entityMap.values()).slice(0, 30);
-    const relations: Array<{ from: string; to: string; type: string }> = (data.relations || [])
-      .map((item: any) => ({
-        from: String(item?.from || "").trim(),
-        to: String(item?.to || "").trim(),
-        type: String(item?.type || "RELATED").trim() || "RELATED",
-      }))
-      .filter((item: { from: string; to: string; type: string }) =>
-        Boolean(item.from && item.to && entityMap.has(item.from) && entityMap.has(item.to)),
-      );
+    const relationMap = new Map<string, { fromKey: string; toKey: string; type: string; fromName: string; toName: string }>();
+    for (const item of data.relations || []) {
+      const fromName = String(item?.from || "").trim();
+      const toName = String(item?.to || "").trim();
+      const type = String(item?.type || "RELATED").trim() || "RELATED";
+      const fromKey = nameToCanonicalKey.get(fromName);
+      const toKey = nameToCanonicalKey.get(toName);
+      if (!fromKey || !toKey || fromKey === toKey) continue;
+      relationMap.set(edgeKey(fromKey, type, toKey), { fromKey, toKey, type, fromName, toName });
+    }
+    const relations = Array.from(relationMap.values());
 
     if (entities.length === 0) return;
 
+    for (const entity of entities) {
+      await this.upsertKnowledgeNode(tenantId, entity);
+    }
+
     const now = new Date().toISOString();
     await this.neo4j.run(
-      `MATCH (d:Document {id:$docId, tenantId:$tenantId})
+      `MATCH (d:Document {id:$contentId, tenantId:$tenantId})
        UNWIND $entities AS e
        MERGE (ent:Entity {id:e.id})
        ON CREATE SET ent.createdAt=$now
        SET ent.name=e.name,
            ent.type=e.type,
+           ent.canonicalKey=e.canonicalKey,
            ent.tenantId=$tenantId,
            ent.updatedAt=$now
        MERGE (d)-[:CONTAINS_ENTITY]->(ent)
        WITH d, ent
-       MATCH (c:Chunk {documentId:$docId})
-       MERGE (ent)-[:MENTIONED_IN {documentId:$docId}]->(c)
+       MATCH (c:Chunk {contentId:$contentId})
+       MERGE (ent)-[:MENTIONED_IN {contentId:$contentId}]->(c)
        WITH DISTINCT ent
        OPTIONAL MATCH (ent)<-[:CONTAINS_ENTITY]-(doc:Document {tenantId:$tenantId})
        WITH ent, count(DISTINCT doc) AS documentCount
        OPTIONAL MATCH (ent)-[:MENTIONED_IN]->(chunk:Chunk)
        WITH ent, documentCount, count(DISTINCT chunk) AS mentionCount
        SET ent.documentCount=documentCount, ent.mentionCount=mentionCount`,
-      { docId: documentId, tenantId, entities, now },
+      { contentId, tenantId, entities, now },
     );
 
     for (const r of relations) {
-      const fromId = `e-${tenantId}-${r.from}`;
-      const toId = `e-${tenantId}-${r.to}`;
+      const from = entityMap.get(r.fromKey);
+      const to = entityMap.get(r.toKey);
+      if (!from || !to) continue;
+      const evidenceChunk =
+        chunks.find((chunk) => chunk.text.includes(r.fromName) && chunk.text.includes(r.toName)) ||
+        chunks.find((chunk) => chunk.text.includes(r.fromName) || chunk.text.includes(r.toName)) ||
+        chunks[0];
+      const edgeStats = await this.upsertKnowledgeEdge({
+        tenantId,
+        contentId,
+        documentId,
+        source: from,
+        target: to,
+        relationType: r.type || "RELATED",
+        chunkId: evidenceChunk?.id ?? null,
+        evidenceText: evidenceChunk?.text ? evidenceChunk.text.slice(0, 240) : null,
+      });
       await this.neo4j.run(
         `MATCH (a:Entity {id:$fromId}), (b:Entity {id:$toId})
-         MERGE (a)-[rel:RELATES_TO {type:$type}]->(b)
-         ON CREATE SET rel.createdAt=$now, rel.weight=0
+         MERGE (a)-[rel:RELATES_TO {edgeKey:$edgeKey}]->(b)
+         ON CREATE SET rel.createdAt=$now
          SET rel.tenantId=$tenantId,
+             rel.type=$type,
+             rel.edgeId=$edgeId,
              rel.updatedAt=$now,
-             rel.weight=coalesce(rel.weight, 0) + 1`,
-        { fromId, toId, type: r.type || "RELATED", tenantId, now },
+             rel.weight=$weight,
+             rel.evidenceCount=$evidenceCount,
+             rel.sourceCount=$sourceCount`,
+        {
+          fromId: from.id,
+          toId: to.id,
+          edgeId: edgeStats.id,
+          edgeKey: edgeStats.edgeKey,
+          type: r.type || "RELATED",
+          tenantId,
+          now,
+          weight: edgeStats.weight,
+          evidenceCount: edgeStats.evidenceCount,
+          sourceCount: edgeStats.sourceCount,
+        },
       );
     }
+  }
+
+  private async upsertKnowledgeNode(
+    tenantId: string,
+    entity: { id: string; name: string; type: string; canonicalKey: string },
+  ) {
+    await this.db.query(
+      `INSERT INTO knowledge_nodes (
+         id, tenant_id, canonical_key, name, type, aliases, source_count, mention_count
+       )
+       VALUES ($1,$2,$3,$4,$5,to_jsonb(ARRAY[$4]::text[]),0,0)
+       ON CONFLICT (tenant_id, canonical_key)
+       DO UPDATE SET
+         type = EXCLUDED.type,
+         aliases = CASE
+           WHEN knowledge_nodes.aliases ? $4 THEN knowledge_nodes.aliases
+           ELSE knowledge_nodes.aliases || to_jsonb($4::text)
+         END,
+         updated_at = NOW()`,
+      [entity.id, tenantId, entity.canonicalKey, entity.name, entity.type],
+    );
+  }
+
+  private async upsertKnowledgeEdge(opts: {
+    tenantId: string;
+    contentId: string;
+    documentId: string;
+    source: { id: string; canonicalKey: string };
+    target: { id: string; canonicalKey: string };
+    relationType: string;
+    chunkId?: string | null;
+    evidenceText?: string | null;
+  }): Promise<{
+    id: string;
+    edgeKey: string;
+    weight: number;
+    evidenceCount: number;
+    sourceCount: number;
+  }> {
+    const key = edgeKey(opts.source.canonicalKey, opts.relationType, opts.target.canonicalKey);
+    const id = `ke-${opts.tenantId}-${sha256Hex(key).slice(0, 32)}`;
+    const row = await this.db.queryOne<{ id: string }>(
+      `INSERT INTO knowledge_edges (
+         id, tenant_id, source_node_id, target_node_id, relation_type, edge_key,
+         weight, evidence_count, source_count
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,1,0,0)
+       ON CONFLICT (tenant_id, edge_key)
+       DO UPDATE SET
+         relation_type = EXCLUDED.relation_type,
+         updated_at = NOW()
+       RETURNING id`,
+      [id, opts.tenantId, opts.source.id, opts.target.id, relationKeyPart(opts.relationType), key],
+    );
+    const edgeId = row?.id || id;
+    const eHash = evidenceHash([edgeId, opts.contentId, opts.chunkId, opts.evidenceText]);
+    await this.db.query(
+      `INSERT INTO edge_evidences (
+         id, tenant_id, edge_id, document_content_id, document_id,
+         chunk_id, evidence_hash, evidence_text
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT DO NOTHING`,
+      [
+        uuid(),
+        opts.tenantId,
+        edgeId,
+        opts.contentId,
+        opts.documentId,
+        opts.chunkId ?? null,
+        eHash,
+        opts.evidenceText ?? null,
+      ],
+    );
+
+    const stats = await this.db.queryOne<{
+      evidence_count: string | number;
+      source_count: string | number;
+    }>(
+      `SELECT COUNT(*) AS evidence_count,
+              COUNT(DISTINCT document_content_id) AS source_count
+       FROM edge_evidences
+       WHERE edge_id=$1`,
+      [edgeId],
+    );
+    const evidenceCount = Number(stats?.evidence_count || 0);
+    const sourceCount = Number(stats?.source_count || 0);
+    await this.db.query(
+      `UPDATE knowledge_edges
+       SET evidence_count=$2,
+           source_count=$3,
+           weight=GREATEST($2, 1),
+           updated_at=NOW()
+       WHERE id=$1`,
+      [edgeId, evidenceCount, sourceCount],
+    );
+    return {
+      id: edgeId,
+      edgeKey: key,
+      evidenceCount,
+      sourceCount,
+      weight: Math.max(evidenceCount, 1),
+    };
   }
 }

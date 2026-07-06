@@ -54,9 +54,13 @@ docker compose up -d
 ```bash
 pnpm install
 pnpm --filter @ai-knowledge/api prisma:generate
-pnpm --filter @ai-knowledge/api prisma:push
+pnpm --filter @ai-knowledge/api prisma:migrate:deploy
 pnpm seed                  # 写入演示用户与文档
 ```
+
+数据库结构以 `apps/api/src/database/prisma/schema.prisma` 为唯一声明来源。新增/修改字段、索引、约束时必须先更新 Prisma schema，再使用 Prisma Migrate 生成或部署迁移；不要通过手写散落的 SQL、`psql` 手动执行，或 `prisma db push` 修改业务表结构。
+
+环境变量只从仓库根目录加载：本地使用 `.env`，个人覆盖使用 `.env.local`，不要在 `apps/*` 下维护额外 `.env`。Prisma、API、worker、seed 和维护脚本都应通过根目录配置连接同一套服务。
 
 ### 4. 启动开发环境
 

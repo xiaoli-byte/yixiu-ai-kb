@@ -3,6 +3,7 @@ export interface Citation {
   index: number;
   chunkId: string;
   documentId: string;
+  contentId?: string;
   documentTitle: string;
   mime: string;
   snippet: string;

@@ -12,11 +12,16 @@ import { DatabaseService } from "./database.service";
       provide: PG_POOL,
       inject: [ConfigService],
       useFactory: (config: ConfigService) =>
-        new Pool({ connectionString: config.get<string>("DATABASE_URL"), max: 20 }),
+        new Pool({ connectionString: config.getOrThrow<string>("DATABASE_URL"), max: 20 }),
     },
     {
       provide: PRISMA,
-      useFactory: () => new PrismaClient({ log: ["error", "warn"] }),
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        new PrismaClient({
+          datasources: { db: { url: config.getOrThrow<string>("DATABASE_URL") } },
+          log: ["error", "warn"],
+        }),
     },
     DatabaseService,
   ],

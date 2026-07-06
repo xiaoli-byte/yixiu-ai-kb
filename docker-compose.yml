@@ -20,7 +20,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-ai_knowledge}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-ai_knowledge}
-    # 初始化时安装 pgvector 和 zhparser，创建 zhcfg 配置
+    # 初始化扩展与 zhcfg；业务表结构变更通过 Prisma Migrate 管理
     command: >
       bash -c "
         # 修复 pgvector 扩展别名
@@ -41,6 +41,7 @@ services:
       - "${POSTGRES_PORT:-55432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # 历史基线初始化；不要在该 SQL 中追加新的业务表结构变更
       - ./infra/docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_knowledge}"]

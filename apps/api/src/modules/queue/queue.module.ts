@@ -15,7 +15,7 @@ import { RagModule } from "../rag/rag.module";
       provide: "REDIS",
       inject: [ConfigService],
       useFactory: (config: ConfigService) =>
-        new IORedis(config.get<string>("REDIS_URL") || "redis://localhost:6379", {
+        new IORedis(config.getOrThrow<string>("REDIS_URL"), {
           maxRetriesPerRequest: null,
         }),
     },

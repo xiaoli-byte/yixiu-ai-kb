@@ -1,4 +1,5 @@
-// Prisma schema - 用于类型生成，业务表结构由 init.sql 管理
+// Prisma schema 是 PostgreSQL 业务表结构的唯一声明来源。
+// 所有结构变更必须先修改本文件，再通过 Prisma Migrate 生成/部署迁移。
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
@@ -10,7 +11,7 @@ datasource db {
   extensions = [vector, pg_trgm, pgcrypto, uuidOssp(map: "uuid-ossp")]
 }
 
-// 注：prisma db push 仅用于本地开发，结构与 init.sql 保持一致
+// 禁止使用 prisma db push 修改业务表结构；开发请使用 prisma migrate dev，部署请使用 prisma migrate deploy。
 
 model User {
   id           String   @id @default(cuid())
@@ -57,6 +58,11 @@ model Document {
   tenantId     String   @map("tenant_id")
   ownerId      String   @map("owner_id")
   folderId     String?  @map("folder_id")
+  contentId    String?  @map("content_id")
+  fileHash     String?  @map("file_hash")
+  contentHash  String?  @map("content_hash")
+  duplicateOfDocumentId String? @map("duplicate_of_document_id")
+  dedupReason  String?  @map("dedup_reason")
   title        String
   mime         String
   size         BigInt   @default(0)
@@ -67,18 +73,54 @@ model Document {
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   owner User           @relation("Owner", fields: [ownerId], references: [id])
+  content DocumentContent? @relation(fields: [contentId], references: [id], onDelete: SetNull)
   tags  DocumentTag[]
   chunks Chunk[]
   structuredFacts StructuredFact[]
 
   @@index([tenantId])
   @@index([status])
+  @@index([tenantId, status], map: "documents_tenant_status_idx")
+  @@index([ownerId], map: "documents_owner_idx")
+  @@index([contentId])
+  @@index([tenantId, fileHash])
+  @@index([tenantId, contentHash])
   @@map("documents")
+}
+
+model DocumentContent {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  contentHash         String   @map("content_hash")
+  firstFileHash       String?  @map("first_file_hash")
+  title               String
+  mime                String
+  size                BigInt   @default(0)
+  status              String   @default("PENDING")
+  storageKey          String?  @map("storage_key")
+  canonicalDocumentId String?  @map("canonical_document_id")
+  chunkCount          Int      @default(0) @map("chunk_count")
+  duplicateCount      Int      @default(1) @map("duplicate_count")
+  sourceCount         Int      @default(1) @map("source_count")
+  errorMessage        String?  @map("error_message")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  uploads Document[]
+  chunks Chunk[]
+  structuredFacts StructuredFact[]
+  edgeEvidences EdgeEvidence[]
+
+  @@unique([tenantId, contentHash])
+  @@index([tenantId, status])
+  @@map("document_contents")
 }
 
 model Chunk {
   id         String   @id @default(cuid())
   documentId String   @map("document_id")
+  contentId  String?  @map("content_id")
+  chunkHash  String?  @map("chunk_hash")
   idx        Int
   text       String
   tokens     Int      @default(0)
@@ -89,9 +131,13 @@ model Chunk {
   createdAt  DateTime @default(now()) @map("created_at")
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content DocumentContent? @relation(fields: [contentId], references: [id], onDelete: Cascade)
   structuredFacts StructuredFact[]
 
   @@index([documentId, idx])
+  @@index([contentId, idx])
+  @@index([chunkHash])
+  @@unique([contentId, idx], map: "chunks_content_idx_unique")
   @@map("chunks")
 }
 
@@ -151,7 +197,9 @@ model StructuredFact {
   id          String   @id @default(cuid())
   tenantId    String   @map("tenant_id")
   documentId  String   @map("document_id")
+  contentId   String?  @map("content_id")
   chunkId     String?  @map("chunk_id")
+  factHash    String?  @map("fact_hash")
   domain      String
   entityType  String   @map("entity_type")
   entityName  String   @map("entity_name")
@@ -161,11 +209,77 @@ model StructuredFact {
   createdAt   DateTime @default(now()) @map("created_at")
 
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content  DocumentContent? @relation(fields: [contentId], references: [id], onDelete: Cascade)
   chunk    Chunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, domain, entityType])
   @@index([documentId])
+  @@index([contentId])
+  @@index([factHash])
+  @@unique([tenantId, contentId, factHash], map: "structured_facts_content_fact_unique")
   @@map("structured_facts")
+}
+
+model KnowledgeNode {
+  id           String   @id
+  tenantId     String   @map("tenant_id")
+  canonicalKey String   @map("canonical_key")
+  name         String
+  type         String
+  aliases      Json     @default("[]")
+  sourceCount  Int      @default(0) @map("source_count")
+  mentionCount Int      @default(0) @map("mention_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  outgoingEdges KnowledgeEdge[] @relation("KnowledgeEdgeSource")
+  incomingEdges KnowledgeEdge[] @relation("KnowledgeEdgeTarget")
+
+  @@unique([tenantId, canonicalKey])
+  @@index([tenantId, type])
+  @@map("knowledge_nodes")
+}
+
+model KnowledgeEdge {
+  id           String   @id
+  tenantId     String   @map("tenant_id")
+  sourceNodeId String   @map("source_node_id")
+  targetNodeId String   @map("target_node_id")
+  relationType String   @map("relation_type")
+  edgeKey      String   @map("edge_key")
+  weight       Int      @default(1)
+  evidenceCount Int    @default(0) @map("evidence_count")
+  sourceCount   Int    @default(0) @map("source_count")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  sourceNode KnowledgeNode @relation("KnowledgeEdgeSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode KnowledgeNode @relation("KnowledgeEdgeTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
+  evidences  EdgeEvidence[]
+
+  @@unique([tenantId, edgeKey])
+  @@index([tenantId, relationType])
+  @@map("knowledge_edges")
+}
+
+model EdgeEvidence {
+  id                String   @id
+  tenantId          String   @map("tenant_id")
+  edgeId            String   @map("edge_id")
+  documentContentId String   @map("document_content_id")
+  documentId        String?  @map("document_id")
+  chunkId           String?  @map("chunk_id")
+  evidenceHash      String   @map("evidence_hash")
+  evidenceText      String?  @map("evidence_text")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  edge    KnowledgeEdge @relation(fields: [edgeId], references: [id], onDelete: Cascade)
+  content DocumentContent @relation(fields: [documentContentId], references: [id], onDelete: Cascade)
+
+  @@index([edgeId, documentContentId])
+  @@index([tenantId, documentContentId])
+  @@index([chunkId])
+  @@map("edge_evidences")
 }
 
 model QARunLog {

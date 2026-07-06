@@ -24,7 +24,7 @@ export class AuthService {
 
   async validateUser(email: string, password: string, tenantId?: string) {
     const user = await this.prisma.user.findFirst({
-      where: { email, tenantId: tenantId || this.config.get("BOOTSTRAP_TENANT_ID") },
+      where: { email, tenantId: tenantId || this.config.getOrThrow<string>("BOOTSTRAP_TENANT_ID") },
     });
     if (!user) return null;
     const ok = await bcrypt.compare(password, user.passwordHash);
@@ -44,8 +44,8 @@ export class AuthService {
     };
     const accessToken = this.jwt.sign(payload);
     const refreshToken = this.jwt.sign(payload, {
-      secret: this.config.get<string>("JWT_REFRESH_SECRET"),
-      expiresIn: this.config.get<string>("JWT_REFRESH_TTL") || "7d",
+      secret: this.config.getOrThrow<string>("JWT_REFRESH_SECRET"),
+      expiresIn: this.config.getOrThrow<string>("JWT_REFRESH_TTL"),
     });
 
     await this.storeRefreshToken(user.id, refreshToken);
@@ -66,7 +66,7 @@ export class AuthService {
   async refresh(token: string) {
     try {
       const payload = this.jwt.verify<JwtPayload>(token, {
-        secret: this.config.get<string>("JWT_REFRESH_SECRET"),
+        secret: this.config.getOrThrow<string>("JWT_REFRESH_SECRET"),
       });
       const stored = await this.prisma.refreshToken.findFirst({
         where: {

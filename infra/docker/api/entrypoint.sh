@@ -86,7 +86,7 @@ echo "[API] Neo4j check completed!"
 # 运行数据库迁移 (如果需要)
 if [ "$RUN_MIGRATIONS" = "true" ] || [ "$NODE_ENV" = "production" ]; then
     echo "[API] Running database migrations..."
-    pnpm prisma:push || echo "[API] Migration completed or already up to date"
+    pnpm prisma:migrate:deploy || echo "[API] Migration completed or already up to date"
 fi
 
 # 初始化数据 (首次启动时)

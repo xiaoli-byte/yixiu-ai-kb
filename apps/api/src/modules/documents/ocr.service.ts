@@ -22,10 +22,10 @@ export class OcrService {
 
   private async recognizeViaPaddleOcr(buffer: Buffer, mime: string, filename: string): Promise<string> {
     const url = this.buildRecognizeUrl();
-    const timeoutMs = Number(this.config.get<string>("PADDLEOCR_TIMEOUT_MS") || 10 * 60 * 1000);
-    const uploadField = this.config.get<string>("PADDLEOCR_UPLOAD_FIELD") || "image";
-    const language = this.config.get<string>("PADDLEOCR_LANG") || "ch";
-    const languageField = this.config.get<string>("PADDLEOCR_LANG_FIELD") || "lang";
+    const timeoutMs = Number(this.config.getOrThrow<string>("PADDLEOCR_TIMEOUT_MS"));
+    const uploadField = this.config.getOrThrow<string>("PADDLEOCR_UPLOAD_FIELD");
+    const language = this.config.getOrThrow<string>("PADDLEOCR_LANG");
+    const languageField = this.config.getOrThrow<string>("PADDLEOCR_LANG_FIELD");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -74,7 +74,7 @@ export class OcrService {
   }
 
   private buildRecognizeUrl(): string {
-    return (this.config.get<string>("PADDLEOCR_HTTP_URL") || "http://localhost:10096/ocr").trim();
+    return this.config.getOrThrow<string>("PADDLEOCR_HTTP_URL").trim();
   }
 
   private parseResponseBody(body: string): OcrResponse {

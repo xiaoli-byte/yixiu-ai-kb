@@ -15,8 +15,8 @@ import { PermissionsModule } from "../../common/permissions/permissions.module";
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>("JWT_ACCESS_SECRET"),
-        signOptions: { expiresIn: config.get<string>("JWT_ACCESS_TTL") || "7d" },
+        secret: config.getOrThrow<string>("JWT_ACCESS_SECRET"),
+        signOptions: { expiresIn: config.getOrThrow<string>("JWT_ACCESS_TTL") },
       }),
     }),
     ClsModule,

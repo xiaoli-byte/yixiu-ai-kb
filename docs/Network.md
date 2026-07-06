@@ -164,7 +164,7 @@ async function serverFetch<T>(
   init?: RequestInit & { next?: { revalidate?: number | false; tags?: string[] } }
 ): Promise<T> {
   // 服务端直接使用完整后端地址（或内部地址）
-  const BASE_URL = process.env.INTERNAL_API_URL || 'http://localhost:8080';
+  const BASE_URL = process.env.API_INTERNAL_URL || 'http://localhost:8080/api';
   const cookieStore = cookies();
   const token = cookieStore.get('token')?.value;
 

@@ -53,8 +53,8 @@ export default function GraphPage() {
     setQuery(normalizeFilters(next));
   };
 
-  const exportGraph = () => {
-    if (canvasRef.current?.exportPng()) return;
+  const exportGraph = async () => {
+    if (await canvasRef.current?.exportPng()) return;
     downloadJson(workspace.graph, "knowledge-graph");
   };
 

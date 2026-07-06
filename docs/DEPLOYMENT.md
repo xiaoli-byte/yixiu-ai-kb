@@ -136,12 +136,14 @@ pnpm install
 # 生成 Prisma Client
 pnpm --filter @ai-knowledge/api prisma:generate
 
-# 推送数据库 Schema
-pnpm --filter @ai-knowledge/api prisma:push
+# 执行 Prisma Migrate 迁移
+pnpm --filter @ai-knowledge/api prisma:migrate:deploy
 
 # 初始化演示数据（可选）
 pnpm seed
 ```
+
+> 数据库业务结构变更必须先更新 `apps/api/src/database/prisma/schema.prisma`，再通过 Prisma Migrate 生成/部署迁移。禁止使用散落 SQL 脚本、手动 `psql` 或 `prisma db push` 修改业务表结构；Prisma Migrate 生成的迁移 SQL 除外。
 
 ### 2.5 启动开发服务
 
@@ -239,6 +241,8 @@ REDIS_PORT=6379
 # ===== MinIO =====
 MINIO_ROOT_USER=minio_admin
 MINIO_ROOT_PASSWORD=minio_password
+MINIO_ENDPOINT=minio
+MINIO_PUBLIC_URL=https://your-domain.com/minio
 MINIO_PORT=9000
 MINIO_CONSOLE_PORT=9001
 S3_BUCKET=ai-knowledge-docs
@@ -661,7 +665,7 @@ kubectl logs -f deployment/api -n ai-knowledge
 
 ### 6.1 完整环境变量列表
 
-> **注意**：生产环境使用 Docker Compose 时，环境变量通过 `.env.production` 文件注入。API 服务使用 `DATABASE_URL`、`REDIS_URL` 等标准格式；PostgreSQL、Redis 等基础服务使用独立配置变量（如 `POSTGRES_USER`、`POSTGRES_PASSWORD` 等）。
+> **注意**：生产环境使用 Docker Compose 时，环境变量通过 `.env.production` 文件注入。API 服务使用 `DATABASE_URL`、`REDIS_URL` 等标准格式；PostgreSQL、Redis 等基础服务使用独立配置变量（如 `POSTGRES_USER`、`POSTGRES_PASSWORD` 等）。生产 compose 会拆分 API 与文档处理 worker：API 覆盖为 `DOCUMENT_WORKER_ENABLED=false`，独立 `worker` 服务覆盖为 `true`。
 
 | 变量名 | 说明 | 默认值 | 必填 |
 | --- | --- | --- | --- |
@@ -678,7 +682,9 @@ kubectl logs -f deployment/api -n ai-knowledge
 | `NEO4J_URI` | Neo4j Bolt 地址 | bolt://localhost:7687 | 是 |
 | `NEO4J_USER` | Neo4j 用户名 | neo4j | 是 |
 | `NEO4J_PASSWORD` | Neo4j 密码 | - | 是 |
-| `S3_ENDPOINT` | MinIO 端点 | http://localhost:9000 | 是 |
+| `MINIO_ENDPOINT` | MinIO 内部端点主机 | minio | 是 |
+| `MINIO_PORT` | MinIO 内部端口 | 9000 | 是 |
+| `MINIO_PUBLIC_URL` | MinIO 对外访问地址 | https://your-domain.com/minio | 是 |
 | `S3_REGION` | 区域 | us-east-1 | - |
 | `S3_BUCKET` | Bucket 名称 | ai-knowledge-docs | - |
 | `S3_ACCESS_KEY` | S3 Access Key | - | 是 |
@@ -705,6 +711,8 @@ kubectl logs -f deployment/api -n ai-knowledge
 | `SEARCH_RRF_K` | RRF K 值 | 60 | - |
 | `SEARCH_RRF_FINAL_TOPK` | 最终返回数 | 10 | - |
 | `EMBED_BATCH_SIZE` | Embedding 批处理大小 | 10 | - |
+| `DOCUMENT_WORKER_ENABLED` | 是否启动文档队列消费者；生产 compose 由 api/worker 服务分别覆盖 | true | 是 |
+| `DOCUMENT_WORKER_CONCURRENCY` | 文档处理 worker 并发数 | 1 | 是 |
 
 ### 6.2 环境特定配置
 
@@ -1287,4 +1295,3 @@ docker system prune -f
 # 重建特定服务
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --force-recreate [service-name]
 ```
-

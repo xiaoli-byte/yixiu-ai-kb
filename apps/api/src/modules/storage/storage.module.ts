@@ -8,7 +8,7 @@ import { StorageService } from "./storage.service";
     {
       provide: StorageService,
       inject: [ConfigService],
-      useFactory: () => new StorageService(),
+      useFactory: (config: ConfigService) => new StorageService(config),
     },
   ],
   exports: [StorageService],

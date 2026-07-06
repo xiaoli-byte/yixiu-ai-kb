@@ -5,6 +5,7 @@ import { EmbeddingsService } from "../embeddings/embeddings.service";
 export interface SearchHit {
   chunkId: string;
   documentId: string;
+  contentId?: string;
   documentTitle: string;
   mime: string;          // 文档 MIME 类型
   idx: number;
@@ -296,18 +297,20 @@ export class SearchService {
 
     const rows = await this.db.query<any>(
       `SELECT c.id              AS "chunkId",
-              c.document_id     AS "documentId",
+              COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
+              COALESCE(c.content_id, c.document_id) AS "contentId",
               c.idx             AS idx,
               c.text            AS text,
               c.page            AS page,
-              d.title           AS "documentTitle",
-              d.mime            AS mime,
+              COALESCE(dc.title, d.title) AS "documentTitle",
+              COALESCE(dc.mime, d.mime) AS mime,
               ts_rank_cd(c.tsv_zh, to_tsquery('zhcfg', $1)) +
               ts_rank_cd(c.tsv_simple, to_tsquery('simple', lower($1))) AS rank,
               c.text AS highlight
        FROM chunks c
-       JOIN documents d ON d.id = c.document_id
-       WHERE d.tenant_id = $2
+       LEFT JOIN document_contents dc ON dc.id = c.content_id
+       JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+       WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
          AND (
            c.tsv_zh @@ to_tsquery('zhcfg', $1)
            OR c.tsv_simple @@ to_tsquery('simple', lower($1))
@@ -326,18 +329,20 @@ export class SearchService {
     try {
       const rows = await this.db.query<any>(
         `SELECT c.id              AS "chunkId",
-                c.document_id     AS "documentId",
+                COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
+                COALESCE(c.content_id, c.document_id) AS "contentId",
                 c.idx             AS idx,
                 c.text            AS text,
                 c.page            AS page,
-                d.title           AS "documentTitle",
-                d.mime            AS mime,
+                COALESCE(dc.title, d.title) AS "documentTitle",
+                COALESCE(dc.mime, d.mime) AS mime,
                 ts_rank_cd(c.tsv_zh, plainto_tsquery('zhcfg', $1)) AS rank,
                 ts_headline('zhcfg', c.text, plainto_tsquery('zhcfg', $1),
                   'StartSel=<mark>,StopSel=</mark>,MaxWords=50,MinWords=10,ShortWord=1,HighlightAll=0') AS highlight
          FROM chunks c
-         JOIN documents d ON d.id = c.document_id
-         WHERE d.tenant_id = $2
+         LEFT JOIN document_contents dc ON dc.id = c.content_id
+         JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+         WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
            AND c.tsv_zh @@ plainto_tsquery('zhcfg', $1)
          ORDER BY rank DESC
          LIMIT $3`,
@@ -356,18 +361,20 @@ export class SearchService {
   private async bm25English(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
     const rows = await this.db.query<any>(
       `SELECT c.id              AS "chunkId",
-              c.document_id     AS "documentId",
+              COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
+              COALESCE(c.content_id, c.document_id) AS "contentId",
               c.idx             AS idx,
               c.text            AS text,
               c.page            AS page,
-              d.title           AS "documentTitle",
-              d.mime            AS mime,
+              COALESCE(dc.title, d.title) AS "documentTitle",
+              COALESCE(dc.mime, d.mime) AS mime,
               ts_rank_cd(c.tsv_simple, plainto_tsquery('simple', lower($1))) AS rank,
               ts_headline('simple', c.text, plainto_tsquery('simple', lower($1)),
                 'StartSel=<mark>,StopSel=</mark>,MaxWords=50,MinWords=10') AS highlight
        FROM chunks c
-       JOIN documents d ON d.id = c.document_id
-       WHERE d.tenant_id = $2
+       LEFT JOIN document_contents dc ON dc.id = c.content_id
+       JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+       WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
          AND c.tsv_simple @@ plainto_tsquery('simple', lower($1))
        ORDER BY rank DESC
        LIMIT $3`,
@@ -384,16 +391,18 @@ export class SearchService {
     const vec = `[${embedding.join(",")}]`;
     const rows = await this.db.query<any>(
       `SELECT c.id              AS "chunkId",
-              c.document_id     AS "documentId",
+              COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
+              COALESCE(c.content_id, c.document_id) AS "contentId",
               c.idx             AS idx,
               c.text            AS text,
               c.page            AS page,
-              d.title           AS "documentTitle",
-              d.mime            AS mime,
+              COALESCE(dc.title, d.title) AS "documentTitle",
+              COALESCE(dc.mime, d.mime) AS mime,
               1 - (c.embedding <=> $1::vector) AS similarity
        FROM chunks c
-       JOIN documents d ON d.id = c.document_id
-       WHERE d.tenant_id = $2 AND c.embedding IS NOT NULL
+       LEFT JOIN document_contents dc ON dc.id = c.content_id
+       JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+       WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2 AND c.embedding IS NOT NULL
        ORDER BY c.embedding <=> $1::vector
        LIMIT $3`,
       [vec, tenantId, k],
@@ -401,6 +410,7 @@ export class SearchService {
     return rows.map((r) => ({
       chunkId: r.chunkId,
       documentId: r.documentId,
+      contentId: r.contentId,
       documentTitle: r.documentTitle,
       mime: r.mime,
       idx: r.idx,
@@ -432,18 +442,20 @@ export class SearchService {
       // similarity > 0.1 即可匹配（宽松），但通过 ORDER BY similarity 排序
       const rows = await this.db.query<any>(
         `SELECT c.id              AS "chunkId",
-                c.document_id     AS "documentId",
+                COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
+                COALESCE(c.content_id, c.document_id) AS "contentId",
                 c.idx             AS idx,
                 c.text            AS text,
                 c.page            AS page,
-                d.title           AS "documentTitle",
-                d.mime            AS mime,
+                COALESCE(dc.title, d.title) AS "documentTitle",
+                COALESCE(dc.mime, d.mime) AS mime,
                 similarity(c.text, $1) AS similarity,
                 ts_headline('simple', c.text, plainto_tsquery('simple', $1),
                   'StartSel=<mark>,StopSel=</mark>,MaxWords=50,MinWords=10') AS highlight
          FROM chunks c
-         JOIN documents d ON d.id = c.document_id
-         WHERE d.tenant_id = $2
+         LEFT JOIN document_contents dc ON dc.id = c.content_id
+         JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+         WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
            AND c.text % $1
          ORDER BY similarity DESC
          LIMIT $3`,
@@ -452,6 +464,7 @@ export class SearchService {
       return rows.map((r) => ({
         chunkId: r.chunkId,
         documentId: r.documentId,
+        contentId: r.contentId,
         documentTitle: r.documentTitle,
         mime: r.mime,
         idx: r.idx,
@@ -474,6 +487,7 @@ export class SearchService {
     return {
       chunkId: r.chunkId,
       documentId: r.documentId,
+      contentId: r.contentId,
       documentTitle: r.documentTitle,
       mime: r.mime || "application/pdf",
       idx: r.idx,
@@ -492,6 +506,7 @@ export class SearchService {
     return {
       chunkId: r.chunkId,
       documentId: r.documentId,
+      contentId: r.contentId,
       documentTitle: r.documentTitle,
       mime: r.mime || "application/pdf",
       idx: r.idx,
@@ -509,9 +524,10 @@ export class SearchService {
   private deduplicateByDoc(hits: SearchHit[], maxPerDoc: number): SearchHit[] {
     const docCount = new Map<string, number>();
     return hits.filter((h) => {
-      const cnt = docCount.get(h.documentId) ?? 0;
+      const key = h.contentId || h.documentId;
+      const cnt = docCount.get(key) ?? 0;
       if (cnt >= maxPerDoc) return false;
-      docCount.set(h.documentId, cnt + 1);
+      docCount.set(key, cnt + 1);
       return true;
     });
   }

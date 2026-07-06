@@ -2,9 +2,16 @@ import "server-only";
 import { cookies } from "next/headers";
 import { ApiError } from "./errors";
 
+function requiredEnv(name: string) {
+  const value = process.env[name]?.trim();
+  if (!value) {
+    throw new Error(`Missing required server environment variable: ${name}`);
+  }
+  return value;
+}
+
 // 服务端使用的内部 API 地址
-const INTERNAL_API_URL =
-  process.env.INTERNAL_API_URL || "http://api:9999/api";
+const API_INTERNAL_URL = requiredEnv("API_INTERNAL_URL");
 
 // 请求配置类型
 export interface ServerFetchOptions {
@@ -26,7 +33,7 @@ async function serverFetch<T>(
     ...((init?.headers as Record<string, string>) || {}),
   };
 
-  const fullUrl = url.startsWith("http") ? url : `${INTERNAL_API_URL}${url}`;
+  const fullUrl = url.startsWith("http") ? url : `${API_INTERNAL_URL}${url}`;
 
   const response = await fetch(fullUrl, {
     ...init,

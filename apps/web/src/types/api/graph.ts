@@ -2,7 +2,7 @@
 export interface GraphNode {
   id: string;
   label: string;
-  type: "Document" | "Chunk" | "Entity" | "Tag";
+  type: "Document" | "Chunk" | "Entity" | "Tag" | "Category";
   val?: number;
   properties?: Record<string, unknown>;
 }

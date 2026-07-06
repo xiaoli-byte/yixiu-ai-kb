@@ -2,6 +2,8 @@
 -- ai-knowledge 数据库初始化脚本
 -- 仅在数据库首次初始化时执行（/docker-entrypoint-initdb.d/）
 -- 包含：扩展创建、完整表结构、索引、向量+全文检索配置
+-- 历史基线保留：后续业务表结构变更不要继续修改本文件。
+-- 新增/修改字段、索引、约束必须先更新 Prisma schema，再通过 Prisma Migrate 管理。
 -- ============================================================
 
 -- 1) 启用扩展
@@ -237,6 +239,141 @@ CREATE INDEX IF NOT EXISTS qa_run_logs_tenant_created_idx
 CREATE INDEX IF NOT EXISTS refresh_tokens_user_idx ON refresh_tokens (user_id);
 CREATE INDEX IF NOT EXISTS refresh_tokens_hash_idx ON refresh_tokens (token_hash);
 
+-- 4.1) Canonical 文档内容与图谱去重表
+CREATE TABLE IF NOT EXISTS document_contents (
+  id                    VARCHAR(36)  NOT NULL,
+  tenant_id             VARCHAR(36)  NOT NULL,
+  content_hash          VARCHAR(64)  NOT NULL,
+  first_file_hash       VARCHAR(64),
+  title                 VARCHAR(500) NOT NULL,
+  mime                  VARCHAR(100) NOT NULL,
+  size                  BIGINT       NOT NULL DEFAULT 0,
+  status                VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
+  storage_key           VARCHAR(1000),
+  canonical_document_id VARCHAR(36),
+  chunk_count           INT          NOT NULL DEFAULT 0,
+  duplicate_count       INT          NOT NULL DEFAULT 1,
+  source_count          INT          NOT NULL DEFAULT 1,
+  error_message         TEXT,
+  created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id),
+  UNIQUE (tenant_id, content_hash)
+);
+
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS content_id VARCHAR(36),
+  ADD COLUMN IF NOT EXISTS file_hash VARCHAR(64),
+  ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64),
+  ADD COLUMN IF NOT EXISTS duplicate_of_document_id VARCHAR(36),
+  ADD COLUMN IF NOT EXISTS dedup_reason VARCHAR(30);
+
+ALTER TABLE chunks
+  ADD COLUMN IF NOT EXISTS content_id VARCHAR(36),
+  ADD COLUMN IF NOT EXISTS chunk_hash VARCHAR(64);
+
+ALTER TABLE structured_facts
+  ADD COLUMN IF NOT EXISTS content_id VARCHAR(36),
+  ADD COLUMN IF NOT EXISTS fact_hash VARCHAR(64);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'documents_content_id_fkey' AND table_name = 'documents'
+  ) THEN
+    ALTER TABLE documents
+      ADD CONSTRAINT documents_content_id_fkey
+      FOREIGN KEY (content_id) REFERENCES document_contents(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'chunks_content_id_fkey' AND table_name = 'chunks'
+  ) THEN
+    ALTER TABLE chunks
+      ADD CONSTRAINT chunks_content_id_fkey
+      FOREIGN KEY (content_id) REFERENCES document_contents(id) ON DELETE CASCADE;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE constraint_name = 'structured_facts_content_id_fkey' AND table_name = 'structured_facts'
+  ) THEN
+    ALTER TABLE structured_facts
+      ADD CONSTRAINT structured_facts_content_id_fkey
+      FOREIGN KEY (content_id) REFERENCES document_contents(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS knowledge_nodes (
+  id            VARCHAR(80)  NOT NULL,
+  tenant_id     VARCHAR(36)  NOT NULL,
+  canonical_key VARCHAR(700) NOT NULL,
+  name          VARCHAR(500) NOT NULL,
+  type          VARCHAR(80)  NOT NULL DEFAULT 'Concept',
+  aliases       JSONB        NOT NULL DEFAULT '[]'::jsonb,
+  source_count  INT          NOT NULL DEFAULT 0,
+  mention_count INT          NOT NULL DEFAULT 0,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id),
+  UNIQUE (tenant_id, canonical_key)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_edges (
+  id              VARCHAR(80)   NOT NULL,
+  tenant_id       VARCHAR(36)   NOT NULL,
+  source_node_id  VARCHAR(80)   NOT NULL,
+  target_node_id  VARCHAR(80)   NOT NULL,
+  relation_type   VARCHAR(120)  NOT NULL DEFAULT 'RELATED',
+  edge_key        VARCHAR(1600) NOT NULL,
+  weight          INT           NOT NULL DEFAULT 1,
+  evidence_count  INT           NOT NULL DEFAULT 0,
+  source_count    INT           NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id),
+  UNIQUE (tenant_id, edge_key),
+  FOREIGN KEY (source_node_id) REFERENCES knowledge_nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_node_id) REFERENCES knowledge_nodes(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS edge_evidences (
+  id                  VARCHAR(36) NOT NULL,
+  tenant_id           VARCHAR(36) NOT NULL,
+  edge_id             VARCHAR(80) NOT NULL,
+  document_content_id VARCHAR(36) NOT NULL,
+  document_id         VARCHAR(36),
+  chunk_id            VARCHAR(36),
+  evidence_hash       VARCHAR(64) NOT NULL,
+  evidence_text       TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (id),
+  FOREIGN KEY (edge_id) REFERENCES knowledge_edges(id) ON DELETE CASCADE,
+  FOREIGN KEY (document_content_id) REFERENCES document_contents(id) ON DELETE CASCADE,
+  FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS documents_tenant_file_hash_idx ON documents (tenant_id, file_hash);
+CREATE INDEX IF NOT EXISTS documents_tenant_content_hash_idx ON documents (tenant_id, content_hash);
+CREATE INDEX IF NOT EXISTS documents_content_idx ON documents (content_id);
+CREATE INDEX IF NOT EXISTS document_contents_tenant_status_idx ON document_contents (tenant_id, status);
+CREATE INDEX IF NOT EXISTS chunks_content_idx ON chunks (content_id, idx);
+CREATE INDEX IF NOT EXISTS chunks_chunk_hash_idx ON chunks (chunk_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS chunks_content_idx_unique
+  ON chunks (content_id, idx)
+  WHERE content_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS structured_facts_content_idx ON structured_facts (content_id);
+CREATE INDEX IF NOT EXISTS structured_facts_fact_hash_idx ON structured_facts (fact_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS structured_facts_content_fact_unique
+  ON structured_facts (tenant_id, content_id, fact_hash)
+  WHERE content_id IS NOT NULL AND fact_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS knowledge_nodes_tenant_type_idx ON knowledge_nodes (tenant_id, type);
+CREATE INDEX IF NOT EXISTS knowledge_edges_tenant_relation_idx ON knowledge_edges (tenant_id, relation_type);
+CREATE INDEX IF NOT EXISTS edge_evidences_edge_content_idx ON edge_evidences (edge_id, document_content_id);
+CREATE INDEX IF NOT EXISTS edge_evidences_tenant_content_idx ON edge_evidences (tenant_id, document_content_id);
+CREATE UNIQUE INDEX IF NOT EXISTS edge_evidences_unique_source_idx
+  ON edge_evidences (edge_id, document_content_id, COALESCE(chunk_id, ''), evidence_hash);
+
 -- 5) updated_at 自动更新触发器
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -251,7 +388,7 @@ DO $$
 DECLARE
   t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['users', 'documents', 'folders', 'qa_conversations']
+  FOREACH t IN ARRAY ARRAY['users', 'documents', 'folders', 'qa_conversations', 'document_contents', 'knowledge_nodes', 'knowledge_edges']
   LOOP
     IF NOT EXISTS (
       SELECT 1 FROM pg_trigger WHERE tgname = 'update_' || t || '_updated_at'

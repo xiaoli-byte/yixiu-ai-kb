@@ -47,9 +47,12 @@ export class Neo4jService implements OnModuleInit, OnModuleDestroy {
       "CREATE CONSTRAINT entity_id IF NOT EXISTS FOR (e:Entity) REQUIRE e.id IS UNIQUE",
       "CREATE CONSTRAINT tag_id IF NOT EXISTS FOR (t:Tag) REQUIRE t.id IS UNIQUE",
       "CREATE INDEX entity_name IF NOT EXISTS FOR (e:Entity) ON (e.name)",
+      "CREATE INDEX entity_canonical_key IF NOT EXISTS FOR (e:Entity) ON (e.canonicalKey)",
       "CREATE INDEX entity_type IF NOT EXISTS FOR (e:Entity) ON (e.type)",
       "CREATE INDEX doc_tenant IF NOT EXISTS FOR (d:Document) ON (d.tenantId)",
+      "CREATE INDEX doc_content_hash IF NOT EXISTS FOR (d:Document) ON (d.contentHash)",
       "CREATE INDEX chunk_doc IF NOT EXISTS FOR (c:Chunk) ON (c.documentId)",
+      "CREATE INDEX rel_edge_key IF NOT EXISTS FOR ()-[r:RELATES_TO]-() ON (r.edgeKey)",
     ];
     for (const stmt of statements) {
       try {

@@ -1,3 +1,7 @@
+import { validateWebEnv } from "./env.mjs";
+
+validateWebEnv();
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -6,7 +10,7 @@ const nextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: `${process.env.API_INTERNAL_URL || "http://api:9999"}/:path*`,
+        destination: `${process.env.API_INTERNAL_URL}/:path*`,
       },
     ];
   },

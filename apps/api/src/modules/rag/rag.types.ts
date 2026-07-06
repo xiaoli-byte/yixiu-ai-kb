@@ -45,6 +45,7 @@ export interface RagRoute {
 export interface StructuredFactInput {
   tenantId: string;
   documentId: string;
+  contentId?: string | null;
   chunkId?: string | null;
   domain: RagDomain;
   entityType: string;

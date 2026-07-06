@@ -63,7 +63,7 @@ fi
 
 bold "[5/5] 初始化 Prisma schema + Neo4j 约束 ..."
 pnpm --filter @ai-knowledge/api prisma:generate
-pnpm --filter @ai-knowledge/api prisma:push || warn "Prisma push 失败，请稍后重试"
+pnpm --filter @ai-knowledge/api prisma:migrate:deploy || warn "Prisma migrate deploy 失败，请稍后重试"
 
 ok "启动完成！下一步："
 echo "  pnpm seed           # 写入演示数据（admin@demo.com / demo123）"

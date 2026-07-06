@@ -2,6 +2,7 @@
 export interface SearchHit {
   chunkId: string;
   documentId: string;
+  contentId?: string;
   documentTitle: string;
   idx: number;
   text: string;

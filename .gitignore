@@ -4,6 +4,7 @@ dist/
 .next/
 .turbo/
 *.log
+*.tsbuildinfo
 .pnpm-store/
 
 # Env
@@ -11,6 +12,7 @@ dist/
 .env.production
 .env.local
 .env.*.local
+apps/**/.env*
 
 # IDE
 .vscode/
@@ -37,7 +39,14 @@ coverage/
 
 # PaddleOCR local cache (model weights, ~200MB)
 services/paddleocr-server/.paddlex_cache/
-services/paddleocr-server/.venv/
+services/paddleocr-server/.venv
+
+# Design files (SOLO canvas output)
+knowledge-management-design/
+
+# Python bytecode
+__pycache__/
+*.pyc
 
 # docker
 docker-compose.prod.yml

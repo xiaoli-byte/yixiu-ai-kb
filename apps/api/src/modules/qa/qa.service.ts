@@ -22,6 +22,7 @@ export interface Citation {
   index: number;
   chunkId: string;
   documentId: string;
+  contentId?: string;
   documentTitle: string;
   mime: string;        // 文档 MIME 类型
   snippet: string;
@@ -180,9 +181,7 @@ export class QaService {
   }
 
   async getDocumentPresignedUrl(docId: string, tenantId: string, userId: string) {
-    const doc = await this.prisma.document.findFirst({
-      where: { id: docId, tenantId },
-    });
+    const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
     if (!doc) throw new ForbiddenException("文档不存在");
     const url = await this.storage.presignedGet(doc.storageKey, 3600);
     return {
@@ -193,9 +192,7 @@ export class QaService {
   }
 
   async getDocumentMarkdown(docId: string, tenantId: string) {
-    const doc = await this.prisma.document.findFirst({
-      where: { id: docId, tenantId },
-    });
+    const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
     if (!doc) throw new ForbiddenException("文档不存在");
 
     // 检查是否为 Markdown 文件
@@ -210,6 +207,25 @@ export class QaService {
       content: content.toString("utf-8"),
       mime: doc.mime,
     };
+  }
+
+  private async findDocumentOrCanonicalUpload(id: string, tenantId: string) {
+    const direct = await this.prisma.document.findFirst({
+      where: { id, tenantId },
+    });
+    if (direct) return direct;
+
+    const row = await this.db.queryOne<{ canonical_document_id: string | null }>(
+      `SELECT canonical_document_id
+       FROM document_contents
+       WHERE id=$1 AND tenant_id=$2`,
+      [id, tenantId],
+    );
+    if (!row?.canonical_document_id) return null;
+
+    return this.prisma.document.findFirst({
+      where: { id: row.canonical_document_id, tenantId },
+    });
   }
 
   async deleteConversation(id: string, userId: string) {
@@ -268,6 +284,7 @@ export class QaService {
         index: i + 1,
         chunkId: h.chunkId,
         documentId: h.documentId,
+        contentId: h.contentId,
         documentTitle: h.documentTitle,
         mime: h.mime,
         snippet: h.text,
@@ -706,7 +723,7 @@ export class QaService {
   }
 
   private getCurrentDateContext() {
-    const timeZone = this.config.get<string>("APP_TIME_ZONE") || "Asia/Shanghai";
+    const timeZone = this.config.getOrThrow<string>("APP_TIME_ZONE");
     const now = new Date();
     const parts = new Intl.DateTimeFormat("zh-CN", {
       timeZone,

@@ -1,9 +1,12 @@
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const isWindows = process.platform === "win32";
 const pnpm = "pnpm";
+const rootEnv = loadRootEnv();
 
 const processes = [
   {
@@ -62,8 +65,33 @@ function stopAll(exitCode = 0) {
   setTimeout(() => process.exit(exitCode), 3000).unref();
 }
 
+function parseEnvFile(path) {
+  if (!existsSync(path)) return {};
+  const parsed = {};
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/i);
+    if (!match) continue;
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[match[1]] = value;
+  }
+  return parsed;
+}
+
+function loadRootEnv() {
+  return {
+    ...parseEnvFile(resolve(root, ".env")),
+    ...parseEnvFile(resolve(root, ".env.local")),
+  };
+}
+
 function createEnv(extraEnv) {
-  const env = { ...process.env, ...extraEnv };
+  const env = { ...rootEnv, ...process.env, ...extraEnv };
   if (isWindows) {
     const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path");
     const pathValue = pathKey ? env[pathKey] : undefined;

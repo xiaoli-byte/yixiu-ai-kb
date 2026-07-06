@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { v4 as uuid } from "uuid";
 import { DatabaseService } from "../../database/database.service";
+import { factHash } from "../../common/dedup/canonical";
 import type {
   QaRunLogInput,
   RagDomain,
@@ -25,9 +26,14 @@ export class RagFactsService implements OnModuleInit {
   async replaceDocumentFacts(opts: {
     tenantId: string;
     documentId: string;
+    contentId?: string | null;
     facts: StructuredFactInput[];
   }) {
-    await this.db.query(`DELETE FROM structured_facts WHERE document_id = $1`, [opts.documentId]);
+    if (opts.contentId) {
+      await this.db.query(`DELETE FROM structured_facts WHERE content_id = $1`, [opts.contentId]);
+    } else {
+      await this.db.query(`DELETE FROM structured_facts WHERE document_id = $1`, [opts.documentId]);
+    }
     if (opts.facts.length === 0) return;
 
     for (const fact of opts.facts) {
@@ -154,17 +160,28 @@ export class RagFactsService implements OnModuleInit {
   }
 
   private async insertFact(fact: StructuredFactInput) {
+    const hash = factHash(fact);
     await this.db.query(
       `INSERT INTO structured_facts (
-         id, tenant_id, document_id, chunk_id, domain, entity_type, entity_name,
+         id, tenant_id, document_id, content_id, chunk_id, fact_hash, domain, entity_type, entity_name,
          attributes, confidence, source_text
        )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)
+       ON CONFLICT (tenant_id, content_id, fact_hash)
+       WHERE content_id IS NOT NULL AND fact_hash IS NOT NULL
+       DO UPDATE SET
+         document_id = EXCLUDED.document_id,
+         chunk_id = EXCLUDED.chunk_id,
+         attributes = EXCLUDED.attributes,
+         confidence = GREATEST(structured_facts.confidence, EXCLUDED.confidence),
+         source_text = EXCLUDED.source_text`,
       [
         uuid(),
         fact.tenantId,
         fact.documentId,
+        fact.contentId ?? null,
         fact.chunkId ?? null,
+        hash,
         fact.domain,
         fact.entityType,
         fact.entityName,
@@ -181,7 +198,9 @@ export class RagFactsService implements OnModuleInit {
         id            VARCHAR(36)  NOT NULL,
         tenant_id     VARCHAR(36)  NOT NULL,
         document_id   VARCHAR(36)  NOT NULL,
+        content_id    VARCHAR(36),
         chunk_id      VARCHAR(36),
+        fact_hash     VARCHAR(64),
         domain        VARCHAR(50)  NOT NULL,
         entity_type   VARCHAR(80)  NOT NULL,
         entity_name   VARCHAR(500) NOT NULL,
@@ -193,6 +212,11 @@ export class RagFactsService implements OnModuleInit {
         FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
         FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE SET NULL
       )
+    `);
+    await this.db.query(`
+      ALTER TABLE structured_facts
+        ADD COLUMN IF NOT EXISTS content_id VARCHAR(36),
+        ADD COLUMN IF NOT EXISTS fact_hash VARCHAR(64)
     `);
     await this.db.query(`
       CREATE TABLE IF NOT EXISTS qa_run_logs (
@@ -220,6 +244,19 @@ export class RagFactsService implements OnModuleInit {
     await this.db.query(
       `CREATE INDEX IF NOT EXISTS structured_facts_document_idx
        ON structured_facts (document_id)`,
+    );
+    await this.db.query(
+      `CREATE INDEX IF NOT EXISTS structured_facts_content_idx
+       ON structured_facts (content_id)`,
+    );
+    await this.db.query(
+      `CREATE INDEX IF NOT EXISTS structured_facts_fact_hash_idx
+       ON structured_facts (fact_hash)`,
+    );
+    await this.db.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS structured_facts_content_fact_unique
+       ON structured_facts (tenant_id, content_id, fact_hash)
+       WHERE content_id IS NOT NULL AND fact_hash IS NOT NULL`,
     );
     await this.db.query(
       `CREATE INDEX IF NOT EXISTS structured_facts_attributes_idx

@@ -1,9 +1,7 @@
 import "reflect-metadata";
-import { config as loadEnv } from "dotenv";
-import { resolve } from "path";
+import { loadRootEnv } from "./config/env";
 
-loadEnv({ path: resolve(__dirname, "../../../.env") });
-process.env.DOCUMENT_WORKER_ENABLED = "true";
+loadRootEnv();
 
 import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";

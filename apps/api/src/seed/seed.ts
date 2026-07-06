@@ -1,43 +1,21 @@
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync } from "fs";
 import { resolve } from "path";
+import { loadRootEnv, projectRootDir, validateEnv } from "../config/env";
 
-// ts-node 解析下 __dirname 行为不稳定,逐级向上找仓库根的 .env
-function findEnv(): string | null {
-  const candidates = [
-    resolve(__dirname, "../../../../.env"),
-    resolve(__dirname, "../../../.env"),
-    resolve(__dirname, "../../.env"),
-    resolve(__dirname, "../.env"),
-    resolve(process.cwd(), ".env"),
-  ];
-  return candidates.find((p) => existsSync(p)) ?? null;
-}
-
-const envPath = findEnv();
-if (envPath) {
-  // 手写最小化 dotenv(避免 ts-node ESM/CJS 互操作下 dotenv import 行为不一致)
-  for (const line of readFileSync(envPath, "utf8").split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*)\s*$/i);
-    if (!m) continue;
-    let v = m[2].trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    if (process.env[m[1]] === undefined) process.env[m[1]] = v;
-  }
-} else {
-  console.warn(`[seed] WARN: 未找到 .env,搜索路径:\n  ${resolve(__dirname, "../../../../.env")}`);
-}
+loadRootEnv();
+validateEnv(process.env);
 
 import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcrypt";
 import { v4 as uuid } from "uuid";
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  datasources: { db: { url: process.env.DATABASE_URL! } },
+});
 
 async function main() {
   // 用文件锁做幂等标记，避免重复执行 seed
-  const lockDir = resolve(__dirname, "../../../../.seed_locks");
+  const lockDir = resolve(projectRootDir(), ".seed_locks");
   const lockFile = resolve(lockDir, "0001_seed_data.lock");
 
   if (existsSync(lockFile)) {
@@ -45,10 +23,10 @@ async function main() {
     return;
   }
 
-  const tenantId = process.env.BOOTSTRAP_TENANT_ID || "tenant_demo";
-  const email = process.env.BOOTSTRAP_ADMIN_EMAIL || "admin@demo.com";
-  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD || "demo123";
-  const name = process.env.BOOTSTRAP_ADMIN_NAME || "Demo Admin";
+  const tenantId = process.env.BOOTSTRAP_TENANT_ID!;
+  const email = process.env.BOOTSTRAP_ADMIN_EMAIL!;
+  const password = process.env.BOOTSTRAP_ADMIN_PASSWORD!;
+  const name = process.env.BOOTSTRAP_ADMIN_NAME!;
 
   const passwordHash = await bcrypt.hash(password, 10);
   const admin = await prisma.user.upsert({
@@ -109,7 +87,7 @@ async function main() {
   }
 
   console.log("\nSeed 完成！");
-  console.log("登录: admin@demo.com / demo123");
+  console.log(`登录: ${email} / <BOOTSTRAP_ADMIN_PASSWORD>`);
 
   // 写入锁文件，确保重复执行时跳过
   mkdirSync(lockDir, { recursive: true });

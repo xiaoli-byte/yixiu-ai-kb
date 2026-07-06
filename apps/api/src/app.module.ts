@@ -21,13 +21,20 @@ import { EmbeddingsModule } from "./modules/embeddings/embeddings.module";
 import { LlmModule } from "./modules/llm/llm.module";
 import { StorageModule } from "./modules/storage/storage.module";
 import { HealthController } from "./common/health.controller";
+import { loadRootEnv, validateEnv } from "./config/env";
+
+loadRootEnv();
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      ignoreEnvFile: true,
+      validate: validateEnv,
+    }),
     LoggerModule.forRoot({
       pinoHttp: {
-        level: process.env.LOG_LEVEL || "info",
+        level: process.env.LOG_LEVEL,
         transport:
           process.env.NODE_ENV === "production"
             ? undefined

@@ -10,23 +10,22 @@ export class StorageService implements OnModuleInit {
   private publicUrl!: string;
   private internalUrl!: string;
 
-  constructor() {}
+  constructor(private readonly config: ConfigService) {}
 
   onModuleInit() {
-    const config = new ConfigService();
-    const endPoint = config.get<string>("MINIO_ENDPOINT") || "localhost";
-    const port = Number(config.get<string>("MINIO_PORT") || 9000);
+    const endPoint = this.config.getOrThrow<string>("MINIO_ENDPOINT");
+    const port = Number(this.config.getOrThrow<string>("MINIO_PORT"));
 
-    this.bucket = config.get<string>("S3_BUCKET") || "ai-knowledge-docs";
-    this.publicUrl = config.get<string>("MINIO_PUBLIC_URL") || "http://localhost:9000";
+    this.bucket = this.config.getOrThrow<string>("S3_BUCKET");
+    this.publicUrl = this.config.getOrThrow<string>("MINIO_PUBLIC_URL");
     this.internalUrl = `http://${endPoint}:${port}`;
 
     this.client = new MinioClient({
       endPoint,
       port,
       useSSL: false,
-      accessKey: config.get<string>("S3_ACCESS_KEY") || "minio_admin",
-      secretKey: config.get<string>("S3_SECRET_KEY") || "minio_password",
+      accessKey: this.config.getOrThrow<string>("S3_ACCESS_KEY"),
+      secretKey: this.config.getOrThrow<string>("S3_SECRET_KEY"),
     });
     this.ensureBucket().catch((e) =>
       this.logger.warn(`MinIO 初始化失败（容器可能未启动）: ${e.message}`),

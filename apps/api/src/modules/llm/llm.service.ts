@@ -36,12 +36,13 @@ export class LlmService implements OnModuleInit {
   private mock = false;
   private chatModel!: ChatAlibabaTongyi;
 
+  constructor(private readonly config: ConfigService) {}
+
   onModuleInit() {
-    const config = new ConfigService();
-    this.apiKey = config.get<string>("DASHSCOPE_API_KEY") || "";
-    this.model = config.get<string>("DASHSCOPE_LLM_MODEL") || "qwen-plus";
+    this.apiKey = this.config.get<string>("DASHSCOPE_API_KEY") || "";
+    this.model = this.config.getOrThrow<string>("DASHSCOPE_LLM_MODEL");
     this.mock =
-      (config.get<string>("DASHSCOPE_LLM_MOCK") || "false").toLowerCase() === "true" ||
+      this.config.getOrThrow<string>("DASHSCOPE_LLM_MOCK").toLowerCase() === "true" ||
       this.apiKey.startsWith("sk-replace");
 
     if (this.mock) {

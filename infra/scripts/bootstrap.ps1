@@ -99,10 +99,10 @@ try {
 }
 
 try {
-    pnpm --filter @ai-knowledge/api prisma:push 2>&1 | Out-Host
-    Ok "prisma db push 完成"
+    pnpm --filter @ai-knowledge/api prisma:migrate:deploy 2>&1 | Out-Host
+    Ok "prisma migrate deploy 完成"
 } catch {
-    Warn "prisma db push 失败，请检查 Postgres 是否就绪后重试"
+    Warn "prisma migrate deploy 失败，请检查 Postgres 是否就绪后重试"
 }
 
 Write-Host ""

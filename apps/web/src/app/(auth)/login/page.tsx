@@ -9,17 +9,24 @@ function isTruthy(value?: string) {
 }
 
 function getDemoCredentials(): DemoCredentials {
+  if (process.env.NODE_ENV === "production") return null;
+
   const explicitDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE;
-  const isDemoMode =
-    explicitDemoMode === undefined || explicitDemoMode === ""
-      ? process.env.BOOTSTRAP_TENANT_ID === "tenant_demo"
-      : isTruthy(explicitDemoMode);
+  const isDemoMode = isTruthy(explicitDemoMode);
 
   if (!isDemoMode) return null;
 
+  const email = process.env.NEXT_PUBLIC_DEMO_EMAIL?.trim();
+  const password = process.env.NEXT_PUBLIC_DEMO_PASSWORD?.trim();
+  if (!email || !password) {
+    throw new Error(
+      "NEXT_PUBLIC_DEMO_EMAIL and NEXT_PUBLIC_DEMO_PASSWORD are required when demo mode is enabled",
+    );
+  }
+
   return {
-    email: process.env.NEXT_PUBLIC_DEMO_EMAIL || process.env.BOOTSTRAP_ADMIN_EMAIL || "admin@demo.com",
-    password: process.env.NEXT_PUBLIC_DEMO_PASSWORD || process.env.BOOTSTRAP_ADMIN_PASSWORD || "demo123",
+    email,
+    password,
   };
 }
 

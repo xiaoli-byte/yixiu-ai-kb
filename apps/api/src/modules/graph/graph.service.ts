@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import neo4j from "neo4j-driver";
 import { Neo4jService } from "../../database/neo4j/neo4j.service";
 import { DatabaseService } from "../../database/database.service";
 
@@ -143,9 +144,21 @@ export class GraphService {
 
   async documentEntities(documentId: string) {
     const tenantId = this.db.tenantId!;
+    const row = await this.db.queryOne<{ content_id: string }>(
+      `SELECT COALESCE(content_id, id) AS content_id
+       FROM documents
+       WHERE tenant_id=$1 AND id=$2
+       UNION ALL
+       SELECT id AS content_id
+       FROM document_contents
+       WHERE tenant_id=$1 AND id=$2
+       LIMIT 1`,
+      [tenantId, documentId],
+    );
+    const contentId = row?.content_id || documentId;
     const graph = await this.queryDocumentGraph({
       tenantId,
-      documentIds: [documentId],
+      documentIds: [contentId],
       depth: 2,
       limit: 80,
     });
@@ -172,7 +185,7 @@ export class GraphService {
       {
         tenantId,
         entityIdPrefix: this.entityIdPrefix(tenantId),
-        limit: safeLimit,
+        limit: neo4j.int(safeLimit),
       },
     );
 
@@ -193,28 +206,44 @@ export class GraphService {
     tenantId: string,
     opts: NormalizedGraphExploreOptions,
   ): Promise<string[]> {
-    const where: any = { tenantId };
+    const params: any[] = [tenantId];
+    const where = [`d.tenant_id = $1`];
     const createdAt = this.buildDateRange(opts.createdFrom, opts.createdTo);
-    if (createdAt) where.createdAt = createdAt;
-    if (opts.categoryId) {
-      where.tags = { some: { tagId: opts.categoryId } };
+    if (createdAt?.gte) {
+      params.push(createdAt.gte);
+      where.push(`d.created_at >= $${params.length}`);
     }
-
+    if (createdAt?.lte) {
+      params.push(createdAt.lte);
+      where.push(`d.created_at <= $${params.length}`);
+    }
+    if (opts.categoryId) {
+      params.push(opts.categoryId);
+      where.push(`EXISTS (
+        SELECT 1 FROM document_tags dt
+        WHERE dt.document_id = d.id AND dt.tag_id = $${params.length}
+      )`);
+    }
     const keyword = opts.keyword?.trim();
     if (keyword && (opts.nodeType === "all" || opts.nodeType === "Document")) {
-      where.OR = [
-        { title: { contains: keyword, mode: "insensitive" } },
-        { tags: { some: { tag: { name: { contains: keyword, mode: "insensitive" } } } } },
-      ];
+      params.push(`%${keyword}%`);
+      where.push(`(
+        d.title ILIKE $${params.length}
+        OR EXISTS (
+          SELECT 1
+          FROM document_tags dt
+          JOIN tags t ON t.id = dt.tag_id
+          WHERE dt.document_id = d.id AND t.name ILIKE $${params.length}
+        )
+      )`);
     } else if (keyword && opts.nodeType === "Tag") {
-      where.tags = {
-        some: {
-          tag: {
-            ...(opts.categoryId ? { id: opts.categoryId } : {}),
-            name: { contains: keyword, mode: "insensitive" },
-          },
-        },
-      };
+      params.push(`%${keyword}%`);
+      where.push(`EXISTS (
+        SELECT 1
+        FROM document_tags dt
+        JOIN tags t ON t.id = dt.tag_id
+        WHERE dt.document_id = d.id AND t.name ILIKE $${params.length}
+      )`);
     }
 
     const shouldQueryDocuments =
@@ -225,13 +254,18 @@ export class GraphService {
 
     if (!shouldQueryDocuments) return [];
 
-    const documents = await this.db.prisma.document.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      take: opts.limit,
-      select: { id: true },
-    });
-    return documents.map((document) => document.id);
+    params.push(opts.limit);
+    const rows = await this.db.query<{ content_id: string }>(
+      `SELECT DISTINCT COALESCE(d.content_id, d.id) AS content_id,
+              MAX(d.updated_at) AS updated_at
+       FROM documents d
+       WHERE ${where.join(" AND ")}
+       GROUP BY COALESCE(d.content_id, d.id)
+       ORDER BY updated_at DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return rows.map((row) => row.content_id).filter(Boolean);
   }
 
   private async queryDocumentGraph(opts: {
@@ -317,7 +351,7 @@ export class GraphService {
         entityIdPrefix: this.entityIdPrefix(opts.tenantId),
         keyword,
         depth: opts.depth,
-        seedLimit,
+        seedLimit: neo4j.int(seedLimit),
       },
     );
 
@@ -334,11 +368,58 @@ export class GraphService {
       .map((node) => node.id);
 
     if (documentIds.length > 0) {
-      const documents = await this.db.prisma.document.findMany({
-        where: { tenantId, id: { in: documentIds } },
-        include: { tags: { include: { tag: true } } },
-      });
-      const documentMap = new Map(documents.map((document) => [document.id, document]));
+      const rows = await this.db.query<any>(
+        `SELECT dc.id,
+                dc.title,
+                dc.mime,
+                dc.size,
+                dc.status,
+                dc.chunk_count,
+                dc.duplicate_count,
+                dc.source_count,
+                dc.content_hash,
+                dc.canonical_document_id,
+                dc.created_at,
+                dc.updated_at,
+                COALESCE(
+                  jsonb_agg(DISTINCT jsonb_build_object('id', t.id, 'name', t.name))
+                    FILTER (WHERE t.id IS NOT NULL),
+                  '[]'::jsonb
+                ) AS categories
+         FROM document_contents dc
+         LEFT JOIN documents d ON d.content_id = dc.id
+         LEFT JOIN document_tags dt ON dt.document_id = d.id
+         LEFT JOIN tags t ON t.id = dt.tag_id
+         WHERE dc.tenant_id = $1 AND dc.id = ANY($2::text[])
+         GROUP BY dc.id
+         UNION ALL
+         SELECT d.id,
+                d.title,
+                d.mime,
+                d.size,
+                d.status,
+                0 AS chunk_count,
+                1 AS duplicate_count,
+                1 AS source_count,
+                d.content_hash,
+                d.id AS canonical_document_id,
+                d.created_at,
+                d.updated_at,
+                COALESCE(
+                  jsonb_agg(DISTINCT jsonb_build_object('id', t.id, 'name', t.name))
+                    FILTER (WHERE t.id IS NOT NULL),
+                  '[]'::jsonb
+                ) AS categories
+         FROM documents d
+         LEFT JOIN document_tags dt ON dt.document_id = d.id
+         LEFT JOIN tags t ON t.id = dt.tag_id
+         WHERE d.tenant_id = $1
+           AND d.content_id IS NULL
+           AND d.id = ANY($2::text[])
+         GROUP BY d.id`,
+        [tenantId, documentIds],
+      );
+      const documentMap = new Map(rows.map((document) => [document.id, document]));
 
       graph.nodes = graph.nodes.map((node) => {
         if (node.type !== "Document") return node;
@@ -353,13 +434,17 @@ export class GraphService {
             mime: document.mime,
             size: Number(document.size),
             status: document.status,
-            createdAt: document.createdAt.toISOString(),
-            updatedAt: document.updatedAt.toISOString(),
-            categories: document.tags.map((item) => ({
-              id: item.tag.id,
-              name: item.tag.name,
-            })),
+            contentId: document.id,
+            contentHash: document.content_hash,
+            canonicalDocumentId: document.canonical_document_id,
+            chunkCount: Number(document.chunk_count) || 0,
+            duplicateCount: Number(document.duplicate_count) || 1,
+            sourceCount: Number(document.source_count) || 1,
+            createdAt: new Date(document.created_at).toISOString(),
+            updatedAt: new Date(document.updated_at).toISOString(),
+            categories: Array.isArray(document.categories) ? document.categories : [],
           },
+          val: Math.max(Number(document.source_count) || 1, Number(document.chunk_count) || 1),
         };
       });
     }
@@ -373,50 +458,63 @@ export class GraphService {
     tenantId: string,
     opts: NormalizedGraphExploreOptions,
   ): Promise<GraphDataDto> {
-    const documentIds = graph.nodes
+    const contentIds = graph.nodes
       .filter((node) => node.type === "Document")
       .map((node) => node.id);
-    if (documentIds.length === 0) return graph;
+    if (contentIds.length === 0) return graph;
 
-    const tagLinks = await this.db.prisma.documentTag.findMany({
-      where: {
-        documentId: { in: documentIds },
-        document: { tenantId },
-        ...(opts.categoryId ? { tagId: opts.categoryId } : {}),
-        ...(opts.keyword && opts.nodeType === "Tag"
-          ? { tag: { name: { contains: opts.keyword, mode: "insensitive" } } }
-          : {}),
-      },
-      include: { tag: true },
-    });
+    const params: any[] = [tenantId, contentIds];
+    const where = [
+      `d.tenant_id = $1`,
+      `COALESCE(d.content_id, d.id) = ANY($2::text[])`,
+    ];
+    if (opts.categoryId) {
+      params.push(opts.categoryId);
+      where.push(`t.id = $${params.length}`);
+    }
+    if (opts.keyword && opts.nodeType === "Tag") {
+      params.push(`%${opts.keyword}%`);
+      where.push(`t.name ILIKE $${params.length}`);
+    }
+    const tagLinks = await this.db.query<any>(
+      `SELECT DISTINCT COALESCE(d.content_id, d.id) AS content_id,
+              t.id AS tag_id,
+              t.name,
+              t.type
+       FROM documents d
+       JOIN document_tags dt ON dt.document_id = d.id
+       JOIN tags t ON t.id = dt.tag_id
+       WHERE ${where.join(" AND ")}`,
+      params,
+    );
 
     const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
     const edges = new Map(graph.edges.map((edge) => [edge.id, edge]));
 
     for (const link of tagLinks) {
-      const tagNodeId = this.tagNodeId(link.tag.id);
+      const tagNodeId = this.tagNodeId(link.tag_id);
       if (!nodes.has(tagNodeId)) {
         nodes.set(tagNodeId, {
           id: tagNodeId,
-          label: link.tag.name,
+          label: link.name,
           type: "Tag",
           properties: {
-            tagId: link.tag.id,
-            name: link.tag.name,
-            type: link.tag.type,
+            tagId: link.tag_id,
+            name: link.name,
+            type: link.type,
           },
           val: 1,
         });
       }
 
-      const edgeId = `document-tag-${link.documentId}-${link.tag.id}`;
+      const edgeId = `content-tag-${link.content_id}-${link.tag_id}`;
       if (!edges.has(edgeId)) {
         edges.set(edgeId, {
           id: edgeId,
-          source: link.documentId,
+          source: link.content_id,
           target: tagNodeId,
           label: "标签",
-          properties: { relationType: "DOCUMENT_TAG", tagId: link.tag.id },
+          properties: { relationType: "DOCUMENT_TAG", tagId: link.tag_id },
           weight: 1,
         });
       }
@@ -436,7 +534,7 @@ export class GraphService {
       document_count: string | number;
     }>(
       `
-        SELECT t.id, t.name, t.type, COUNT(DISTINCT dt.document_id) AS document_count
+        SELECT t.id, t.name, t.type, COUNT(DISTINCT COALESCE(d.content_id, d.id)) AS document_count
         FROM tags t
         JOIN document_tags dt ON dt.tag_id = t.id
         JOIN documents d ON d.id = dt.document_id
@@ -456,14 +554,28 @@ export class GraphService {
   }
 
   private async listRecentNodes(tenantId: string, limit: number) {
-    const documents = await this.db.prisma.document.findMany({
-      where: { tenantId },
-      orderBy: { updatedAt: "desc" },
-      take: limit,
-      include: { tags: { include: { tag: true } } },
-    });
+    const rows = await this.db.query<any>(
+      `SELECT dc.id,
+              dc.title,
+              dc.mime,
+              dc.status,
+              dc.updated_at,
+              COALESCE(
+                array_agg(DISTINCT t.name) FILTER (WHERE t.name IS NOT NULL),
+                ARRAY[]::text[]
+              ) AS category_names
+       FROM document_contents dc
+       LEFT JOIN documents d ON d.content_id = dc.id
+       LEFT JOIN document_tags dt ON dt.document_id = d.id
+       LEFT JOIN tags t ON t.id = dt.tag_id
+       WHERE dc.tenant_id = $1
+       GROUP BY dc.id
+       ORDER BY dc.updated_at DESC
+       LIMIT $2`,
+      [tenantId, limit],
+    );
 
-    return documents.map((document) => ({
+    return rows.map((document) => ({
       id: document.id,
       label: document.title,
       type: "Document" as const,
@@ -473,8 +585,8 @@ export class GraphService {
         status: document.status,
       },
       val: 1,
-      updatedAt: document.updatedAt.toISOString(),
-      categoryNames: document.tags.map((item) => item.tag.name),
+      updatedAt: new Date(document.updated_at).toISOString(),
+      categoryNames: document.category_names || [],
     }));
   }
 
@@ -512,8 +624,15 @@ export class GraphService {
       if (!source || !target || source === target) continue;
 
       const properties = this.normalizeProperties(raw.properties || {});
+      const stableEdgeId = String(
+        properties.edgeId ||
+          properties.edgeKey ||
+          (raw.type === "RELATES_TO"
+            ? [source, properties.type || raw.type, target].join("|")
+            : raw.id),
+      );
       const edge: GraphEdgeDto = {
-        id: String(raw.id),
+        id: stableEdgeId,
         source,
         target,
         label: this.relationLabel(String(raw.type), properties),

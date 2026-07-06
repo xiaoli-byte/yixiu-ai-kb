@@ -11,9 +11,14 @@
     "start:prod": "node dist/main.js",
     "lint": "eslint \"src/**/*.ts\" --max-warnings 0",
     "clean": "rm -rf dist .turbo",
-    "prisma:generate": "prisma generate --schema src/database/prisma/schema.prisma",
-    "prisma:push": "prisma db push --skip-generate --schema src/database/prisma/schema.prisma",
-    "prisma:studio": "prisma studio --schema src/database/prisma/schema.prisma",
+    "prisma": "node scripts/prisma-root-env.cjs",
+    "prisma:generate": "node scripts/prisma-root-env.cjs generate --schema src/database/prisma/schema.prisma",
+    "prisma:migrate:dev": "node scripts/prisma-root-env.cjs migrate dev --schema src/database/prisma/schema.prisma",
+    "prisma:migrate:deploy": "node scripts/prisma-root-env.cjs migrate deploy --schema src/database/prisma/schema.prisma",
+    "prisma:migrate:status": "node scripts/prisma-root-env.cjs migrate status --schema src/database/prisma/schema.prisma",
+    "prisma:studio": "node scripts/prisma-root-env.cjs studio --schema src/database/prisma/schema.prisma",
+    "check:dedup": "ts-node -r tsconfig-paths/register scripts/check-dedup-canonical.ts",
+    "repair:dedup": "ts-node -r tsconfig-paths/register scripts/repair-content-dedup.ts",
     "seed": "ts-node -r tsconfig-paths/register src/seed/seed.ts"
   },
   "dependencies": {

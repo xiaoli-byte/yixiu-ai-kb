@@ -16,7 +16,7 @@ export class FunAsrService {
 
   async transcribe(buffer: Buffer, mime: string, filename: string): Promise<string> {
     const url = this.buildRecognizeUrl();
-    const timeoutMs = Number(this.config.get<string>("FUNASR_TIMEOUT_MS") || 10 * 60 * 1000);
+    const timeoutMs = Number(this.config.getOrThrow<string>("FUNASR_TIMEOUT_MS"));
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -66,7 +66,7 @@ export class FunAsrService {
   }
 
   private buildRecognizeUrl(): string {
-    const baseUrl = this.config.get<string>("FUNASR_HTTP_URL") || "http://localhost:10095";
+    const baseUrl = this.config.getOrThrow<string>("FUNASR_HTTP_URL");
     const normalized = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
     return new URL("recognize", normalized).toString();
   }

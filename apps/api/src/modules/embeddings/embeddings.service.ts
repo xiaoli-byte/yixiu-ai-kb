@@ -10,16 +10,15 @@ export class EmbeddingsService implements OnModuleInit {
   private dim = 1024;
   private mock = false;
 
-  constructor() {}
+  constructor(private readonly config: ConfigService) {}
 
   onModuleInit() {
-    const config = new ConfigService();
-    this.apiKey = config.get<string>("DASHSCOPE_API_KEY") || "";
-    this.baseUrl = config.get<string>("DASHSCOPE_BASE_URL") || "https://dashscope.aliyuncs.com/api/v1";
-    this.model = config.get<string>("DASHSCOPE_EMBED_MODEL") || "text-embedding-v4";
-    this.dim = Number(config.get<string>("DASHSCOPE_EMBED_DIM") || 1024);
+    this.apiKey = this.config.get<string>("DASHSCOPE_API_KEY") || "";
+    this.baseUrl = this.config.getOrThrow<string>("DASHSCOPE_BASE_URL");
+    this.model = this.config.getOrThrow<string>("DASHSCOPE_EMBED_MODEL");
+    this.dim = Number(this.config.getOrThrow<string>("DASHSCOPE_EMBED_DIM"));
     this.mock =
-      (config.get<string>("DASHSCOPE_EMBED_MOCK") || "false").toLowerCase() === "true" ||
+      this.config.getOrThrow<string>("DASHSCOPE_EMBED_MOCK").toLowerCase() === "true" ||
       this.apiKey.startsWith("sk-replace");
     if (this.mock) {
       this.logger.warn("DashScope API key 未配置或启用了 mock 模式，Embeddings 将返回零向量（仅用于联调）");

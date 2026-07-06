@@ -2,7 +2,7 @@
 # PostgreSQL 16 生产镜像
 # 基于 pgvector/pgvector:pg16-bookworm（含 pgvector 扩展）
 # 安装 zhparser（PIGSTY apt 源）
-# init.sql 通过 COPY 进 /docker-entrypoint-initdb.d/ 在首次初始化时自动执行
+# init.sql 作为历史基线在首次初始化时自动执行；后续业务结构变更必须使用 Prisma Migrate
 # ============================================================
 FROM pgvector/pgvector:pg16-bookworm
 
@@ -25,6 +25,6 @@ RUN install -d /usr/share/keyrings && \
       postgresql-16-zhparser && \
     rm -rf /var/lib/apt/lists/*
 
-# 3) 复制初始化脚本（仅在镜像构建时存在，运行时被官方 entrypoint 消费）
-#    init.sql 放在 docker-entrypoint-initdb.d/ 下，postgres 首次启动时自动执行
+# 3) 复制历史基线初始化脚本（运行时被官方 entrypoint 消费）
+#    不要把新的业务表结构变更继续写入 init.sql；请更新 Prisma schema 并生成 Prisma migration。
 COPY init.sql /docker-entrypoint-initdb.d/init.sql
