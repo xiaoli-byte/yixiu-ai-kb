@@ -1007,8 +1007,7 @@ export class SearchService {
     const rangeSql = this.hotRangeSql(query.range);
     if (rangeSql) eventFilters.push(rangeSql);
 
-    const fetchLimit = this.hotSearchFetchLimit(query.limit);
-    const limitParam = addValue(fetchLimit);
+    const limitParam = addValue(query.limit);
     const rows = await this.db.query<any>(
       `WITH event_counts AS (
          SELECT
@@ -1032,29 +1031,54 @@ export class SearchService {
          FROM hot_search_keywords hk
          WHERE ${pinnedFilters.join(" AND ")}
          GROUP BY 1, hk.category_id
+       ),
+       combined AS (
+         SELECT
+           COALESCE(ec.keyword, pk.keyword) AS keyword,
+           COALESCE(ec."categoryId", pk."categoryId") AS "categoryId",
+           COALESCE(ec."searchCount", 0)::int AS "searchCount",
+           COALESCE(ec."clickCount", 0)::int AS "clickCount",
+           COALESCE(ec."viewCount", 0)::int AS "viewCount",
+           COALESCE(ec."downloadCount", 0)::int AS "downloadCount",
+           COALESCE(ec."resultCount", 0)::int AS "resultCount",
+           COALESCE(pk.pinned, FALSE) AS pinned,
+           COALESCE(pk.weight, 0)::int AS "pinnedWeight",
+           (
+             COALESCE(ec."searchCount", 0) * 1 +
+             COALESCE(ec."clickCount", 0) * 2 +
+             COALESCE(ec."viewCount", 0) * 3 +
+             COALESCE(ec."downloadCount", 0) * 4 +
+             COALESCE(pk.weight, 0)
+           )::float AS "hotScore"
+         FROM event_counts ec
+         FULL OUTER JOIN pinned_keywords pk
+           ON pk.keyword = ec.keyword
+          AND (pk."categoryId" IS NOT DISTINCT FROM ec."categoryId" OR pk."categoryId" IS NULL)
+       ),
+       filtered AS (
+         SELECT *
+         FROM combined
+         WHERE keyword <> ''
+           AND (
+             pinned = TRUE
+             OR "resultCount" > 0
+             OR "clickCount" > 0
+             OR "viewCount" > 0
+             OR "downloadCount" > 0
+           )
        )
        SELECT
-         COALESCE(ec.keyword, pk.keyword) AS keyword,
-         COALESCE(ec."categoryId", pk."categoryId") AS "categoryId",
-         COALESCE(ec."searchCount", 0)::int AS "searchCount",
-         COALESCE(ec."clickCount", 0)::int AS "clickCount",
-         COALESCE(ec."viewCount", 0)::int AS "viewCount",
-         COALESCE(ec."downloadCount", 0)::int AS "downloadCount",
-         COALESCE(ec."resultCount", 0)::int AS "resultCount",
-         COALESCE(pk.pinned, FALSE) AS pinned,
-         COALESCE(pk.weight, 0)::int AS "pinnedWeight"
-       FROM event_counts ec
-       FULL OUTER JOIN pinned_keywords pk
-         ON pk.keyword = ec.keyword
-        AND (pk."categoryId" IS NOT DISTINCT FROM ec."categoryId" OR pk."categoryId" IS NULL)
-       ORDER BY (
-         COALESCE(ec."searchCount", 0) * 1 +
-         COALESCE(ec."clickCount", 0) * 2 +
-         COALESCE(ec."viewCount", 0) * 3 +
-         COALESCE(ec."downloadCount", 0) * 4 +
-         COALESCE(pk.weight, 0)
-       ) DESC,
-       keyword ASC
+         keyword,
+         "categoryId",
+         "searchCount",
+         "clickCount",
+         "viewCount",
+         "downloadCount",
+         "resultCount",
+         pinned,
+         "pinnedWeight"
+       FROM filtered
+       ORDER BY "hotScore" DESC, keyword ASC
        LIMIT ${limitParam}`,
       values,
     );
@@ -1153,10 +1177,6 @@ export class SearchService {
     if (range === "week") return "se.created_at >= NOW() - INTERVAL '7 days'";
     if (range === "month") return "se.created_at >= NOW() - INTERVAL '30 days'";
     return "";
-  }
-
-  private hotSearchFetchLimit(limit: number): number {
-    return Math.min(Math.max(limit * 5, limit + 20), 250);
   }
 
   private normalizeSearchEventType(value?: string): string {

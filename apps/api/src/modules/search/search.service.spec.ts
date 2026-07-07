@@ -548,23 +548,21 @@ describe("SearchService history helpers", () => {
     expect(sql).toContain("search_events");
     expect(sql).toContain("hot_search_keywords");
     expect(sql).toContain("created_at >=");
-    expect((db.query.mock.calls[0][1] as unknown[]).at(-1)).toBeGreaterThan(10);
+    expect(sql).toMatch(/filtered\s+AS\s*\(/i);
+    const filteredWhereIndex = sql.indexOf("WHERE keyword <> ''");
+    expect(filteredWhereIndex).toBeGreaterThan(sql.indexOf("filtered AS"));
+    expect(filteredWhereIndex).toBeLessThan(sql.lastIndexOf("LIMIT"));
+    expect(sql).toMatch(/pinned\s*=\s*TRUE/i);
+    expect(sql).toMatch(/"resultCount"\s*>\s*0/i);
+    expect(sql).toMatch(/"clickCount"\s*>\s*0/i);
+    expect(sql).toMatch(/"viewCount"\s*>\s*0/i);
+    expect(sql).toMatch(/"downloadCount"\s*>\s*0/i);
+    expect((db.query.mock.calls[0][1] as unknown[]).at(-1)).toBe(10);
   });
 
-  it("over-fetches hot search rows so filtering does not under-fill the requested limit", async () => {
+  it("filters hot search rows before final limit so low-quality terms do not under-fill results", async () => {
     const { service, db } = createService();
     db.query.mockResolvedValueOnce([
-      {
-        keyword: "no results",
-        categoryId: null,
-        searchCount: 3,
-        clickCount: 0,
-        viewCount: 0,
-        downloadCount: 0,
-        resultCount: 0,
-        pinned: false,
-        pinnedWeight: 0,
-      },
       {
         keyword: "valid",
         categoryId: null,
@@ -591,7 +589,12 @@ describe("SearchService history helpers", () => {
         pinned: false,
       },
     ]);
-    expect((db.query.mock.calls[0][1] as unknown[]).at(-1)).toBeGreaterThan(1);
+    const sql = db.query.mock.calls[0][0] as string;
+    const filteredIndex = sql.indexOf("filtered AS");
+    const limitIndex = sql.lastIndexOf("LIMIT");
+    expect(filteredIndex).toBeGreaterThan(-1);
+    expect(filteredIndex).toBeLessThan(limitIndex);
+    expect((db.query.mock.calls[0][1] as unknown[]).at(-1)).toBe(1);
   });
 
   it("records and reads search history scoped to tenant and user", async () => {
