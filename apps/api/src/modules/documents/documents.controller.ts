@@ -1,27 +1,28 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Param,
-  Post,
   Patch,
+  Post,
+  Put,
   Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
-  BadRequestException,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { AuthGuard } from "@nestjs/passport";
-import { DocumentsService } from "./documents.service";
-import { TagsService } from "../tags/tags.service";
-import { DatabaseService } from "../../database/database.service";
+import { DocumentListQuery } from "@ai-knowledge/schemas";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { AdminGuard } from "../../common/guards/admin.guard";
+import { PermissionsGuard, RequirePermissions } from "../../common/permissions/permissions.guard";
+import { Action, Resource } from "../../common/permissions/permissions.types";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
-import { PermissionsGuard, RequirePermissions, AdminOnly, EditorOrAbove } from "../../common/permissions/permissions.guard";
-import { Resource, Action } from "../../common/permissions/permissions.types";
+import { DatabaseService } from "../../database/database.service";
+import { TagsService } from "../tags/tags.service";
+import { DocumentsService } from "./documents.service";
 
 @UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("documents")
@@ -33,44 +34,57 @@ export class DocumentsController {
   ) {}
 
   @Get()
-  async list(
-    @Query("q") q?: string,
-    @Query("status") status?: string,
-    @Query("folderId") folderId?: string,
-    @Query("tags") tags?: string,
-    @Query("page") page = "1",
-    @Query("pageSize") pageSize = "20",
-  ) {
-    const tagIds = tags
-      ? tags.split(",").map((t) => t.trim()).filter((t) => t.length > 0)
+  async list(@Query() query: unknown, @CurrentUser() user: any) {
+    const parsed = DocumentListQuery.parse(query);
+    const tagIds = parsed.tags
+      ? parsed.tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0)
       : undefined;
-    return this.docs.list({
-      q,
-      status,
-      folderId,
-      tags: tagIds,
-      page: Number(page) || 1,
-      pageSize: Number(pageSize) || 20,
-    });
+    return this.docs.list({ ...parsed, tags: tagIds }, user);
+  }
+
+  @Get(":id/permissions")
+  async getPermissions(@Param("id") id: string, @CurrentUser() user: any) {
+    return this.docs.getPermissions(id, user);
   }
 
   @Get(":id")
-  async detail(@Param("id") id: string) {
-    return this.docs.getDetail(id);
+  async detail(@Param("id") id: string, @CurrentUser() user: any) {
+    return this.docs.getDetail(id, user);
+  }
+
+  @Put("batch/permissions")
+  async setBatchPermissions(@Body() body: unknown, @CurrentUser() user: any) {
+    return this.docs.setBatchPermissions(body, user);
+  }
+
+  @Post("batch")
+  async batch(@Body() body: unknown, @CurrentUser() user: any) {
+    return this.docs.batch(body, user);
   }
 
   @Post("upload")
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.CREATE })
   @UseInterceptors(FileInterceptor("file"))
-  @RateLimit({ ...RateLimitPolicies.upload, message: "上传过于频繁，请稍后再试" })
+  @RateLimit({ ...RateLimitPolicies.upload, message: "Upload too frequent, please try again later" })
   async upload(
     @UploadedFile() file: Express.Multer.File,
-    @CurrentUser("sub") userId: string,
+    @CurrentUser() user: any,
     @Body("folderId") folderId?: string,
   ) {
-    if (!file) throw new BadRequestException("缺少文件");
-    const tenantId = this.db.tenantId!;
+    if (!file) throw new BadRequestException("Missing file");
+    const tenantId = user?.tenantId ?? this.db.tenantId!;
+    const userId = user?.sub ?? user?.userId ?? user?.id ?? this.db.userId!;
     return this.docs.upload(file, userId, tenantId, folderId);
+  }
+
+  @Put(":id/permissions")
+  async setPermissions(@Param("id") id: string, @Body() body: unknown, @CurrentUser() user: any) {
+    return this.docs.setPermissions(id, body, user);
+  }
+
+  @Post(":id/parse/retry")
+  async retryParse(@Param("id") id: string, @CurrentUser() user: any) {
+    return this.docs.retryParse(id, user);
   }
 
   @Patch(":id")
@@ -84,11 +98,10 @@ export class DocumentsController {
 
   @Delete(":id")
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.DELETE })
-  async remove(@Param("id") id: string) {
-    return this.docs.remove(id);
+  async remove(@Param("id") id: string, @CurrentUser() user: any) {
+    return this.docs.remove(id, user);
   }
 
-  // 文档标签操作
   @Post(":id/tags/:tagId")
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
   addTag(@Param("id") id: string, @Param("tagId") tagId: string) {

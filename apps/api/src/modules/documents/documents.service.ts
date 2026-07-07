@@ -1,20 +1,47 @@
 import {
-  Injectable,
-  NotFoundException,
   BadRequestException,
-  Logger,
   Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
 } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
+import {
+  DocumentBatchOperationRequest,
+  DocumentPermissionUpdateRequest,
+} from "@ai-knowledge/schemas";
+import { extname } from "path";
+import { v4 as uuid } from "uuid";
 import { PRISMA } from "../../database/database.service";
 import { DatabaseService } from "../../database/database.service";
-import { StorageService } from "../storage/storage.service";
-import { QueueService } from "../queue/queue.service";
-import { Neo4jService } from "../../database/neo4j/neo4j.service";
-import { v4 as uuid } from "uuid";
-import { extname } from "path";
-import { isSupportedDocumentFile, SUPPORTED_DOCUMENT_EXTENSIONS } from "./document-file-types";
 import { sha256Hex } from "../../common/dedup/canonical";
+import { Neo4jService } from "../../database/neo4j/neo4j.service";
+import { QueueService } from "../queue/queue.service";
+import { StorageService } from "../storage/storage.service";
+import {
+  DocumentAccessService,
+  type DocumentAccessFlags,
+  type DocumentAction,
+  type DocumentUserContext,
+} from "./document-access.service";
+import { isSupportedDocumentFile, SUPPORTED_DOCUMENT_EXTENSIONS } from "./document-file-types";
+
+type ListOptions = {
+  q?: string;
+  status?: string;
+  folderId?: string;
+  tags?: string[] | string;
+  fileType?: string;
+  permissionScope?: string;
+  uploaderId?: string;
+  departmentId?: string;
+  uploadedFrom?: string;
+  uploadedTo?: string;
+  archived?: boolean;
+  scope?: string;
+  page: number;
+  pageSize: number;
+};
 
 @Injectable()
 export class DocumentsService {
@@ -26,84 +53,122 @@ export class DocumentsService {
     private readonly storage: StorageService,
     private readonly queue: QueueService,
     private readonly neo4j: Neo4jService,
+    private readonly access: DocumentAccessService,
   ) {}
 
-  async list(opts: {
-    q?: string;
-    status?: string;
-    folderId?: string;
-    tags?: string[];
-    page: number;
-    pageSize: number;
-  }) {
-    const tenantId = this.db.tenantId!;
-    const where: any = { tenantId };
-    if (opts.status) where.status = opts.status;
-    if (opts.q) where.title = { contains: opts.q, mode: "insensitive" };
+  async list(opts: ListOptions, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    const values: unknown[] = [];
+    const filters: string[] = [];
+    const addValue = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+
+    if (opts.status) filters.push(`d.status = ${addValue(opts.status)}`);
+    if (opts.q) filters.push(`d.title ILIKE ${addValue(`%${opts.q}%`)}`);
     if (opts.folderId === "root") {
-      where.folderId = null;
+      filters.push("d.folder_id IS NULL");
     } else if (opts.folderId) {
-      where.folderId = opts.folderId;
-    }
-    if (opts.tags && opts.tags.length > 0) {
-      where.tags = {
-        some: {
-          tag: {
-            id: { in: opts.tags },
-          },
-        },
-      };
+      filters.push(`d.folder_id = ${addValue(opts.folderId)}`);
     }
 
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.document.findMany({
-        where,
-        orderBy: { createdAt: "desc" },
-        skip: (opts.page - 1) * opts.pageSize,
-        take: opts.pageSize,
-        include: {
-          owner: { select: { id: true, name: true } },
-          tags: { include: { tag: true } },
-        },
-      }),
-      this.prisma.document.count({ where }),
-    ]);
+    const tagIds = this.normalizeTagIds(opts.tags);
+    if (tagIds.length > 0) {
+      filters.push(
+        `EXISTS (
+          SELECT 1
+          FROM document_tags dt_filter
+          WHERE dt_filter.document_id = d.id
+            AND dt_filter.tag_id = ANY(${addValue(tagIds)}::text[])
+        )`,
+      );
+    }
+    if (opts.fileType) filters.push(`d.mime ILIKE ${addValue(`%${opts.fileType}%`)}`);
+    if (opts.permissionScope) filters.push(`d.permission_scope = ${addValue(opts.permissionScope)}`);
+    if (opts.uploaderId) filters.push(`d.owner_id = ${addValue(opts.uploaderId)}`);
+    if (opts.departmentId) filters.push(`u.department_id = ${addValue(opts.departmentId)}`);
+    if (opts.uploadedFrom) filters.push(`d.created_at >= ${addValue(new Date(opts.uploadedFrom))}`);
+    if (opts.uploadedTo) filters.push(`d.created_at <= ${addValue(new Date(opts.uploadedTo))}`);
+    if (opts.scope === "mine") filters.push(`d.owner_id = ${addValue(actor.userId)}`);
+    if (opts.scope === "public") filters.push("d.permission_scope IN ('PUBLIC', 'COMPANY')");
+    if (opts.scope === "department") filters.push("d.permission_scope = 'DEPARTMENTS'");
+    if (opts.scope === "archive") {
+      filters.push("d.archived = TRUE");
+    } else if (typeof opts.archived === "boolean") {
+      filters.push(`d.archived = ${opts.archived ? "TRUE" : "FALSE"}`);
+    } else {
+      filters.push("d.archived = FALSE");
+    }
+
+    const visibility = this.access.visibleDocumentWhereSql("d", actor, values.length + 1);
+    values.push(...visibility.values);
+    const limitParam = addValue(opts.pageSize);
+    const offsetParam = addValue((opts.page - 1) * opts.pageSize);
+    const whereSql = [visibility.sql, ...filters].join("\n        AND ");
+
+    const rows = await this.db.query<any>(
+      `SELECT
+         d.id,
+         d.title,
+         d.mime,
+         d.size,
+         d.status,
+         d.folder_id,
+         d.content_id,
+         d.file_hash,
+         d.content_hash,
+         d.duplicate_of_document_id,
+         d.dedup_reason,
+         d.owner_id,
+         u.name AS owner_name,
+         d.permission_scope,
+         d.searchable,
+         d.ai_reference_enabled,
+         d.archived,
+         d.deleted_at,
+         d.created_at,
+         d.updated_at,
+         COALESCE(
+           jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name))
+             FILTER (WHERE t.id IS NOT NULL),
+           '[]'::jsonb
+         ) AS tags,
+         COUNT(*) OVER()::int AS total_count
+       FROM documents d
+       LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+       LEFT JOIN document_tags dt ON dt.document_id = d.id
+       LEFT JOIN tags t ON t.id = dt.tag_id
+       WHERE ${whereSql}
+       GROUP BY d.id, u.name
+       ORDER BY d.created_at DESC
+       LIMIT ${limitParam} OFFSET ${offsetParam}`,
+      values,
+    );
+
+    const ids = rows.map((row: any) => row.id);
+    const flags = await this.access.getAccessFlags(ids, actor);
 
     return {
-      items: items.map((d: typeof items[number]) => ({
-        id: d.id,
-        title: d.title,
-        mime: d.mime,
-        size: Number(d.size),
-        status: d.status,
-        folderId: d.folderId,
-        contentId: (d as any).contentId ?? null,
-        fileHash: (d as any).fileHash ?? null,
-        contentHash: (d as any).contentHash ?? null,
-        duplicateOfDocumentId: (d as any).duplicateOfDocumentId ?? null,
-        dedupReason: (d as any).dedupReason ?? null,
-        ownerId: d.ownerId,
-        ownerName: d.owner?.name,
-        tags: d.tags.map((t: typeof d.tags[number]) => ({ id: t.tag.id, name: t.tag.name })),
-        createdAt: d.createdAt.toISOString(),
-        updatedAt: d.updatedAt.toISOString(),
-      })),
-      total,
+      items: rows.map((row: any) => this.mapDocumentRow(row, flags[row.id])),
+      total: rows[0]?.total_count ? Number(rows[0].total_count) : 0,
       page: opts.page,
       pageSize: opts.pageSize,
     };
   }
 
-  async getDetail(id: string) {
-    const tenantId = this.db.tenantId!;
+  async getDetail(id: string, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    await this.access.assertDocumentAccess(id, "VIEW", actor);
     const doc = await this.prisma.document.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
       include: {
         owner: { select: { id: true, name: true } },
         tags: { include: { tag: true } },
       },
     });
-    if (!doc) throw new NotFoundException("文档不存在");
+    if (!doc) throw new NotFoundException("Document not found");
+
     const contentId = (doc as any).contentId || id;
     const chunks = await this.db.query<{ id: string; idx: number; text: string; tokens: number }>(
       `SELECT id, idx, text, tokens
@@ -112,6 +177,7 @@ export class DocumentsService {
        ORDER BY idx ASC`,
       [contentId, id],
     );
+
     return {
       id: doc.id,
       title: doc.title,
@@ -126,6 +192,11 @@ export class DocumentsService {
       dedupReason: (doc as any).dedupReason ?? null,
       ownerId: doc.ownerId,
       ownerName: doc.owner?.name,
+      permissionScope: (doc as any).permissionScope ?? "PRIVATE",
+      searchable: (doc as any).searchable ?? true,
+      aiReferenceEnabled: (doc as any).aiReferenceEnabled ?? true,
+      archived: (doc as any).archived ?? false,
+      deletedAt: this.toIso((doc as any).deletedAt),
       tags: doc.tags.map((t: typeof doc.tags[number]) => ({ id: t.tag.id, name: t.tag.name })),
       createdAt: doc.createdAt.toISOString(),
       updatedAt: doc.updatedAt.toISOString(),
@@ -135,16 +206,15 @@ export class DocumentsService {
   }
 
   async upload(file: Express.Multer.File, ownerId: string, tenantId: string, folderId?: string) {
-    if (!file) throw new BadRequestException("缺少文件");
-    // multer/FileInterceptor 默认用 latin1 解码 multipart 的 originalname,中文会被破坏。
-    // 把字节当 latin1 还原成 Buffer,再按 utf8 解码,英文文件名不受影响。
+    if (!file) throw new BadRequestException("Missing file");
     const originalName = Buffer.from(file.originalname, "latin1").toString("utf8");
     const ext = extname(originalName) || "";
     if (!isSupportedDocumentFile(file.mimetype, originalName)) {
       throw new BadRequestException(
-        `暂不支持该文件格式。支持格式：${SUPPORTED_DOCUMENT_EXTENSIONS.join(", ")}`,
+        `Unsupported file format. Supported formats: ${SUPPORTED_DOCUMENT_EXTENSIONS.join(", ")}`,
       );
     }
+
     const fileHash = sha256Hex(file.buffer);
     const id = uuid();
     const exactDuplicate = await this.findReusableUploadByFileHash(tenantId, fileHash);
@@ -175,6 +245,9 @@ export class DocumentsService {
       } as any,
     });
 
+    if (folderId) {
+      await this.access.applyInheritedFolderPermissions(doc.id, folderId, ownerId);
+    }
     if (exactDuplicate?.content_id) {
       await this.refreshContentStats(exactDuplicate.content_id);
     } else {
@@ -190,63 +263,18 @@ export class DocumentsService {
       dedupReason: exactDuplicate ? "FILE_HASH" : null,
       message: exactDuplicate
         ? reusedStatus === "READY"
-          ? "检测到完全相同文件，已关联已有知识内容，未重复解析/切分/抽取图谱"
-          : "检测到完全相同文件，已关联正在处理的知识内容，处理完成后会自动就绪"
+          ? "Duplicate file detected and linked to existing parsed content."
+          : "Duplicate file detected and linked to content that is still processing."
         : undefined,
     };
-  }
-
-  private statusFromContentStatus(status: string | null | undefined) {
-    if (status === "READY") return "READY";
-    if (status === "PARSING" || status === "CHUNKING" || status === "EMBEDDING") return status;
-    if (status === "FAILED") return "FAILED";
-    return "PENDING";
-  }
-
-  private async findReusableUploadByFileHash(tenantId: string, fileHash: string) {
-    return this.db.queryOne<{
-      id: string;
-      content_id: string;
-      content_hash: string;
-      storage_key: string | null;
-      content_status: string | null;
-    }>(
-      `SELECT d.id, d.content_id, d.content_hash, d.storage_key, dc.status AS content_status
-       FROM documents d
-       LEFT JOIN document_contents dc ON dc.id = d.content_id
-       WHERE d.tenant_id = $1
-         AND d.file_hash = $2
-         AND d.content_id IS NOT NULL
-         AND COALESCE(dc.status, d.status) <> 'FAILED'
-       ORDER BY d.created_at ASC
-       LIMIT 1`,
-      [tenantId, fileHash],
-    );
-  }
-
-  private async refreshContentStats(contentId: string) {
-    await this.db.query(
-      `UPDATE document_contents dc
-       SET duplicate_count = stats.upload_count,
-           source_count = stats.upload_count,
-           updated_at = NOW()
-       FROM (
-         SELECT content_id, COUNT(*)::int AS upload_count
-         FROM documents
-         WHERE content_id = $1
-         GROUP BY content_id
-       ) stats
-       WHERE dc.id = stats.content_id`,
-      [contentId],
-    );
   }
 
   async update(id: string, data: { title?: string; folderId?: string | null }) {
     const tenantId = this.db.tenantId!;
     const doc = await this.prisma.document.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, deletedAt: null } as any,
     });
-    if (!doc) throw new NotFoundException("文档不存在");
+    if (!doc) throw new NotFoundException("Document not found");
 
     const updated = await this.prisma.document.update({
       where: { id },
@@ -271,114 +299,341 @@ export class DocumentsService {
     };
   }
 
-  async remove(id: string) {
-    const tenantId = this.db.tenantId!;
-    const doc = await this.prisma.document.findFirst({ where: { id, tenantId } });
-    if (!doc) throw new NotFoundException("文档不存在");
-    const contentId = (doc as any).contentId as string | null | undefined;
-    if (contentId) {
-      const replacement = await this.db.queryOne<{ id: string }>(
-        `SELECT id
-         FROM documents
-         WHERE tenant_id = $1 AND content_id = $2 AND id <> $3
-         ORDER BY created_at ASC
-         LIMIT 1`,
-        [tenantId, contentId, id],
-      );
+  async remove(id: string, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    await this.access.assertDocumentAccess(id, "DELETE", actor);
+    const doc = await this.prisma.document.findFirst({
+      where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
+    });
+    if (!doc) throw new NotFoundException("Document not found");
 
-      if (replacement) {
-        await this.db.query(
-          `UPDATE chunks SET document_id = $1 WHERE document_id = $2 AND content_id = $3`,
-          [replacement.id, id, contentId],
-        );
-        await this.db.query(
-          `UPDATE structured_facts SET document_id = $1 WHERE document_id = $2 AND content_id = $3`,
-          [replacement.id, id, contentId],
-        );
-        await this.db.query(
-          `UPDATE edge_evidences SET document_id = $1 WHERE document_id = $2 AND document_content_id = $3`,
-          [replacement.id, id, contentId],
-        );
-        await this.db.query(
-          `UPDATE documents
-           SET duplicate_of_document_id = CASE WHEN id = $1 THEN NULL ELSE $1 END,
-               dedup_reason = CASE WHEN id = $1 THEN NULL ELSE dedup_reason END,
-               updated_at = NOW()
-           WHERE tenant_id = $2
-             AND content_id = $3
-             AND (id = $1 OR duplicate_of_document_id = $4)`,
-          [replacement.id, tenantId, contentId, id],
-        );
-        await this.db.query(
-          `UPDATE document_contents
-           SET canonical_document_id = $1, updated_at = NOW()
-           WHERE id = $2 AND canonical_document_id = $3`,
-          [replacement.id, contentId, id],
-        );
-      }
-
-      await this.prisma.document.delete({ where: { id } });
-
-      if (replacement) {
-        await this.refreshContentStats(contentId);
-        await this.neo4j.run(
-          `MATCH (d:Document {id:$contentId, tenantId:$tenantId})
-           SET d.canonicalDocumentId=$canonicalDocumentId,
-               d.updatedAt=$updatedAt`,
-          {
-            contentId,
-            tenantId,
-            canonicalDocumentId: replacement.id,
-            updatedAt: new Date().toISOString(),
-          },
-        ).catch((error: any) => this.logger.warn(`更新图谱 canonical 文档失败: ${error.message}`));
-      } else {
-        await this.removeGraphData(contentId, tenantId);
-        await this.db.query(`DELETE FROM document_contents WHERE id = $1`, [contentId]);
-      }
-
-      await this.removeStorageObjectIfUnreferenced(doc.storageKey);
-      return { id };
-    }
-
-    await this.prisma.document.delete({ where: { id } });
-    await this.removeGraphData(id, tenantId);
-    await this.removeStorageObjectIfUnreferenced(doc.storageKey);
+    await this.prisma.document.update({
+      where: { id },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: actor.userId,
+      } as any,
+    });
     return { id };
   }
 
-  private async removeStorageObjectIfUnreferenced(storageKey: string | null | undefined) {
-    if (!storageKey) return;
-    const row = await this.db.queryOne<{ count: string | number }>(
-      `SELECT COUNT(*) AS count FROM documents WHERE storage_key = $1`,
-      [storageKey],
+  async getPermissions(id: string, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    await this.access.assertDocumentAccess(id, "MANAGE_PERMISSION", actor);
+    const snapshot = await this.readPermissionSnapshot(id, actor.tenantId);
+    if (!snapshot) throw new NotFoundException("Document not found");
+    return snapshot;
+  }
+
+  async setPermissions(id: string, body: unknown, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    const parsed = DocumentPermissionUpdateRequest.parse(body);
+    await this.access.assertDocumentAccess(id, "MANAGE_PERMISSION", actor);
+    const before = await this.readPermissionSnapshot(id, actor.tenantId);
+    if (!before) throw new NotFoundException("Document not found");
+
+    await this.db.query(
+      `UPDATE documents
+       SET permission_scope = $3,
+           searchable = $4,
+           ai_reference_enabled = $5,
+           updated_at = NOW()
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+      [
+        id,
+        actor.tenantId,
+        parsed.permissionScope,
+        parsed.searchable,
+        parsed.aiReferenceEnabled,
+      ],
     );
-    if (Number(row?.count || 0) === 0) {
-      await this.storage.removeObject(storageKey).catch(() => undefined);
+
+    if (parsed.mode === "OVERWRITE" || parsed.mode === "DIRECT") {
+      await this.db.query(
+        `DELETE FROM document_permissions WHERE document_id = $1 AND tenant_id = $2`,
+        [id, actor.tenantId],
+      );
+    }
+
+    for (const entry of parsed.entries) {
+      await this.db.query(
+        `INSERT INTO document_permissions (
+           id,
+           tenant_id,
+           document_id,
+           subject_type,
+           subject_id,
+           can_view,
+           can_download,
+           can_edit,
+           can_delete,
+           can_manage_permission,
+           created_by
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (tenant_id, document_id, subject_type, subject_id)
+         DO UPDATE SET
+           can_view = EXCLUDED.can_view,
+           can_download = EXCLUDED.can_download,
+           can_edit = EXCLUDED.can_edit,
+           can_delete = EXCLUDED.can_delete,
+           can_manage_permission = EXCLUDED.can_manage_permission,
+           updated_at = NOW()`,
+        [
+          uuid(),
+          actor.tenantId,
+          id,
+          entry.subjectType,
+          entry.subjectId,
+          entry.canView,
+          entry.canDownload,
+          entry.canEdit,
+          entry.canDelete,
+          entry.canManagePermission,
+          actor.userId,
+        ],
+      );
+    }
+
+    const after = await this.readPermissionSnapshot(id, actor.tenantId);
+    await this.access.writeAuditLog({
+      tenantId: actor.tenantId,
+      actorId: actor.userId,
+      targetType: "DOCUMENT",
+      targetId: id,
+      action: "PERMISSION_UPDATE",
+      mode: parsed.mode,
+      before,
+      after,
+    });
+
+    return after;
+  }
+
+  async setBatchPermissions(body: unknown, user?: any) {
+    const payload = body as any;
+    const documentIds = Array.isArray(payload?.documentIds) ? payload.documentIds : [];
+    if (documentIds.length === 0) throw new BadRequestException("documentIds is required");
+    const permissionBody = DocumentPermissionUpdateRequest.parse(payload);
+    const results = [];
+    for (const documentId of documentIds) {
+      try {
+        await this.setPermissions(documentId, permissionBody, user);
+        results.push({ documentId, ok: true });
+      } catch (error: any) {
+        results.push({ documentId, ok: false, message: error?.message || "Failed" });
+      }
+    }
+    return { results };
+  }
+
+  async batch(body: unknown, user?: any) {
+    const parsed = DocumentBatchOperationRequest.parse(body);
+    const results = [];
+    for (const documentId of parsed.documentIds) {
+      try {
+        await this.applyBatchAction(documentId, parsed, user);
+        results.push({ documentId, ok: true });
+      } catch (error: any) {
+        results.push({ documentId, ok: false, message: error?.message || "Failed" });
+      }
+    }
+    return { action: parsed.action, results };
+  }
+
+  async retryParse(id: string, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    await this.access.assertDocumentAccess(id, "EDIT", actor);
+    const doc = await this.prisma.document.findFirst({
+      where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
+    });
+    if (!doc) throw new NotFoundException("Document not found");
+    if (doc.status !== "FAILED") {
+      throw new BadRequestException("Only FAILED documents can be retried");
+    }
+
+    const updated = await this.prisma.document.update({
+      where: { id },
+      data: {
+        status: "PENDING",
+        errorMessage: null,
+      } as any,
+    });
+    await this.queue.enqueueDocument({ documentId: id, tenantId: actor.tenantId });
+    return { id: updated.id, status: updated.status };
+  }
+
+  private statusFromContentStatus(status: string | null | undefined) {
+    if (status === "READY") return "READY";
+    if (status === "PARSING" || status === "CHUNKING" || status === "EMBEDDING") return status;
+    if (status === "FAILED") return "FAILED";
+    return "PENDING";
+  }
+
+  private async findReusableUploadByFileHash(tenantId: string, fileHash: string) {
+    return this.db.queryOne<{
+      id: string;
+      content_id: string;
+      content_hash: string;
+      storage_key: string | null;
+      content_status: string | null;
+    }>(
+      `SELECT d.id, d.content_id, d.content_hash, d.storage_key, dc.status AS content_status
+       FROM documents d
+       LEFT JOIN document_contents dc ON dc.id = d.content_id
+       WHERE d.tenant_id = $1
+         AND d.file_hash = $2
+         AND d.content_id IS NOT NULL
+         AND d.deleted_at IS NULL
+         AND COALESCE(dc.status, d.status) <> 'FAILED'
+       ORDER BY d.created_at ASC
+       LIMIT 1`,
+      [tenantId, fileHash],
+    );
+  }
+
+  private async refreshContentStats(contentId: string) {
+    await this.db.query(
+      `UPDATE document_contents dc
+       SET duplicate_count = stats.upload_count,
+           source_count = stats.upload_count,
+           updated_at = NOW()
+       FROM (
+         SELECT content_id, COUNT(*)::int AS upload_count
+         FROM documents
+         WHERE content_id = $1 AND deleted_at IS NULL
+         GROUP BY content_id
+       ) stats
+       WHERE dc.id = stats.content_id`,
+      [contentId],
+    );
+  }
+
+  private async applyBatchAction(
+    documentId: string,
+    parsed: DocumentBatchOperationRequest,
+    user?: any,
+  ) {
+    const actor = this.toDocumentUserContext(user);
+    if (parsed.action === "DELETE") {
+      await this.remove(documentId, user);
+      return;
+    }
+
+    await this.access.assertDocumentAccess(documentId, this.batchAccessAction(parsed.action), actor);
+    if (parsed.action === "ARCHIVE") {
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: { archived: true, updatedAt: new Date() } as any,
+      });
+      return;
+    }
+    if (parsed.action === "RESTORE") {
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: { archived: false, updatedAt: new Date() } as any,
+      });
+      return;
+    }
+    if (parsed.action === "MOVE") {
+      if (!parsed.folderId) throw new BadRequestException("folderId is required");
+      await this.prisma.document.update({
+        where: { id: documentId },
+        data: { folderId: parsed.folderId, updatedAt: new Date() } as any,
+      });
+      await this.access.applyInheritedFolderPermissions(documentId, parsed.folderId, actor.userId);
     }
   }
 
-  private async removeGraphData(documentId: string, tenantId: string) {
-    try {
-      await this.neo4j.run(
-        `MATCH (:Document {id:$documentId, tenantId:$tenantId})-[:HAS_CHUNK]->(chunk:Chunk)
-         DETACH DELETE chunk`,
-        { documentId, tenantId },
-      );
-      await this.neo4j.run(
-        `MATCH (d:Document {id:$documentId, tenantId:$tenantId})
-         DETACH DELETE d`,
-        { documentId, tenantId },
-      );
-      await this.neo4j.run(
-        `MATCH (entity:Entity)
-         WHERE (entity.tenantId = $tenantId OR (entity.tenantId IS NULL AND entity.id STARTS WITH $entityIdPrefix))
-           AND NOT (entity)<-[:CONTAINS_ENTITY]-(:Document {tenantId:$tenantId})
-         DETACH DELETE entity`,
-        { tenantId, entityIdPrefix: `e-${tenantId}-` },
-      );
-    } catch (error: any) {
-      this.logger.warn(`清理文档图谱数据失败: ${error.message}`);
-    }
+  private batchAccessAction(action: DocumentBatchOperationRequest["action"]): DocumentAction {
+    if (action === "DOWNLOAD") return "DOWNLOAD";
+    return "EDIT";
+  }
+
+  private async readPermissionSnapshot(documentId: string, tenantId: string) {
+    const document = await this.db.queryOne<any>(
+      `SELECT id, permission_scope, searchable, ai_reference_enabled
+       FROM documents
+       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+      [documentId, tenantId],
+    );
+    if (!document) return null;
+
+    const entries = await this.db.query<any>(
+      `SELECT subject_type, subject_id, can_view, can_download, can_edit, can_delete, can_manage_permission
+       FROM document_permissions
+       WHERE document_id = $1 AND tenant_id = $2
+       ORDER BY subject_type ASC, subject_id ASC`,
+      [documentId, tenantId],
+    );
+
+    return {
+      documentId,
+      permissionScope: document.permission_scope,
+      searchable: document.searchable,
+      aiReferenceEnabled: document.ai_reference_enabled,
+      entries: entries.map((entry: any) => ({
+        subjectType: entry.subject_type,
+        subjectId: entry.subject_id,
+        canView: Boolean(entry.can_view),
+        canDownload: Boolean(entry.can_download),
+        canEdit: Boolean(entry.can_edit),
+        canDelete: Boolean(entry.can_delete),
+        canManagePermission: Boolean(entry.can_manage_permission),
+      })),
+    };
+  }
+
+  private toDocumentUserContext(user?: any): DocumentUserContext {
+    return {
+      userId: user?.sub ?? user?.userId ?? user?.id ?? this.db.userId!,
+      tenantId: user?.tenantId ?? this.db.tenantId!,
+      role: user?.role ?? (this.db as any).role ?? "viewer",
+      departmentId: user?.departmentId ?? null,
+    };
+  }
+
+  private normalizeTagIds(tags?: string[] | string) {
+    if (!tags) return [];
+    if (Array.isArray(tags)) return tags.filter((tag) => tag.length > 0);
+    return tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+  }
+
+  private mapDocumentRow(row: any, flags?: DocumentAccessFlags) {
+    return {
+      id: row.id,
+      title: row.title,
+      mime: row.mime,
+      size: Number(row.size),
+      status: row.status,
+      folderId: row.folder_id ?? row.folderId ?? null,
+      contentId: row.content_id ?? row.contentId ?? null,
+      fileHash: row.file_hash ?? row.fileHash ?? null,
+      contentHash: row.content_hash ?? row.contentHash ?? null,
+      duplicateOfDocumentId: row.duplicate_of_document_id ?? row.duplicateOfDocumentId ?? null,
+      dedupReason: row.dedup_reason ?? row.dedupReason ?? null,
+      ownerId: row.owner_id ?? row.ownerId,
+      ownerName: row.owner_name ?? row.ownerName,
+      permissionScope: row.permission_scope ?? row.permissionScope ?? "PRIVATE",
+      searchable: row.searchable ?? true,
+      aiReferenceEnabled: row.ai_reference_enabled ?? row.aiReferenceEnabled ?? true,
+      archived: row.archived ?? false,
+      deletedAt: this.toIso(row.deleted_at ?? row.deletedAt),
+      canView: flags?.canView ?? false,
+      canDownload: flags?.canDownload ?? false,
+      canEdit: flags?.canEdit ?? false,
+      canDelete: flags?.canDelete ?? false,
+      canManagePermission: flags?.canManagePermission ?? false,
+      tags: Array.isArray(row.tags) ? row.tags : [],
+      createdAt: this.toIso(row.created_at ?? row.createdAt)!,
+      updatedAt: this.toIso(row.updated_at ?? row.updatedAt)!,
+    };
+  }
+
+  private toIso(value: any) {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value?.toISOString === "function") return value.toISOString();
+    return String(value);
   }
 }
