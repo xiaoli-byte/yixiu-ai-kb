@@ -389,6 +389,7 @@ export class SearchService {
     }
 
     if (filters.fileType) conditions.push(`d.mime ILIKE ${addValue(`%${filters.fileType.trim()}%`)}`);
+    if (filters.categoryId) conditions.push(`d.folder_id = ${addValue(filters.categoryId)}`);
     if (filters.permissionScope) conditions.push(`d.permission_scope = ${addValue(filters.permissionScope)}`);
     if (filters.parseStatus) conditions.push(`COALESCE(dc.status, d.status) = ${addValue(filters.parseStatus)}`);
     if (filters.uploaderId) conditions.push(`d.owner_id = ${addValue(filters.uploaderId)}`);
@@ -428,6 +429,14 @@ export class SearchService {
       `COALESCE(metrics.view_count, 0)::int AS "viewCount"`,
       `COALESCE(metrics.download_count, 0)::int AS "downloadCount"`,
     ].join(",\n              ");
+  }
+
+  private categoryPathSelectSql(): string {
+    return `f.name AS "categoryPath"`;
+  }
+
+  private folderJoinSql(): string {
+    return "LEFT JOIN folders f ON f.id = d.folder_id AND f.tenant_id = d.tenant_id";
   }
 
   private searchMetricsJoinSql(): string {
@@ -479,7 +488,7 @@ export class SearchService {
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
               d.permission_scope AS "permissionScope",
-              NULL::text AS "categoryPath",
+              ${this.categoryPathSelectSql()},
               ${this.searchMetricsSelectSql()},
               GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
               COALESCE(dc.created_at, d.created_at) AS "createdAt",
@@ -489,6 +498,7 @@ export class SearchService {
        FROM chunks c
        LEFT JOIN document_contents dc ON dc.id = c.content_id
        JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+       ${this.folderJoinSql()}
        LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
        ${this.searchMetricsJoinSql()}
        WHERE ${queryParts.whereSql}
@@ -519,7 +529,7 @@ export class SearchService {
                 COALESCE(dc.title, d.title) AS "documentTitle",
                 COALESCE(dc.mime, d.mime) AS mime,
                 d.permission_scope AS "permissionScope",
-                NULL::text AS "categoryPath",
+                ${this.categoryPathSelectSql()},
                 ${this.searchMetricsSelectSql()},
                 GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
                 COALESCE(dc.created_at, d.created_at) AS "createdAt",
@@ -529,6 +539,7 @@ export class SearchService {
          FROM chunks c
          LEFT JOIN document_contents dc ON dc.id = c.content_id
          JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+         ${this.folderJoinSql()}
          LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
          ${this.searchMetricsJoinSql()}
          WHERE ${queryParts.whereSql}
@@ -559,7 +570,7 @@ export class SearchService {
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
               d.permission_scope AS "permissionScope",
-              NULL::text AS "categoryPath",
+              ${this.categoryPathSelectSql()},
               ${this.searchMetricsSelectSql()},
               GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
               COALESCE(dc.created_at, d.created_at) AS "createdAt",
@@ -569,6 +580,7 @@ export class SearchService {
        FROM chunks c
        LEFT JOIN document_contents dc ON dc.id = c.content_id
        JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+       ${this.folderJoinSql()}
        LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
        ${this.searchMetricsJoinSql()}
        WHERE ${queryParts.whereSql}
@@ -597,7 +609,7 @@ export class SearchService {
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
               d.permission_scope AS "permissionScope",
-              NULL::text AS "categoryPath",
+              ${this.categoryPathSelectSql()},
               ${this.searchMetricsSelectSql()},
               GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
               COALESCE(dc.created_at, d.created_at) AS "createdAt",
@@ -605,6 +617,7 @@ export class SearchService {
        FROM chunks c
        LEFT JOIN document_contents dc ON dc.id = c.content_id
        JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+       ${this.folderJoinSql()}
        LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
        ${this.searchMetricsJoinSql()}
        WHERE ${queryParts.whereSql}
@@ -665,7 +678,7 @@ export class SearchService {
                 COALESCE(dc.title, d.title) AS "documentTitle",
                 COALESCE(dc.mime, d.mime) AS mime,
                 d.permission_scope AS "permissionScope",
-                NULL::text AS "categoryPath",
+                ${this.categoryPathSelectSql()},
                 ${this.searchMetricsSelectSql()},
                 GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
                 COALESCE(dc.created_at, d.created_at) AS "createdAt",
@@ -675,6 +688,7 @@ export class SearchService {
          FROM chunks c
          LEFT JOIN document_contents dc ON dc.id = c.content_id
          JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
+         ${this.folderJoinSql()}
          LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
          ${this.searchMetricsJoinSql()}
          WHERE ${queryParts.whereSql}

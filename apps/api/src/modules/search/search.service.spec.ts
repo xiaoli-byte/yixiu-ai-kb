@@ -176,6 +176,56 @@ describe("SearchService result helpers", () => {
 });
 
 describe("SearchService permission-aware search", () => {
+  it("maps SearchList categoryId to document folder filtering in search SQL", async () => {
+    const { service, db, embeddings, access } = createService();
+    embeddings.embedOne.mockRejectedValueOnce(new Error("vector unavailable"));
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-1": {
+        canView: true,
+        canDownload: false,
+        canEdit: false,
+        canDelete: false,
+        canManagePermission: false,
+      },
+    });
+    db.query.mockResolvedValueOnce([
+      {
+        chunkId: "chunk-1",
+        documentId: "doc-1",
+        contentId: "content-1",
+        documentTitle: "Folder Doc",
+        mime: "text/plain",
+        permissionScope: "COMPANY",
+        categoryPath: "Policies",
+        idx: 0,
+        text: "risk policy",
+        highlight: "risk policy",
+        rank: 0.8,
+        page: null,
+        updatedAt: new Date("2026-07-07T10:00:00.000Z"),
+        createdAt: new Date("2026-07-06T10:00:00.000Z"),
+      },
+    ]).mockResolvedValue([]);
+
+    await service.searchList(
+      { keyword: "risk", categoryId: "folder-1", page: "1", pageSize: "20" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    const sql = db.query.mock.calls[0][0] as string;
+    const values = db.query.mock.calls[0][1] as unknown[];
+    expect(sql).toContain("d.folder_id =");
+    expect(values).toContain("folder-1");
+  });
+
+  it("selects categoryPath from joined folders instead of a hard-coded null", () => {
+    const serviceSource = readFileSync("apps/api/src/modules/search/search.service.ts", "utf8");
+
+    expect(serviceSource).toContain("LEFT JOIN folders f ON f.id = d.folder_id AND f.tenant_id = d.tenant_id");
+    expect(serviceSource).toContain('f.name AS "categoryPath"');
+    expect(serviceSource).not.toContain('NULL::text AS "categoryPath"');
+  });
+
   it("passes user context into SQL visibility filtering and excludes unsearchable documents", async () => {
     const { service, db, access } = createService();
     access.visibleDocumentWhereSql.mockReturnValueOnce({
