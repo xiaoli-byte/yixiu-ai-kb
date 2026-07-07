@@ -79,19 +79,20 @@ export class QaController {
   @Get("documents/:id/pdf-url")
   async getDocumentUrl(
     @Param("id") id: string,
-    @CurrentUser("sub") userId: string,
+    @CurrentUser() user: any,
   ) {
     const tenantId = this.db.tenantId!;
-    return this.qa.getDocumentPresignedUrl(id, tenantId, userId);
+    return this.qa.getDocumentPresignedUrl(id, tenantId, user);
   }
 
   @Get("documents/:id/file")
   async getDocumentFile(
     @Param("id") id: string,
+    @CurrentUser() user: any,
     @Res() res: Response,
   ) {
     const tenantId = this.db.tenantId!;
-    const file = await this.qa.getDocumentFile(id, tenantId);
+    const file = await this.qa.getDocumentFile(id, tenantId, user);
     const encodedTitle = encodeURIComponent(file.title);
 
     res.setHeader("Content-Type", file.mime);
@@ -114,10 +115,10 @@ export class QaController {
   @Get("documents/:id/markdown")
   async getDocumentMarkdown(
     @Param("id") id: string,
-    @CurrentUser("sub") userId: string,
+    @CurrentUser() user: any,
   ) {
     const tenantId = this.db.tenantId!;
-    return this.qa.getDocumentMarkdown(id, tenantId);
+    return this.qa.getDocumentMarkdown(id, tenantId, user);
   }
 
   @Delete("conversations/:id")
@@ -132,9 +133,10 @@ export class QaController {
   @RateLimit({ ...RateLimitPolicies.qa, message: "AI 问答请求过于频繁，请稍后再试" })
   async ask(
     @Body() body: { conversationId?: string; question: string; topK?: number },
-    @CurrentUser("sub") userId: string,
+    @CurrentUser() user: any,
     @Res() res: Response,
   ) {
+    const userId = user?.sub ?? user?.userId ?? user?.id;
     const question = (body.question || "").trim();
     if (!question) {
       res.setHeader("Content-Type", "application/json");
@@ -169,6 +171,7 @@ export class QaController {
     await this.qa.ask({
       userId,
       tenantId: this.db.tenantId!,
+      user,
       conversationId: body.conversationId,
       question,
       topK: body.topK,

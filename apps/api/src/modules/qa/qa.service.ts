@@ -9,6 +9,10 @@ import { RagFactExtractionService } from "../rag/rag-fact-extraction.service";
 import { RagFactsService } from "../rag/rag-facts.service";
 import { RagRouterService } from "../rag/rag-router.service";
 import { RagToolsService } from "../rag/rag-tools.service";
+import {
+  DocumentAccessService,
+  type DocumentUserContext,
+} from "../documents/document-access.service";
 import type {
   RagRoute,
   RagToolResult,
@@ -51,6 +55,10 @@ interface QAMessageRow extends FeedbackRow {
   createdAt: Date;
 }
 
+type QaUserInput =
+  | string
+  | (Partial<DocumentUserContext> & { sub?: string; id?: string });
+
 @Injectable()
 export class QaService {
   private readonly logger = new Logger(QaService.name);
@@ -92,6 +100,7 @@ export class QaService {
     private readonly search: SearchService,
     private readonly llm: LlmService,
     private readonly storage: StorageService,
+    private readonly access: DocumentAccessService,
     private readonly config: AppConfigService,
     private readonly ragRouter: RagRouterService,
     private readonly ragFacts: RagFactsService,
@@ -259,8 +268,15 @@ export class QaService {
     }));
   }
 
-  async getDocumentPresignedUrl(docId: string, tenantId: string, userId: string) {
+  async getDocumentPresignedUrl(docId: string, tenantId: string, user: QaUserInput) {
     const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
+    if (doc) {
+      await this.access.assertDocumentAccess(
+        doc.id,
+        "VIEW",
+        this.toDocumentUserContext(tenantId, user),
+      );
+    }
     if (!doc) throw new ForbiddenException("文档不存在");
     return {
       url: `/api/qa/documents/${encodeURIComponent(docId)}/file`,
@@ -269,8 +285,15 @@ export class QaService {
     };
   }
 
-  async getDocumentFile(docId: string, tenantId: string) {
+  async getDocumentFile(docId: string, tenantId: string, user: QaUserInput) {
     const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
+    if (doc) {
+      await this.access.assertDocumentAccess(
+        doc.id,
+        "DOWNLOAD",
+        this.toDocumentUserContext(tenantId, user),
+      );
+    }
     if (!doc) throw new ForbiddenException("Document not found");
     return {
       stream: await this.storage.getObjectStream(doc.storageKey),
@@ -279,8 +302,15 @@ export class QaService {
     };
   }
 
-  async getDocumentMarkdown(docId: string, tenantId: string) {
+  async getDocumentMarkdown(docId: string, tenantId: string, user: QaUserInput) {
     const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
+    if (doc) {
+      await this.access.assertDocumentAccess(
+        doc.id,
+        "VIEW",
+        this.toDocumentUserContext(tenantId, user),
+      );
+    }
     if (!doc) throw new ForbiddenException("文档不存在");
 
     // 检查是否为 Markdown 文件
@@ -327,6 +357,9 @@ export class QaService {
     conversationId?: string;
     question: string;
     topK?: number;
+    user?: QaUserInput;
+    role?: string;
+    departmentId?: string | null;
     onChunk: (content: string) => void;
     onCitations: (citations: Citation[]) => void;
     onNoResults: (suggestions: string[]) => void;
@@ -356,19 +389,29 @@ export class QaService {
         historyText: this.formatRecentHistoryForRewrite(chatHistory),
       });
       runRetrievalQuery = runRoute.retrievalQuery;
+      const actor = this.toDocumentUserContext(
+        opts.tenantId,
+        opts.user ?? {
+          userId: opts.userId,
+          role: opts.role,
+          departmentId: opts.departmentId,
+        },
+      );
 
       // 2. RAG 检索
       const { hits, hasRelevantResults } = await this.search.search({
         q: runRoute.retrievalQuery,
         mode: "hybrid",
         topK: opts.topK || 5,
+        user: actor,
       });
 
       const topHits = hits.slice(0, opts.topK || 5);
-      runTopHits = topHits;
+      const filteredHits = await this.filterRecallHits(topHits, opts.tenantId, actor);
+      runTopHits = filteredHits;
 
       // 构建 citations（延迟到 LLM 完成后才发送）
-      const citations: Citation[] = topHits.map((h, i) => ({
+      const citations: Citation[] = filteredHits.map((h, i) => ({
         index: i + 1,
         chunkId: h.chunkId,
         documentId: h.documentId,
@@ -379,7 +422,8 @@ export class QaService {
         page: h.page,
       }));
 
-      if (!hasRelevantResults) {
+      const hasFilteredRelevantResults = hasRelevantResults && filteredHits.length > 0;
+      if (!hasFilteredRelevantResults) {
         // 无检索结果时，通知前端但不立即返回
         // 仍调用 LLM 生成有帮助的回复（基于通用知识）
         const suggestions = this.buildNoResultSuggestions(opts.question, runRoute.retrievalQuery);
@@ -388,7 +432,7 @@ export class QaService {
 
       // 3. 加载结构化事实并执行确定性工具
       const dateContext = this.getCurrentDateContext();
-      runFacts = await this.loadStructuredFactsForRoute(opts.tenantId, runRoute, topHits);
+      runFacts = await this.loadStructuredFactsForRoute(opts.tenantId, runRoute, filteredHits);
       runToolResult = await this.ragTools.run({
         route: runRoute,
         facts: runFacts,
@@ -420,7 +464,7 @@ export class QaService {
       ];
 
       this.logger.debug(
-        `ask: domain=${runRoute.domain} intent=${runRoute.intent} facts=${runFacts.length} tool=${runToolResult?.name || "none"} hits=${topHits.length}, history=${chatHistory.length}, contextual=${usedContext}, hasRelevant=${hasRelevantResults}, query="${this.compactText(runRetrievalQuery, 120)}"`,
+        `ask: domain=${runRoute.domain} intent=${runRoute.intent} facts=${runFacts.length} tool=${runToolResult?.name || "none"} hits=${filteredHits.length}/${topHits.length}, history=${chatHistory.length}, contextual=${usedContext}, hasRelevant=${hasFilteredRelevantResults}, query="${this.compactText(runRetrievalQuery, 120)}"`,
       );
 
       // 6. 创建/更新会话
@@ -483,7 +527,9 @@ export class QaService {
               toolResult: runToolResult,
               answer: full,
             });
-            opts.onCitations(citations);
+            if (citations.length > 0) {
+              opts.onCitations(citations);
+            }
             opts.onDone(messageId, finalConvId!);
           }).catch((e: Error) => {
             this.logger.error(`保存助手消息失败: ${e.message}`);
@@ -535,6 +581,49 @@ export class QaService {
       .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
   }
 
+  private async filterRecallHits(
+    hits: SearchHit[],
+    tenantId: string,
+    actor: DocumentUserContext,
+  ): Promise<SearchHit[]> {
+    const documentIds = [...new Set(hits.map((hit) => hit.documentId).filter(Boolean))];
+    if (documentIds.length === 0) return [];
+
+    const [flags, aiReferenceFlags] = await Promise.all([
+      this.access.getAccessFlags(documentIds, actor),
+      this.loadAiReferenceFlags(documentIds, tenantId),
+    ]);
+
+    return hits.filter((hit) => {
+      const canView = flags[hit.documentId]?.canView ?? false;
+      const aiReferenceEnabled = aiReferenceFlags.get(hit.documentId) ?? false;
+      return canView && aiReferenceEnabled;
+    });
+  }
+
+  private async loadAiReferenceFlags(documentIds: string[], tenantId: string) {
+    const flags = new Map(documentIds.map((documentId) => [documentId, false]));
+    if (documentIds.length === 0) return flags;
+
+    const rows = await this.db.query<{
+      id: string;
+      aiReferenceEnabled?: boolean;
+      ai_reference_enabled?: boolean;
+    }>(
+      `SELECT id, ai_reference_enabled AS "aiReferenceEnabled"
+       FROM documents
+       WHERE tenant_id = $1
+         AND deleted_at IS NULL
+         AND id = ANY($2::text[])`,
+      [tenantId, documentIds],
+    );
+
+    for (const row of rows) {
+      flags.set(row.id, Boolean(row.aiReferenceEnabled ?? row.ai_reference_enabled));
+    }
+    return flags;
+  }
+
   private async loadStructuredFactsForRoute(
     tenantId: string,
     route: RagRoute,
@@ -543,6 +632,8 @@ export class QaService {
     if (!route.requiresFacts) return [];
 
     const documentIds = [...new Set(hits.map((hit) => hit.documentId))];
+    if (documentIds.length === 0) return [];
+
     try {
       const storedFacts = await this.ragFacts.findFacts({
         tenantId,
@@ -842,6 +933,16 @@ export class QaService {
       if (unique.length >= 8) break;
     }
     return this.compactText(unique.join(" ") || text, 120);
+  }
+
+  private toDocumentUserContext(tenantId: string, user?: QaUserInput): DocumentUserContext {
+    const raw = typeof user === "string" ? { userId: user } : (user ?? {});
+    return {
+      userId: raw.userId ?? raw.sub ?? raw.id ?? this.db.userId ?? "",
+      tenantId: raw.tenantId ?? tenantId ?? this.db.tenantId ?? "",
+      role: raw.role ?? (this.db as any).role ?? "viewer",
+      departmentId: raw.departmentId ?? (this.db as any).departmentId ?? null,
+    };
   }
 
   private compactText(text: string, maxLength: number) {
