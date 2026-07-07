@@ -1,9 +1,25 @@
 import { apiClient } from "../client";
-import type { SearchHistoryItem, SearchRequest, SearchResponse } from "@/types/api";
+import type {
+  HotSearchItem,
+  HotSearchQuery,
+  SearchHistoryItem,
+  SearchListQuery,
+  SearchListResponse,
+  SearchRequest,
+  SearchResponse,
+} from "@/types/api";
 
 // 搜索
 export async function search(params: SearchRequest): Promise<SearchResponse> {
   return apiClient.post<SearchResponse>("/search", params);
+}
+
+export async function searchList(query: SearchListQuery = {}): Promise<SearchListResponse> {
+  return apiClient.get<SearchListResponse>("/search", { query: query as Record<string, unknown> });
+}
+
+export async function getHotSearch(query: HotSearchQuery = {}): Promise<HotSearchItem[]> {
+  return apiClient.get<HotSearchItem[]>("/search/hot", { query: query as Record<string, unknown> });
 }
 
 export async function getSearchHistory(params: { limit?: number } = {}): Promise<SearchHistoryItem[]> {

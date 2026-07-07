@@ -3,7 +3,27 @@
 export type { LoginRequest, LoginResponse, User } from "./auth";
 
 // Document types
-export type { DocumentDto, DocumentDetail, DocumentListResponse, DocumentQuery, DocumentUpdateData, DocumentTag } from "./documents";
+export type {
+  DocumentBatchAction,
+  DocumentBatchOperationRequest,
+  DocumentBatchOperationResponse,
+  DocumentBatchOperationResult,
+  DocumentBatchPermissionUpdateRequest,
+  DocumentDetail,
+  DocumentDto,
+  DocumentListQuery,
+  DocumentListResponse,
+  DocumentPermissionEntry,
+  DocumentPermissionResponse,
+  DocumentPermissionScope,
+  DocumentPermissionUpdateRequest,
+  DocumentQuery,
+  DocumentStatus,
+  DocumentTag,
+  DocumentUpdateData,
+  PermissionMode,
+  PermissionSubjectType,
+} from "./documents";
 
 // Folder types
 export type { Folder, CreateFolderData, UpdateFolderData } from "./folders";
@@ -47,7 +67,20 @@ export type {
 } from "./qa";
 
 // Search types
-export type { SearchHit, SearchResponse, SearchRequest, SearchHistoryItem, SearchMode, SearchSortBy } from "./search";
+export type {
+  HotSearchItem,
+  HotSearchQuery,
+  SearchEventRequest,
+  SearchEventType,
+  SearchHit,
+  SearchHistoryItem,
+  SearchListQuery,
+  SearchListResponse,
+  SearchMode,
+  SearchRequest,
+  SearchResponse,
+  SearchSortBy,
+} from "./search";
 
 // User types
 export type { User as UserType, CreateUserData, UpdateUserData } from "./users";

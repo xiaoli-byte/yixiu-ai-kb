@@ -1,11 +1,22 @@
 import { apiClient } from "../client";
+import type {
+  DocumentBatchOperationRequest,
+  DocumentBatchOperationResponse,
+  DocumentBatchPermissionUpdateRequest,
+  DocumentDetail,
+  DocumentListResponse,
+  DocumentPermissionResponse,
+  DocumentPermissionUpdateRequest,
+  DocumentQuery,
+  DocumentUpdateData,
+} from "@/types/api";
 
-// 请求配置类型
+// Request config type
 interface RequestConfig {
   query?: Record<string, unknown>;
 }
 
-// 获取文档列表
+// Get document list
 export async function getDocuments(query?: DocumentQuery): Promise<DocumentListResponse> {
   const config: RequestConfig = {};
   if (query) {
@@ -14,35 +25,63 @@ export async function getDocuments(query?: DocumentQuery): Promise<DocumentListR
   return apiClient.get<DocumentListResponse>("/documents", config);
 }
 
-// 获取文档详情
+// Get document detail
 export async function getDocument(id: string): Promise<DocumentDetail> {
   return apiClient.get<DocumentDetail>(`/documents/${id}`);
 }
 
-// 更新文档
+export async function getDocumentPermissions(id: string): Promise<DocumentPermissionResponse> {
+  return apiClient.get<DocumentPermissionResponse>(`/documents/${id}/permissions`);
+}
+
+export async function setDocumentPermissions(
+  id: string,
+  body: DocumentPermissionUpdateRequest
+): Promise<DocumentPermissionResponse> {
+  return apiClient.put<DocumentPermissionResponse>(`/documents/${id}/permissions`, body);
+}
+
+export async function setBatchDocumentPermissions(
+  body: DocumentBatchPermissionUpdateRequest
+): Promise<DocumentBatchOperationResponse> {
+  return apiClient.put<DocumentBatchOperationResponse>("/documents/batch/permissions", body);
+}
+
+export const setBatchPermissions = setBatchDocumentPermissions;
+
+export async function batchDocuments(
+  body: DocumentBatchOperationRequest
+): Promise<DocumentBatchOperationResponse> {
+  return apiClient.post<DocumentBatchOperationResponse>("/documents/batch", body);
+}
+
+export async function retryDocumentParse(id: string): Promise<void> {
+  return apiClient.post<void>(`/documents/${id}/parse/retry`);
+}
+
+export const retryParse = retryDocumentParse;
+
+// Update document
 export async function updateDocument(id: string, data: DocumentUpdateData): Promise<void> {
   return apiClient.patch(`/documents/${id}`, data);
 }
 
-// 删除文档
+// Delete document
 export async function deleteDocument(id: string): Promise<void> {
   return apiClient.delete(`/documents/${id}`);
 }
 
-// 上传文档
+// Upload document
 export async function uploadDocument(formData: FormData): Promise<void> {
   return apiClient.post("/documents/upload", formData);
 }
 
-// 添加标签
+// Add tag
 export async function addDocumentTag(docId: string, tagId: string): Promise<void> {
   return apiClient.post(`/documents/${docId}/tags/${tagId}`);
 }
 
-// 移除标签
+// Remove tag
 export async function removeDocumentTag(docId: string, tagId: string): Promise<void> {
   return apiClient.delete(`/documents/${docId}/tags/${tagId}`);
 }
-
-// 导入类型
-import type { DocumentDto, DocumentDetail, DocumentListResponse, DocumentQuery, DocumentUpdateData } from "@/types/api";

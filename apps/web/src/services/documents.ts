@@ -1,32 +1,72 @@
 import {
-  getDocuments as getDocsApi,
-  getDocument as getDocApi,
-  updateDocument as updateDocApi,
-  deleteDocument as deleteDocApi,
-  uploadDocument as uploadDocApi,
   addDocumentTag as addTagApi,
+  batchDocuments as batchDocumentsApi,
+  deleteDocument as deleteDocApi,
+  getDocument as getDocApi,
+  getDocumentPermissions as getPermissionsApi,
+  getDocuments as getDocsApi,
   removeDocumentTag as removeTagApi,
+  retryDocumentParse as retryDocumentParseApi,
+  retryParse as retryParseApi,
+  setBatchDocumentPermissions as setBatchDocumentPermissionsApi,
+  setBatchPermissions as setBatchPermissionsApi,
+  setDocumentPermissions as setPermissionsApi,
+  updateDocument as updateDocApi,
+  uploadDocument as uploadDocApi,
 } from "@/lib/api/endpoints/documents";
 
-// 类型
 export type {
-  DocumentDto,
+  DocumentBatchAction,
+  DocumentBatchOperationRequest,
+  DocumentBatchOperationResponse,
+  DocumentBatchOperationResult,
+  DocumentBatchPermissionUpdateRequest,
   DocumentDetail,
+  DocumentDto,
+  DocumentListQuery,
   DocumentListResponse,
+  DocumentPermissionEntry,
+  DocumentPermissionResponse,
+  DocumentPermissionScope,
+  DocumentPermissionUpdateRequest,
   DocumentQuery,
-  DocumentUpdateData,
+  DocumentStatus,
   DocumentTag,
+  DocumentUpdateData,
+  PermissionMode,
+  PermissionSubjectType,
 } from "@/types/api";
 
-// 导出 API 函数
 export const list = getDocsApi;
 export const get = getDocApi;
+export const getPermissions = getPermissionsApi;
+export const setPermissions = setPermissionsApi;
+export const setBatchDocumentPermissions = setBatchDocumentPermissionsApi;
+export const setBatchPermissions = setBatchPermissionsApi;
+export const batchDocuments = batchDocumentsApi;
+export const retryDocumentParse = retryDocumentParseApi;
+export const retryParse = retryParseApi;
 export const update = updateDocApi;
 export const remove = deleteDocApi;
 export const upload = uploadDocApi;
 export const addTag = addTagApi;
 export const removeTag = removeTagApi;
 
-// 默认导出
-const documentsApi = { list, get, update, remove, upload, addTag, removeTag };
+const documentsApi = {
+  list,
+  get,
+  getPermissions,
+  setPermissions,
+  setBatchDocumentPermissions,
+  setBatchPermissions,
+  batchDocuments,
+  retryDocumentParse,
+  retryParse,
+  update,
+  remove,
+  upload,
+  addTag,
+  removeTag,
+};
+
 export default documentsApi;

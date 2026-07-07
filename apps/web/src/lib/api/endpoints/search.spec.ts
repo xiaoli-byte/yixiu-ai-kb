@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../client";
-import { clearSearchHistory, deleteSearchHistory, getSearchHistory, search } from "./search";
+import {
+  clearSearchHistory,
+  deleteSearchHistory,
+  getHotSearch,
+  getSearchHistory,
+  search,
+  searchList,
+} from "./search";
 
 vi.mock("../client", () => ({
   apiClient: {
@@ -39,5 +46,23 @@ describe("search endpoints", () => {
     expect(apiClient.get).toHaveBeenCalledWith("/search/history", { query: { limit: 10 } });
     expect(apiClient.delete).toHaveBeenCalledWith("/search/history/history-1");
     expect(apiClient.delete).toHaveBeenCalledWith("/search/history");
+  });
+
+  it("gets search list with query params", async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ query: "risk", total: 0, hits: [], took: 1, page: 1, pageSize: 20 });
+    const query = { keyword: "risk", page: 1 };
+
+    await searchList(query);
+
+    expect(apiClient.get).toHaveBeenCalledWith("/search", { query });
+  });
+
+  it("gets hot search with query params", async () => {
+    vi.mocked(apiClient.get).mockResolvedValueOnce([]);
+    const query = { range: "week" as const, limit: 5 };
+
+    await getHotSearch(query);
+
+    expect(apiClient.get).toHaveBeenCalledWith("/search/hot", { query });
   });
 });

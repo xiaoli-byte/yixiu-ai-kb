@@ -1,23 +1,36 @@
 import {
   clearSearchHistory,
   deleteSearchHistory,
+  getHotSearch,
   getSearchHistory,
   search as searchEndpoint,
+  searchList,
 } from "@/lib/api/endpoints/search";
 
-// 类型
 export type {
+  HotSearchItem,
+  HotSearchQuery,
+  SearchEventRequest,
+  SearchEventType,
   SearchHit,
   SearchHistoryItem,
+  SearchListQuery,
+  SearchListResponse,
   SearchMode,
   SearchRequest,
   SearchResponse,
   SearchSortBy,
 } from "@/types/api";
 
-// 导出 API 函数
 export const search = searchEndpoint;
 
-// 默认导出
-const searchApi = { search, getSearchHistory, deleteSearchHistory, clearSearchHistory };
+const searchApi = {
+  search,
+  searchList,
+  getHotSearch,
+  getSearchHistory,
+  deleteSearchHistory,
+  clearSearchHistory,
+};
+
 export default searchApi;
