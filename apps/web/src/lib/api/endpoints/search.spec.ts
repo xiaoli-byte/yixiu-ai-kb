@@ -8,6 +8,10 @@ import {
   search,
   searchList,
 } from "./search";
+import {
+  getHotSearch as serviceGetHotSearch,
+  searchList as serviceSearchList,
+} from "@/services/search";
 
 vi.mock("../client", () => ({
   apiClient: {
@@ -64,5 +68,10 @@ describe("search endpoints", () => {
     await getHotSearch(query);
 
     expect(apiClient.get).toHaveBeenCalledWith("/search/hot", { query });
+  });
+
+  it("re-exports list wrappers through the search service", () => {
+    expect(serviceSearchList).toBe(searchList);
+    expect(serviceGetHotSearch).toBe(getHotSearch);
   });
 });

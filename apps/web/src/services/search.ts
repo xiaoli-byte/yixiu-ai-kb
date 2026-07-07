@@ -23,6 +23,7 @@ export type {
 } from "@/types/api";
 
 export const search = searchEndpoint;
+export { getHotSearch, searchList };
 
 const searchApi = {
   search,
