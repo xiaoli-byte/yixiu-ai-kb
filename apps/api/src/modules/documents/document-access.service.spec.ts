@@ -279,6 +279,42 @@ describe("DocumentAccessService", () => {
     expect(sql).not.toContain("folder_role.can_manage_permission,\n             d.owner_id = $3");
   });
 
+  it("wraps non-admin visibility grants in an ADMIN-scope hard boundary", () => {
+    const { service } = createService();
+
+    const fragment = service.visibleDocumentWhereSql("d", {
+      userId: "user-1",
+      tenantId: "tenant-1",
+      role: "viewer",
+      departmentId: "dept-1",
+    });
+
+    expect(fragment.sql).toMatch(
+      /\$3 = ANY\(ARRAY\['super_admin', 'admin'\]\)\s+OR \(\s+d\.permission_scope <> 'ADMIN'\s+AND COALESCE\(/,
+    );
+  });
+
+  it("returns false for every non-admin ADMIN-scope access flag before grant evaluation", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValueOnce([]);
+
+    await service.getAccessFlags(["doc-1"], {
+      userId: "user-1",
+      tenantId: "tenant-1",
+      role: "viewer",
+      departmentId: "dept-1",
+    });
+
+    const sql = db.query.mock.calls[0][0] as string;
+    expect(sql.match(/WHEN d\.permission_scope = 'ADMIN' THEN FALSE/g)).toHaveLength(5);
+    expect(sql).toMatch(
+      /WHEN \$4 = ANY\(ARRAY\['super_admin', 'admin'\]\) THEN TRUE\s+WHEN d\.permission_scope = 'ADMIN' THEN FALSE\s+ELSE COALESCE\(\s*doc_user\.can_view,/,
+    );
+    expect(sql).toMatch(
+      /WHEN \$4 = ANY\(ARRAY\['super_admin', 'admin'\]\) THEN TRUE\s+WHEN d\.permission_scope = 'ADMIN' THEN FALSE\s+ELSE COALESCE\(doc_user\.can_manage_permission,/,
+    );
+  });
+
   it("considers folder grants after explicit document grants", async () => {
     const { service, db } = createService();
     db.query.mockResolvedValueOnce([]);

@@ -129,7 +129,10 @@ export class DocumentAccessService {
         AND ${documentAlias}.deleted_at IS NULL
         AND (
           ${roleParam} = ANY(ARRAY['super_admin', 'admin'])
-          OR COALESCE(${grantExpressions.join(", ")}) = TRUE
+          OR (
+            ${documentAlias}.permission_scope <> 'ADMIN'
+            AND COALESCE(${grantExpressions.join(", ")}) = TRUE
+          )
         )
       )`,
       values,
@@ -160,6 +163,7 @@ export class DocumentAccessService {
          d.id AS document_id,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
+           WHEN d.permission_scope = 'ADMIN' THEN FALSE
            ELSE COALESCE(
              doc_user.can_view,
              doc_dept.can_view,
@@ -172,18 +176,22 @@ export class DocumentAccessService {
          END AS can_view,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
+           WHEN d.permission_scope = 'ADMIN' THEN FALSE
            ELSE COALESCE(doc_user.can_download, doc_dept.can_download, doc_role.can_download, folder_user.can_download, folder_dept.can_download, folder_role.can_download, FALSE)
          END AS can_download,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
+           WHEN d.permission_scope = 'ADMIN' THEN FALSE
            ELSE COALESCE(doc_user.can_edit, doc_dept.can_edit, doc_role.can_edit, folder_user.can_edit, folder_dept.can_edit, folder_role.can_edit, FALSE)
          END AS can_edit,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
+           WHEN d.permission_scope = 'ADMIN' THEN FALSE
            ELSE COALESCE(doc_user.can_delete, doc_dept.can_delete, doc_role.can_delete, folder_user.can_delete, folder_dept.can_delete, folder_role.can_delete, FALSE)
          END AS can_delete,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
+           WHEN d.permission_scope = 'ADMIN' THEN FALSE
            ELSE COALESCE(doc_user.can_manage_permission, doc_dept.can_manage_permission, doc_role.can_manage_permission, folder_user.can_manage_permission, folder_dept.can_manage_permission, folder_role.can_manage_permission, FALSE)
          END AS can_manage_permission
        FROM documents d
