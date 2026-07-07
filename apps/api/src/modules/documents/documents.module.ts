@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { MulterModule } from "@nestjs/platform-express";
 import { DocumentsController } from "./documents.controller";
 import { DocumentsService } from "./documents.service";
+import { DocumentAccessService } from "./document-access.service";
 import { OfficeParserService } from "./office-parser.service";
 import { FunAsrService } from "./funasr.service";
 import { OcrService } from "./ocr.service";
@@ -21,7 +22,7 @@ import { AppConfigService } from "../../config/app-config.service";
     }),
   ],
   controllers: [DocumentsController],
-  providers: [DocumentsService, OfficeParserService, FunAsrService, OcrService],
-  exports: [DocumentsService, OfficeParserService, FunAsrService, OcrService],
+  providers: [DocumentsService, DocumentAccessService, OfficeParserService, FunAsrService, OcrService],
+  exports: [DocumentsService, DocumentAccessService, OfficeParserService, FunAsrService, OcrService],
 })
 export class DocumentsModule {}
