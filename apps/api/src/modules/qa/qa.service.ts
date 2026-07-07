@@ -63,6 +63,7 @@ type QaUserInput =
 export class QaService {
   private readonly logger = new Logger(QaService.name);
   private readonly HISTORY_LIMIT = 12;
+  private readonly MAX_QA_RECALL_CANDIDATES = 50;
   private readonly FOLLOW_UP_PATTERN =
     /(他|她|它|他们|她们|它们|这个|那个|这些|那些|上述|上面|前面|刚才|之前|此|该|其|其中|继续|详细|展开|再说|还有|做过哪些|哪些项目|什么项目|相关项目|项目经历|经历呢|优势呢|缺点呢|区别|对比)/;
   private readonly SHORT_FOLLOW_UP_PATTERN =
@@ -274,7 +275,7 @@ export class QaService {
       await this.access.assertDocumentAccess(
         doc.id,
         "VIEW",
-        this.toDocumentUserContext(tenantId, user),
+        await this.buildDocumentUserContext(tenantId, user),
       );
     }
     if (!doc) throw new ForbiddenException("文档不存在");
@@ -291,7 +292,7 @@ export class QaService {
       await this.access.assertDocumentAccess(
         doc.id,
         "DOWNLOAD",
-        this.toDocumentUserContext(tenantId, user),
+        await this.buildDocumentUserContext(tenantId, user),
       );
     }
     if (!doc) throw new ForbiddenException("Document not found");
@@ -308,7 +309,7 @@ export class QaService {
       await this.access.assertDocumentAccess(
         doc.id,
         "VIEW",
-        this.toDocumentUserContext(tenantId, user),
+        await this.buildDocumentUserContext(tenantId, user),
       );
     }
     if (!doc) throw new ForbiddenException("文档不存在");
@@ -329,7 +330,7 @@ export class QaService {
 
   private async findDocumentOrCanonicalUpload(id: string, tenantId: string) {
     const direct = await this.prisma.document.findFirst({
-      where: { id, tenantId },
+      where: { id, tenantId, deletedAt: null },
     });
     if (direct) return direct;
 
@@ -342,7 +343,7 @@ export class QaService {
     if (!row?.canonical_document_id) return null;
 
     return this.prisma.document.findFirst({
-      where: { id: row.canonical_document_id, tenantId },
+      where: { id: row.canonical_document_id, tenantId, deletedAt: null },
     });
   }
 
@@ -389,7 +390,7 @@ export class QaService {
         historyText: this.formatRecentHistoryForRewrite(chatHistory),
       });
       runRetrievalQuery = runRoute.retrievalQuery;
-      const actor = this.toDocumentUserContext(
+      const actor = await this.buildDocumentUserContext(
         opts.tenantId,
         opts.user ?? {
           userId: opts.userId,
@@ -397,17 +398,21 @@ export class QaService {
           departmentId: opts.departmentId,
         },
       );
+      const requestedTopK = opts.topK || 5;
+      const recallTopK = this.recallSearchTopK(requestedTopK);
 
       // 2. RAG 检索
       const { hits, hasRelevantResults } = await this.search.search({
         q: runRoute.retrievalQuery,
         mode: "hybrid",
-        topK: opts.topK || 5,
+        topK: recallTopK,
         user: actor,
       });
 
-      const topHits = hits.slice(0, opts.topK || 5);
-      const filteredHits = await this.filterRecallHits(topHits, opts.tenantId, actor);
+      const candidateHits = hits.slice(0, recallTopK);
+      const filteredHits = (
+        await this.filterRecallHits(candidateHits, opts.tenantId, actor)
+      ).slice(0, requestedTopK);
       runTopHits = filteredHits;
 
       // 构建 citations（延迟到 LLM 完成后才发送）
@@ -422,7 +427,7 @@ export class QaService {
         page: h.page,
       }));
 
-      const hasFilteredRelevantResults = hasRelevantResults && filteredHits.length > 0;
+      const hasFilteredRelevantResults = filteredHits.length > 0;
       if (!hasFilteredRelevantResults) {
         // 无检索结果时，通知前端但不立即返回
         // 仍调用 LLM 生成有帮助的回复（基于通用知识）
@@ -464,7 +469,7 @@ export class QaService {
       ];
 
       this.logger.debug(
-        `ask: domain=${runRoute.domain} intent=${runRoute.intent} facts=${runFacts.length} tool=${runToolResult?.name || "none"} hits=${filteredHits.length}/${topHits.length}, history=${chatHistory.length}, contextual=${usedContext}, hasRelevant=${hasFilteredRelevantResults}, query="${this.compactText(runRetrievalQuery, 120)}"`,
+        `ask: domain=${runRoute.domain} intent=${runRoute.intent} facts=${runFacts.length} tool=${runToolResult?.name || "none"} hits=${filteredHits.length}/${candidateHits.length}, history=${chatHistory.length}, contextual=${usedContext}, hasRelevant=${hasFilteredRelevantResults}, searchRelevant=${hasRelevantResults}, query="${this.compactText(runRetrievalQuery, 120)}"`,
       );
 
       // 6. 创建/更新会话
@@ -935,13 +940,38 @@ export class QaService {
     return this.compactText(unique.join(" ") || text, 120);
   }
 
-  private toDocumentUserContext(tenantId: string, user?: QaUserInput): DocumentUserContext {
+  private recallSearchTopK(requestedTopK: number) {
+    const normalized = Math.max(1, Math.trunc(requestedTopK || 5));
+    return Math.min(
+      Math.max(normalized * 3, normalized + 10),
+      this.MAX_QA_RECALL_CANDIDATES,
+    );
+  }
+
+  private async buildDocumentUserContext(
+    tenantId: string,
+    user?: QaUserInput,
+  ): Promise<DocumentUserContext> {
     const raw = typeof user === "string" ? { userId: user } : (user ?? {});
+    const userId = raw.userId ?? raw.sub ?? raw.id ?? this.db.userId ?? "";
+    const userTenantId = raw.tenantId ?? tenantId ?? this.db.tenantId ?? "";
+    let role = raw.role ?? (this.db as any).role ?? "viewer";
+    let departmentId = raw.departmentId ?? null;
+
+    if (userId && userTenantId) {
+      const storedUser = await this.prisma.user.findFirst({
+        where: { id: userId, tenantId: userTenantId },
+        select: { role: true, departmentId: true },
+      });
+      role = raw.role ?? (this.db as any).role ?? storedUser?.role ?? role;
+      departmentId = raw.departmentId ?? storedUser?.departmentId ?? null;
+    }
+
     return {
-      userId: raw.userId ?? raw.sub ?? raw.id ?? this.db.userId ?? "",
-      tenantId: raw.tenantId ?? tenantId ?? this.db.tenantId ?? "",
-      role: raw.role ?? (this.db as any).role ?? "viewer",
-      departmentId: raw.departmentId ?? (this.db as any).departmentId ?? null,
+      userId,
+      tenantId: userTenantId,
+      role,
+      departmentId,
     };
   }
 

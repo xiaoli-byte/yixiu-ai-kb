@@ -69,12 +69,14 @@ function createService() {
     document: {
       findFirst: vi.fn(),
     },
+    user: {
+      findFirst: vi.fn().mockResolvedValue({ role: "viewer", departmentId: "dept-1" }),
+    },
   };
   const db = {
     tenantId: "tenant-1",
     userId: "user-1",
     role: "viewer",
-    departmentId: "dept-1",
     query: vi.fn().mockResolvedValue([]),
     queryOne: vi.fn(),
   };
@@ -255,7 +257,7 @@ describe("QaService no-result suggestions", () => {
 
 describe("QaService recall permission filtering", () => {
   it("filters inaccessible and AI-disabled documents before context, facts, citations, and run chunks", async () => {
-    const { service, db, search, access, llm, ragRouter, ragFacts } = createService();
+    const { service, prisma, db, search, access, llm, ragRouter, ragFacts } = createService();
     const route = createRoute("pricing automation CRM");
     route.requiresFacts = true;
     route.profile.factEntityTypes = ["project"];
@@ -307,6 +309,7 @@ describe("QaService recall permission filtering", () => {
     await service.ask({
       userId: "user-1",
       tenantId: "tenant-1",
+      user: { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
       question: "pricing automation CRM",
       topK: 5,
       onChunk: vi.fn(),
@@ -317,6 +320,11 @@ describe("QaService recall permission filtering", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.user.findFirst).toHaveBeenCalledWith({
+      where: { id: "user-1", tenantId: "tenant-1" },
+      select: { role: true, departmentId: true },
+    });
     expect(search.search).toHaveBeenCalledWith(
       expect.objectContaining({
         user: expect.objectContaining({
@@ -357,6 +365,79 @@ describe("QaService recall permission filtering", () => {
         chunks: [expect.objectContaining({ documentId: "doc-allowed" })],
       }),
     );
+  });
+
+  it("over-fetches before filtering so later accessible AI-enabled hits can be used", async () => {
+    const { service, db, search, access, llm } = createService();
+    const aiDisabled = createHit({
+      chunkId: "chunk-ai-disabled",
+      documentId: "doc-ai-disabled",
+      text: "ai disabled first hit",
+    });
+    const denied = createHit({
+      chunkId: "chunk-denied",
+      documentId: "doc-denied",
+      text: "denied second hit",
+    });
+    const laterAllowed = createHit({
+      chunkId: "chunk-later-allowed",
+      documentId: "doc-later-allowed",
+      contentId: "content-later-allowed",
+      documentTitle: "Later Allowed Handbook",
+      text: "later allowed chunk text",
+    });
+    search.search.mockResolvedValueOnce({
+      hits: [aiDisabled, denied, laterAllowed],
+      took: 1,
+      hasRelevantResults: true,
+    });
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-ai-disabled": accessFlags(true),
+      "doc-denied": accessFlags(false),
+      "doc-later-allowed": accessFlags(true),
+    });
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("ai_reference_enabled")) {
+        return [
+          { id: "doc-ai-disabled", aiReferenceEnabled: false },
+          { id: "doc-denied", aiReferenceEnabled: true },
+          { id: "doc-later-allowed", aiReferenceEnabled: true },
+        ];
+      }
+      return [];
+    });
+    const onCitations = vi.fn();
+    const onNoResults = vi.fn();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      question: "pricing automation CRM",
+      topK: 2,
+      onChunk: vi.fn(),
+      onCitations,
+      onNoResults,
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(search.search).toHaveBeenCalledWith(
+      expect.objectContaining({ topK: expect.any(Number) }),
+    );
+    expect(search.search.mock.calls[0][0].topK).toBeGreaterThan(2);
+    expect(onNoResults).not.toHaveBeenCalled();
+    expect(onCitations).toHaveBeenCalledWith([
+      expect.objectContaining({
+        documentId: "doc-later-allowed",
+        snippet: "later allowed chunk text",
+      }),
+    ]);
+    const messages = llm.streamChat.mock.calls[0][0] as Array<{ content: string }>;
+    const prompt = messages.map((message) => message.content).join("\n");
+    expect(prompt).toContain("later allowed chunk text");
+    expect(prompt).not.toContain("ai disabled first hit");
+    expect(prompt).not.toContain("denied second hit");
   });
 
   it("treats recall as no-results and emits no citations when every hit is filtered out", async () => {
@@ -435,8 +516,19 @@ describe("QaService document route access", () => {
       });
     db.queryOne.mockResolvedValueOnce({ canonical_document_id: "doc-canonical" });
 
-    await service.getDocumentPresignedUrl("content-1", "tenant-1", "user-1");
+    await service.getDocumentPresignedUrl(
+      "content-1",
+      "tenant-1",
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
 
+    expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.document.findFirst).toHaveBeenNthCalledWith(1, {
+      where: { id: "content-1", tenantId: "tenant-1", deletedAt: null },
+    });
+    expect(prisma.document.findFirst).toHaveBeenNthCalledWith(2, {
+      where: { id: "doc-canonical", tenantId: "tenant-1", deletedAt: null },
+    });
     expect(access.assertDocumentAccess).toHaveBeenCalledWith(
       "doc-canonical",
       "VIEW",
@@ -449,18 +541,25 @@ describe("QaService document route access", () => {
     );
   });
 
-  it("requires VIEW access before reading markdown content", async () => {
-    const { service, prisma, storage, access } = createService();
-    prisma.document.findFirst.mockResolvedValueOnce({
-      id: "doc-md",
-      tenantId: "tenant-1",
-      title: "Notes.md",
-      mime: "text/markdown",
-      storageKey: "objects/notes.md",
-    });
+  it("requires VIEW access on canonical markdown content before reading it", async () => {
+    const { service, prisma, db, storage, access } = createService();
+    prisma.document.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "doc-md",
+        tenantId: "tenant-1",
+        title: "Notes.md",
+        mime: "text/markdown",
+        storageKey: "objects/notes.md",
+      });
+    db.queryOne.mockResolvedValueOnce({ canonical_document_id: "doc-md" });
     storage.getObject.mockResolvedValueOnce(Buffer.from("# Notes"));
 
-    await service.getDocumentMarkdown("doc-md", "tenant-1", "user-1");
+    await service.getDocumentMarkdown(
+      "content-md",
+      "tenant-1",
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
 
     expect(access.assertDocumentAccess).toHaveBeenCalledWith(
       "doc-md",
@@ -470,19 +569,26 @@ describe("QaService document route access", () => {
     expect(storage.getObject).toHaveBeenCalledWith("objects/notes.md");
   });
 
-  it("requires DOWNLOAD access before opening the original file stream", async () => {
-    const { service, prisma, storage, access } = createService();
-    prisma.document.findFirst.mockResolvedValueOnce({
-      id: "doc-file",
-      tenantId: "tenant-1",
-      title: "Report.pdf",
-      mime: "application/pdf",
-      storageKey: "objects/report.pdf",
-    });
+  it("requires DOWNLOAD access on canonical file content before opening the stream", async () => {
+    const { service, prisma, db, storage, access } = createService();
+    prisma.document.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: "doc-file",
+        tenantId: "tenant-1",
+        title: "Report.pdf",
+        mime: "application/pdf",
+        storageKey: "objects/report.pdf",
+      });
+    db.queryOne.mockResolvedValueOnce({ canonical_document_id: "doc-file" });
     access.assertDocumentAccess.mockRejectedValueOnce(new ForbiddenException("denied"));
 
     await expect(
-      service.getDocumentFile("doc-file", "tenant-1", "user-1" as any),
+      service.getDocumentFile(
+        "content-file",
+        "tenant-1",
+        { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(access.assertDocumentAccess).toHaveBeenCalledWith(
