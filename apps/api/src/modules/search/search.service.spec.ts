@@ -159,12 +159,22 @@ describe("Document/search database PRD shape", () => {
       "apps/api/src/database/prisma/migrations/0007_document_search_management/migration.sql",
       "utf8",
     );
+    const service = readFileSync("apps/api/src/modules/search/search.service.ts", "utf8");
 
+    expect(service).toContain('import type { SearchSortBy } from "@ai-knowledge/schemas";');
+    expect(service).not.toContain("export type SearchSortBy =");
+    expect(schema).toMatch(/permissionScope\s+String\s+@default\("PRIVATE"\)\s+@map\("permission_scope"\)\s+@db\.VarChar\(30\)/);
+    expect(schema).toContain('@@index([documentId], map: "document_permissions_document_idx")');
+    expect(schema).toContain('@@index([folderId], map: "folder_permissions_folder_idx")');
     expect(schema).toContain('documentId  String?  @map("document_id")');
     expect(schema).toContain('contentId   String?  @map("content_id")');
     expect(schema).toContain('chunkId     String?  @map("chunk_id")');
     expect(schema).not.toContain("@@unique([tenantId, keyword, categoryId]");
 
+    expect(migration).toContain("document_permissions_document_idx");
+    expect(migration).toContain("ON document_permissions (document_id)");
+    expect(migration).toContain("folder_permissions_folder_idx");
+    expect(migration).toContain("ON folder_permissions (folder_id)");
     expect(migration).toContain("document_id TEXT");
     expect(migration).toContain("content_id TEXT");
     expect(migration).toContain("chunk_id TEXT");

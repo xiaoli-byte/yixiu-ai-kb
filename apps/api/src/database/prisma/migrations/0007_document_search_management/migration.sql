@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS document_permissions (
 
 CREATE INDEX IF NOT EXISTS document_permissions_tenant_document_idx
   ON document_permissions (tenant_id, document_id);
+CREATE INDEX IF NOT EXISTS document_permissions_document_idx
+  ON document_permissions (document_id);
 CREATE INDEX IF NOT EXISTS document_permissions_tenant_subject_idx
   ON document_permissions (tenant_id, subject_type, subject_id);
 
@@ -67,6 +69,8 @@ CREATE TABLE IF NOT EXISTS folder_permissions (
 
 CREATE INDEX IF NOT EXISTS folder_permissions_tenant_folder_idx
   ON folder_permissions (tenant_id, folder_id);
+CREATE INDEX IF NOT EXISTS folder_permissions_folder_idx
+  ON folder_permissions (folder_id);
 CREATE INDEX IF NOT EXISTS folder_permissions_tenant_subject_idx
   ON folder_permissions (tenant_id, subject_type, subject_id);
 

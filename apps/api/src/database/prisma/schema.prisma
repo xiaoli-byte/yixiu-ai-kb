@@ -71,7 +71,7 @@ model Document {
   status       String   @default("PENDING")
   storageKey   String   @map("storage_key")
   errorMessage String?  @map("error_message")
-  permissionScope      String    @default("PRIVATE") @map("permission_scope")
+  permissionScope      String    @default("PRIVATE") @map("permission_scope") @db.VarChar(30)
   searchable           Boolean   @default(true)
   aiReferenceEnabled   Boolean   @default(true) @map("ai_reference_enabled")
   archived             Boolean   @default(false)
@@ -119,6 +119,7 @@ model DocumentPermission {
   document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, documentId, subjectType, subjectId], map: "document_permissions_tenant_document_subject_unique")
+  @@index([documentId], map: "document_permissions_document_idx")
   @@index([tenantId, documentId], map: "document_permissions_tenant_document_idx")
   @@index([tenantId, subjectType, subjectId], map: "document_permissions_tenant_subject_idx")
   @@map("document_permissions")
@@ -145,6 +146,7 @@ model FolderPermission {
   folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, folderId, subjectType, subjectId], map: "folder_permissions_tenant_folder_subject_unique")
+  @@index([folderId], map: "folder_permissions_folder_idx")
   @@index([tenantId, folderId], map: "folder_permissions_tenant_folder_idx")
   @@index([tenantId, subjectType, subjectId], map: "folder_permissions_tenant_subject_idx")
   @@map("folder_permissions")

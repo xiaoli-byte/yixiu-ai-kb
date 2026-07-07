@@ -1,9 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "crypto";
+import type { SearchSortBy } from "@ai-knowledge/schemas";
 import { DatabaseService } from "../../database/database.service";
 import { EmbeddingsService } from "../embeddings/embeddings.service";
-
-export type SearchSortBy = "relevance" | "time" | "name" | "updatedAt" | "hot" | "views" | "downloads";
 
 export interface SearchHit {
   chunkId: string;
