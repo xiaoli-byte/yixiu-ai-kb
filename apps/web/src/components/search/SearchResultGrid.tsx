@@ -19,9 +19,10 @@ export function SearchResultGrid({ hits, onView, onDownload, onFavorite }: Searc
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="line-clamp-2 text-sm font-medium leading-5 text-slate-900">{hit.documentTitle}</h3>
-              <p
+              <HighlightedSnippet
                 className="mt-2 line-clamp-3 text-xs leading-5 text-slate-600"
-                dangerouslySetInnerHTML={{ __html: hit.highlight || hit.text }}
+                highlight={hit.highlight}
+                text={hit.text}
               />
             </div>
           </div>
@@ -74,6 +75,22 @@ function getFileType(hit: SearchHit) {
   if (lower.includes("presentation") || lower.includes("ppt")) return "PPTX";
   if (lower.includes("text") || lower.includes("txt")) return "TXT";
   return "FILE";
+}
+
+function HighlightedSnippet({
+  className,
+  highlight,
+  text,
+}: {
+  className: string;
+  highlight?: string | null;
+  text: string;
+}) {
+  if (highlight?.trim()) {
+    return <p className={className} dangerouslySetInnerHTML={{ __html: highlight }} />;
+  }
+
+  return <p className={className}>{text}</p>;
 }
 
 function permissionLabel(scope?: string | null) {

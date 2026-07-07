@@ -23,9 +23,10 @@ export function SearchResultList({ hits, onView, onDownload, onFavorite }: Searc
           <FileBadge hit={hit} />
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-medium text-slate-900">{hit.documentTitle}</h3>
-            <p
+            <HighlightedSnippet
               className="mt-1 line-clamp-2 text-xs leading-5 text-slate-600"
-              dangerouslySetInnerHTML={{ __html: hit.highlight || hit.text }}
+              highlight={hit.highlight}
+              text={hit.text}
             />
             <ResultMeta hit={hit} />
           </div>
@@ -88,6 +89,22 @@ function ResultActions({ hit, onView, onDownload, onFavorite }: ResultActionProp
       </button>
     </div>
   );
+}
+
+function HighlightedSnippet({
+  className,
+  highlight,
+  text,
+}: {
+  className: string;
+  highlight?: string | null;
+  text: string;
+}) {
+  if (highlight?.trim()) {
+    return <p className={className} dangerouslySetInnerHTML={{ __html: highlight }} />;
+  }
+
+  return <p className={className}>{text}</p>;
 }
 
 function getFileType(hit: SearchHit) {

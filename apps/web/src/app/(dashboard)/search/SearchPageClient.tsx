@@ -81,17 +81,13 @@ export default function SearchPageClient() {
   const [hotLoading, setHotLoading] = useState(false);
   const [historyItems, setHistoryItems] = useState<SearchHistoryItem[]>([]);
   const lastQueryKey = useRef("");
+  const requestSeq = useRef(0);
+  const paramsKey = searchParams.toString();
 
   const hasActiveFilter = useMemo(() => {
-    return Boolean(
-      filters.fileType ||
-        filters.updateTimeRange ||
-        filters.categoryId ||
-        filters.tagId ||
-        filters.permissionScope,
-    );
+    return Object.values(filters).some(isMeaningfulFilterValue);
   }, [filters]);
-  const showResults = keyword.trim().length > 0 || hasActiveFilter;
+  const showResults = keyword.trim().length > 0 || advancedOpen;
 
   const replaceUrl = useCallback(
     (next: {
@@ -108,7 +104,10 @@ export default function SearchPageClient() {
 
       if (nextKeyword.trim()) params.set("keyword", nextKeyword.trim());
       if (nextFilters.fileType) params.set("fileType", nextFilters.fileType);
-      if (nextFilters.updateTimeRange) params.set("updateTimeRange", nextFilters.updateTimeRange);
+      const updateTimeRange = nextFilters.updateTimeRange;
+      if (updateTimeRange && isMeaningfulFilterValue(updateTimeRange)) {
+        params.set("updateTimeRange", updateTimeRange);
+      }
       if (nextFilters.categoryId) params.set("categoryId", nextFilters.categoryId);
       if (nextFilters.tagId) params.set("tagId", nextFilters.tagId);
       if (nextFilters.permissionScope) params.set("permissionScope", nextFilters.permissionScope);
@@ -145,11 +144,22 @@ export default function SearchPageClient() {
   const runSearch = useCallback(
     async (nextKeyword = keyword, nextFilters = filters, nextSort = sort, nextViewMode = viewMode) => {
       const trimmedKeyword = nextKeyword.trim();
+      if (!trimmedKeyword) {
+        setResult(null);
+        setHits([]);
+        setError(null);
+        setLoading(false);
+        lastQueryKey.current = "";
+        return;
+      }
+
       const query: SearchListQuery = {
-        keyword: trimmedKeyword || undefined,
-        q: trimmedKeyword || undefined,
+        keyword: trimmedKeyword,
+        q: trimmedKeyword,
         fileType: nextFilters.fileType || undefined,
-        updateTimeRange: nextFilters.updateTimeRange || undefined,
+        updateTimeRange: isMeaningfulFilterValue(nextFilters.updateTimeRange)
+          ? nextFilters.updateTimeRange
+          : undefined,
         categoryId: nextFilters.categoryId || undefined,
         tagId: nextFilters.tagId || undefined,
         permissionScope: nextFilters.permissionScope as DocumentPermissionScope | undefined,
@@ -163,20 +173,25 @@ export default function SearchPageClient() {
       if (queryKey === lastQueryKey.current) return;
       lastQueryKey.current = queryKey;
 
+      const requestId = ++requestSeq.current;
       setLoading(true);
       setError(null);
       try {
         const response = await searchApi.searchList(query);
+        if (requestId !== requestSeq.current) return;
         setResult(response);
         setHits(response.hits);
         if (trimmedKeyword) void loadHistory();
       } catch (cause) {
+        if (requestId !== requestSeq.current) return;
         lastQueryKey.current = "";
         setResult(null);
         setHits([]);
         setError(cause instanceof Error ? cause.message : "搜索失败，请稍后重试");
       } finally {
-        setLoading(false);
+        if (requestId === requestSeq.current) {
+          setLoading(false);
+        }
       }
     },
     [filters, keyword, loadHistory, sort, viewMode],
@@ -191,7 +206,24 @@ export default function SearchPageClient() {
   }, [hotRange, loadHotSearch]);
 
   useEffect(() => {
-    if (showResults) {
+    const next = parseParams(new URLSearchParams(paramsKey));
+    setInputValue(next.keyword);
+    setKeyword(next.keyword);
+    setFilters(next.filters);
+    setSort(next.sort);
+    setViewMode(next.viewMode);
+    if (!next.keyword.trim()) {
+      requestSeq.current += 1;
+      lastQueryKey.current = "";
+      setResult(null);
+      setHits([]);
+      setError(null);
+      setLoading(false);
+    }
+  }, [paramsKey]);
+
+  useEffect(() => {
+    if (showResults && keyword.trim()) {
       void runSearch(keyword, filters, sort, viewMode);
     }
   }, [filters, keyword, runSearch, showResults, sort, viewMode]);
@@ -226,6 +258,7 @@ export default function SearchPageClient() {
     setInputValue("");
     setKeyword("");
     setFilters(nextFilters);
+    setSort("relevance");
     setResult(null);
     setHits([]);
     lastQueryKey.current = "";
@@ -283,8 +316,10 @@ export default function SearchPageClient() {
         item.target === "categoryId"
           ? { ...filters, categoryId: item.id, tagId: undefined }
           : { ...filters, tagId: item.id, categoryId: undefined };
+      setInputValue(item.label);
+      setKeyword(item.label);
       setFilters(nextFilters);
-      replaceUrl({ filters: nextFilters });
+      replaceUrl({ keyword: item.label, filters: nextFilters });
     },
     [filters, replaceUrl],
   );
@@ -302,10 +337,7 @@ export default function SearchPageClient() {
         hotLoading={hotLoading}
         onInputChange={setInputValue}
         onSubmit={() => submitKeyword()}
-        onAdvancedSearch={() => {
-          setAdvancedOpen(true);
-          applyFilters({ updateTimeRange: "all" });
-        }}
+        onAdvancedSearch={() => setAdvancedOpen(true)}
         onHotRangeChange={setHotRange}
         onHotSelect={handleHotSelect}
         onHistorySelect={handleHistorySelect}
@@ -366,6 +398,7 @@ export default function SearchPageClient() {
         took={result?.took}
         sort={sort}
         viewMode={viewMode}
+        permissionNotice={hits.some((hit) => hit.canDownload === false)}
         onSortChange={handleSortChange}
         onViewModeChange={handleViewModeChange}
       />
@@ -416,11 +449,21 @@ function parseParams(params: Pick<URLSearchParams, "get">): ParsedSearchParams {
   const viewMode: "list" | "grid" = params.get("viewMode") === "grid" ? "grid" : "list";
   const filters: SearchFiltersValue = {
     fileType: params.get("fileType") || undefined,
-    updateTimeRange: (params.get("updateTimeRange") as SearchFiltersValue["updateTimeRange"] | null) || undefined,
+    updateTimeRange: normalizeUpdateTimeRange(params.get("updateTimeRange")),
     categoryId: params.get("categoryId") || undefined,
     tagId: params.get("tagId") || undefined,
     permissionScope: (params.get("permissionScope") as DocumentPermissionScope | null) || undefined,
   };
 
   return { keyword, sort, viewMode, filters };
+}
+
+function isMeaningfulFilterValue(value: unknown) {
+  return Boolean(value && value !== "all");
+}
+
+function normalizeUpdateTimeRange(value: string | null): SearchFiltersValue["updateTimeRange"] | undefined {
+  if (!value || value === "all") return undefined;
+  if (value === "today" || value === "7d" || value === "30d" || value === "custom") return value;
+  return undefined;
 }

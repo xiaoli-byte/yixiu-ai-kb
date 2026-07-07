@@ -14,6 +14,8 @@ interface SearchResultsToolbarProps {
 
 const SORT_OPTIONS: Array<{ value: SearchSortBy; label: string }> = [
   { value: "relevance", label: "相关度排序" },
+  { value: "time", label: "时间排序" },
+  { value: "name", label: "名称排序" },
   { value: "updatedAt", label: "更新时间倒序" },
   { value: "hot", label: "热度排序" },
   { value: "views", label: "浏览量排序" },
