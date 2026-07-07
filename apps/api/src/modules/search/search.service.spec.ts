@@ -19,10 +19,19 @@ function createService() {
   const embeddings = {
     embedOne: vi.fn(),
   };
+  const access = {
+    visibleDocumentWhereSql: vi.fn().mockReturnValue({
+      sql: "VISIBILITY_SQL",
+      values: ["tenant-1", "user-1", "viewer"],
+    }),
+    getAccessFlags: vi.fn().mockResolvedValue({}),
+  };
+  const service = new SearchService(db as any, embeddings as any, access as any);
   return {
-    service: new SearchService(db as any, embeddings as any),
+    service,
     db,
     embeddings,
+    access,
   };
 }
 
@@ -150,6 +159,91 @@ describe("SearchService result helpers", () => {
       expect((service as any).sortHits(hits, parsedSort).map((h: SearchHit) => h.chunkId)).toEqual(["old-hot", "mid", "new-low"]);
     }
   });
+
+  it("calculates weighted hot score", () => {
+    const { service } = createService();
+
+    expect(
+      (service as any).hotScore({
+        searchCount: 2,
+        clickCount: 3,
+        viewCount: 5,
+        downloadCount: 7,
+        pinnedWeight: 11,
+      }),
+    ).toBe(62);
+  });
+});
+
+describe("SearchService permission-aware search", () => {
+  it("passes user context into SQL visibility filtering and excludes unsearchable documents", async () => {
+    const { service, db, access } = createService();
+    access.visibleDocumentWhereSql.mockReturnValueOnce({
+      sql: "VISIBILITY_SQL",
+      values: ["tenant-1", "user-2", "viewer", "dept-1"],
+    });
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-1": {
+        canView: true,
+        canDownload: true,
+        canEdit: false,
+        canDelete: false,
+        canManagePermission: false,
+      },
+    });
+    db.query.mockResolvedValueOnce([
+      {
+        chunkId: "chunk-1",
+        documentId: "doc-1",
+        contentId: "content-1",
+        documentTitle: "Risk Doc",
+        mime: "text/plain",
+        permissionScope: "COMPANY",
+        idx: 0,
+        text: "risk text",
+        highlight: "risk text",
+        rank: 0.9,
+        hotScore: 4,
+        viewCount: 2,
+        downloadCount: 1,
+        page: null,
+        updatedAt: new Date("2026-07-07T10:00:00.000Z"),
+        createdAt: new Date("2026-07-06T10:00:00.000Z"),
+      },
+    ]);
+
+    const result = await service.search({
+      q: "risk",
+      mode: "keyword",
+      topK: 10,
+      user: {
+        sub: "user-2",
+        tenantId: "tenant-1",
+        role: "viewer",
+        departmentId: "dept-1",
+      },
+    } as any);
+
+    expect(access.visibleDocumentWhereSql).toHaveBeenCalledWith(
+      "d",
+      {
+        userId: "user-2",
+        tenantId: "tenant-1",
+        role: "viewer",
+        departmentId: "dept-1",
+      },
+      expect.any(Number),
+    );
+    const sql = db.query.mock.calls[0][0] as string;
+    expect(sql).toContain("VISIBILITY_SQL");
+    expect(sql).toContain("d.searchable = TRUE");
+    expect(sql).toContain("d.archived = FALSE");
+    expect(result.hits[0]).toMatchObject({
+      documentId: "doc-1",
+      permissionScope: "COMPANY",
+      canDownload: true,
+    });
+  });
 });
 
 describe("Document/search database PRD shape", () => {
@@ -187,6 +281,140 @@ describe("Document/search database PRD shape", () => {
 });
 
 describe("SearchService history helpers", () => {
+  it("de-duplicates normalized query for a user before inserting the latest history item", async () => {
+    const { service, db } = createService();
+
+    await service.recordHistory({
+      q: "  Risk   POLICY  ",
+      mode: "hybrid",
+      sortBy: "relevance",
+      topK: 10,
+      resultCount: 2,
+      userId: "user-1",
+    });
+
+    expect(db.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining("DELETE FROM search_histories"),
+      ["tenant-1", "user-1", "risk policy"],
+    );
+    expect(db.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining("INSERT INTO search_histories"),
+      expect.arrayContaining(["tenant-1", "user-1", "risk policy", "hybrid", "relevance", 10, 2]),
+    );
+  });
+
+  it("records search events with normalized keyword and optional targets", async () => {
+    const { service, db } = createService();
+
+    await (service as any).recordSearchEvent({
+      keyword: "  Risk   POLICY  ",
+      eventType: "SEARCH",
+      resultCount: 3,
+      userId: "user-2",
+      categoryId: "cat-1",
+      documentId: "doc-1",
+      contentId: "content-1",
+      chunkId: "chunk-1",
+    });
+
+    expect(db.query).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO search_events"),
+      expect.arrayContaining([
+        "tenant-1",
+        "user-2",
+        "risk policy",
+        "cat-1",
+        "doc-1",
+        "content-1",
+        "chunk-1",
+        3,
+        "SEARCH",
+      ]),
+    );
+  });
+
+  it("filters zero-result hot terms without click, view, or download activity", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValueOnce([
+      {
+        keyword: "no results",
+        categoryId: null,
+        searchCount: 3,
+        clickCount: 0,
+        viewCount: 0,
+        downloadCount: 0,
+        resultCount: 0,
+        pinned: false,
+        pinnedWeight: 0,
+      },
+      {
+        keyword: "clicked",
+        categoryId: null,
+        searchCount: 2,
+        clickCount: 1,
+        viewCount: 0,
+        downloadCount: 0,
+        resultCount: 0,
+        pinned: false,
+        pinnedWeight: 0,
+      },
+      {
+        keyword: "resultful",
+        categoryId: null,
+        searchCount: 1,
+        clickCount: 0,
+        viewCount: 0,
+        downloadCount: 0,
+        resultCount: 5,
+        pinned: false,
+        pinnedWeight: 0,
+      },
+      {
+        keyword: "   ",
+        categoryId: null,
+        searchCount: 5,
+        clickCount: 5,
+        viewCount: 5,
+        downloadCount: 5,
+        resultCount: 5,
+        pinned: false,
+        pinnedWeight: 0,
+      },
+    ]);
+
+    await expect((service as any).listHotSearch({ range: "week", limit: "10" })).resolves.toEqual([
+      {
+        keyword: "clicked",
+        hotScore: 4,
+        searchCount: 2,
+        clickCount: 1,
+        viewCount: 0,
+        downloadCount: 0,
+        trend: "flat",
+        categoryId: null,
+        pinned: false,
+      },
+      {
+        keyword: "resultful",
+        hotScore: 1,
+        searchCount: 1,
+        clickCount: 0,
+        viewCount: 0,
+        downloadCount: 0,
+        trend: "flat",
+        categoryId: null,
+        pinned: false,
+      },
+    ]);
+    const sql = db.query.mock.calls[0][0] as string;
+    expect(sql).toContain("search_events");
+    expect(sql).toContain("hot_search_keywords");
+    expect(sql).toContain("created_at >=");
+    expect(db.query.mock.calls[0][1]).toEqual(["tenant-1", 10]);
+  });
+
   it("records and reads search history scoped to tenant and user", async () => {
     const { service, db } = createService();
     const createdAt = new Date("2026-07-07T12:00:00.000Z");

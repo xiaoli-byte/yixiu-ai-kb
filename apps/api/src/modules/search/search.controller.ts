@@ -10,6 +10,16 @@ import { CurrentUser } from "../../common/decorators/current-user.decorator";
 export class SearchController {
   constructor(private readonly search: SearchService) {}
 
+  @Get()
+  async getSearch(@Query() query: unknown, @CurrentUser() user: any) {
+    return this.search.searchList(query, user);
+  }
+
+  @Get("hot")
+  async hot(@Query() query: unknown) {
+    return this.search.listHotSearch(query);
+  }
+
   @Get("history")
   async history(
     @CurrentUser("sub") userId: string,
@@ -33,19 +43,28 @@ export class SearchController {
 
   @Post()
   @RateLimit({ ...RateLimitPolicies.search, message: "搜索请求过于频繁，请稍后再试" })
-  async handleSearch(@Body() raw: unknown, @CurrentUser("sub") userId: string) {
+  async handleSearch(@Body() raw: unknown, @CurrentUser() user: any) {
     const parsed = SearchQuery.safeParse(raw ?? {});
     if (!parsed.success) {
       return { query: "", mode: "hybrid", sortBy: "relevance", total: 0, hits: [], took: 0, error: "invalid_query" };
     }
     const { q, mode, sortBy, topK, tags } = parsed.data;
-    const { hits, took, hasRelevantResults } = await this.search.search({ q, mode, sortBy, topK, tags });
+    const { hits, took, hasRelevantResults } = await this.search.search({ q, mode, sortBy, topK, tags, user });
+    const userId = user?.sub ?? user?.userId ?? user?.id;
     await this.search.recordHistory({
       q,
       mode,
       sortBy,
       topK,
       resultCount: hits.length,
+      tenantId: user?.tenantId,
+      userId,
+    });
+    await this.search.recordSearchEvent({
+      keyword: q,
+      eventType: "SEARCH",
+      resultCount: hits.length,
+      tenantId: user?.tenantId,
       userId,
     });
     return { query: q, mode, sortBy, total: hits.length, hits, took, hasRelevantResults };

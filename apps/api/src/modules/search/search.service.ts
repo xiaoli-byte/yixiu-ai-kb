@@ -1,19 +1,31 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { randomUUID } from "crypto";
+import { HotSearchQuery, SearchListQuery } from "@ai-knowledge/schemas";
 import type { SearchSortBy } from "@ai-knowledge/schemas";
 import { DatabaseService } from "../../database/database.service";
 import { EmbeddingsService } from "../embeddings/embeddings.service";
+import {
+  DocumentAccessService,
+  type DocumentAccessFlags,
+  type DocumentUserContext,
+} from "../documents/document-access.service";
 
 export interface SearchHit {
   chunkId: string;
   documentId: string;
   contentId?: string;
   documentTitle: string;
+  permissionScope?: string;
+  canDownload?: boolean;
+  categoryPath?: string | null;
   mime: string;          // 文档 MIME 类型
   idx: number;
   text: string;
   highlight: string;
   score: number;
+  hotScore?: number;
+  viewCount?: number;
+  downloadCount?: number;
   sources: Array<"bm25" | "vector" | "trgm">;
   page: number | null;  // PDF 页码（1-based）
   updatedAt?: string | null;
@@ -29,6 +41,57 @@ export interface SearchHistoryItem {
   resultCount: number;
   createdAt: string;
 }
+
+export interface HotSearchItem {
+  keyword: string;
+  hotScore: number;
+  searchCount: number;
+  clickCount: number;
+  viewCount: number;
+  downloadCount: number;
+  trend: "up" | "down" | "flat";
+  categoryId?: string | null;
+  pinned: boolean;
+}
+
+type SearchModeValue = "hybrid" | "semantic" | "keyword";
+
+type SearchFilters = {
+  fileType?: string;
+  categoryId?: string;
+  tagId?: string;
+  tags?: string[] | string;
+  permissionScope?: string;
+  updateTimeRange?: "all" | "today" | "7d" | "30d" | "custom";
+  parseStatus?: string;
+  uploaderId?: string;
+  departmentId?: string;
+  archived?: boolean;
+  includeArchived?: boolean;
+};
+
+type SearchOptions = {
+  q: string;
+  mode: SearchModeValue;
+  sortBy?: SearchSortBy;
+  topK: number;
+  tags?: string[];
+  user?: any;
+  filters?: SearchFilters;
+};
+
+type SearchEventInput = {
+  keyword?: string;
+  q?: string;
+  eventType?: string;
+  resultCount?: number;
+  tenantId?: string;
+  userId?: string | null;
+  categoryId?: string | null;
+  documentId?: string | null;
+  contentId?: string | null;
+  chunkId?: string | null;
+};
 
 @Injectable()
 export class SearchService {
@@ -125,39 +188,42 @@ export class SearchService {
   constructor(
     private readonly db: DatabaseService,
     private readonly embeddings: EmbeddingsService,
+    private readonly access: DocumentAccessService,
   ) {}
 
-  async search(opts: {
-    q: string;
-    mode: "hybrid" | "semantic" | "keyword";
-    sortBy?: SearchSortBy;
-    topK: number;
-    tags?: string[];
-  }): Promise<{ hits: SearchHit[]; took: number; hasRelevantResults: boolean }> {
+  async search(opts: SearchOptions): Promise<{ hits: SearchHit[]; took: number; hasRelevantResults: boolean }> {
     const t0 = Date.now();
-    const tenantId = this.db.tenantId!;
+    const actor = this.toDocumentUserContext(opts.user);
+    const q = opts.q.trim();
     const k = Math.min(opts.topK || 10, 50);
     const candidateLimit = 50;
     const sortBy = opts.sortBy ?? "relevance";
+    const filters = this.normalizeSearchFilters(opts);
+
+    if (!q) {
+      return { hits: [], took: Date.now() - t0, hasRelevantResults: false };
+    }
 
     if (opts.mode === "keyword") {
-      const hits = await this.bm25(tenantId, opts.q, candidateLimit);
+      const hits = await this.bm25(actor, q, candidateLimit, filters);
       const deduped = this.deduplicateByDoc(hits, this.MAX_CHUNKS_PER_DOC);
-      const sorted = this.sortHits(deduped, sortBy).slice(0, k);
+      const accessible = await this.attachAccessFlags(deduped, actor);
+      const sorted = this.sortHits(accessible, sortBy).slice(0, k);
       return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
     }
     if (opts.mode === "semantic") {
-      const hits = await this.safeVector(tenantId, opts.q, candidateLimit);
+      const hits = await this.safeVector(actor, q, candidateLimit, filters);
       const filtered = hits.filter((h) => h.score >= this.VECTOR_THRESHOLD);
       const deduped = this.deduplicateByDoc(filtered, this.MAX_CHUNKS_PER_DOC);
-      const sorted = this.sortHits(deduped, sortBy).slice(0, k);
+      const accessible = await this.attachAccessFlags(deduped, actor);
+      const sorted = this.sortHits(accessible, sortBy).slice(0, k);
       return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
     }
 
     // hybrid - 多策略检索：BM25 精确 + 向量 + trigram 兜底
     const [bm25Hits, vecHits] = await Promise.all([
-      this.bm25(tenantId, opts.q, candidateLimit),
-      this.safeVector(tenantId, opts.q, candidateLimit),
+      this.bm25(actor, q, candidateLimit, filters),
+      this.safeVector(actor, q, candidateLimit, filters),
     ]);
 
     // 向量结果过滤低分（阈值降低以提高召回）
@@ -169,14 +235,15 @@ export class SearchService {
     // 如果 RRF 结果为空，使用 trigram 模糊搜索作为兜底
     if (rrf.length === 0) {
       this.logger.debug("RRF 无结果，触发 trigram 兜底检索");
-      const trgmHits = await this.trgmSearch(tenantId, opts.q, candidateLimit);
+      const trgmHits = await this.trgmSearch(actor, q, candidateLimit, filters);
       if (trgmHits.length > 0) {
         rrf = this.rrfFuseTrgm(trgmHits, this.RRF_K, candidateLimit);
       }
     }
 
     const deduped = this.deduplicateByDoc(rrf, this.MAX_CHUNKS_PER_DOC);
-    const sorted = this.sortHits(deduped, sortBy).slice(0, k);
+    const accessible = await this.attachAccessFlags(deduped, actor);
+    const sorted = this.sortHits(accessible, sortBy).slice(0, k);
 
     this.logger.debug(
       `search: bm25=${bm25Hits.length} vec=${filteredVec.length} -> rrf=${rrf.length} deduped=${deduped.length} sorted=${sorted.length}`,
@@ -207,30 +274,30 @@ export class SearchService {
    * 使用双分词器：zhparser（中文）+ simple（英文/通用）
    * 自动检测语言并选择合适的分词方式
    */
-  private async bm25(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
+  private async bm25(actor: DocumentUserContext, q: string, k: number, filters: SearchFilters): Promise<SearchHit[]> {
     const isChinese = this.containsChinese(q);
 
     if (isChinese) {
       // 1. 尝试精确分词检索
-      const exactHits = await this.bm25Chinese(tenantId, q, k);
+      const exactHits = await this.bm25Chinese(actor, q, k, filters);
       if (exactHits.length > 0) return exactHits;
 
       // 2. 无结果时，尝试扩展查询词
       const expanded = this.expandQuery(q);
       this.logger.debug(`BM25 无精确命中，扩展查询: "${q}" -> "${expanded}"`);
-      const expandedHits = await this.bm25Chinese(tenantId, expanded, k);
+      const expandedHits = await this.bm25Chinese(actor, expanded, k, filters);
       if (expandedHits.length > 0) return expandedHits;
 
       // 3. 自然问句常包含"这个/是什么/有哪些"和领域 boost 词，AND 查询过严时降级为关键词 OR 检索。
-      const keywordHits = await this.bm25KeywordFallback(tenantId, q, k);
+      const keywordHits = await this.bm25KeywordFallback(actor, q, k, filters);
       if (keywordHits.length > 0) return keywordHits;
 
       // 4. 关键词仍无结果，降级到 simple 分词（英文分词器也可处理中文字符）
-      return this.bm25English(tenantId, q, k);
+      return this.bm25English(actor, q, k, filters);
     } else {
-      const hits = await this.bm25English(tenantId, q, k);
+      const hits = await this.bm25English(actor, q, k, filters);
       if (hits.length > 0) return hits;
-      return this.bm25KeywordFallback(tenantId, q, k);
+      return this.bm25KeywordFallback(actor, q, k, filters);
     }
   }
 
@@ -298,14 +365,100 @@ export class SearchService {
       .slice(0, 8);
   }
 
-  private async bm25KeywordFallback(tenantId: string, q: string, k: number) {
+  private buildSearchQueryParts(
+    actor: DocumentUserContext,
+    initialValues: unknown[],
+    limit: number,
+    filters: SearchFilters,
+  ): { whereSql: string; values: unknown[]; limitParam: string } {
+    const values = [...initialValues];
+    const conditions: string[] = [];
+    const addValue = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+
+    const visibility = this.access.visibleDocumentWhereSql("d", actor, values.length + 1);
+    values.push(...visibility.values);
+    conditions.push(visibility.sql, "d.searchable = TRUE");
+
+    if (filters.archived === true) {
+      conditions.push("d.archived = TRUE");
+    } else if (!filters.includeArchived) {
+      conditions.push("d.archived = FALSE");
+    }
+
+    if (filters.fileType) conditions.push(`d.mime ILIKE ${addValue(`%${filters.fileType.trim()}%`)}`);
+    if (filters.permissionScope) conditions.push(`d.permission_scope = ${addValue(filters.permissionScope)}`);
+    if (filters.parseStatus) conditions.push(`COALESCE(dc.status, d.status) = ${addValue(filters.parseStatus)}`);
+    if (filters.uploaderId) conditions.push(`d.owner_id = ${addValue(filters.uploaderId)}`);
+    if (filters.departmentId) conditions.push(`u.department_id = ${addValue(filters.departmentId)}`);
+
+    const tagIds = this.normalizeTagIds(filters.tags ?? filters.tagId);
+    if (tagIds.length > 0) {
+      conditions.push(
+        `EXISTS (
+          SELECT 1
+          FROM document_tags dt_filter
+          WHERE dt_filter.document_id = d.id
+            AND dt_filter.tag_id = ANY(${addValue(tagIds)}::text[])
+        )`,
+      );
+    }
+
+    if (filters.updateTimeRange === "today") {
+      conditions.push("d.updated_at >= date_trunc('day', NOW())");
+    } else if (filters.updateTimeRange === "7d") {
+      conditions.push("d.updated_at >= NOW() - INTERVAL '7 days'");
+    } else if (filters.updateTimeRange === "30d") {
+      conditions.push("d.updated_at >= NOW() - INTERVAL '30 days'");
+    }
+
+    const limitParam = addValue(limit);
+    return {
+      whereSql: conditions.map((condition) => `(${condition})`).join("\n         AND "),
+      values,
+      limitParam,
+    };
+  }
+
+  private searchMetricsSelectSql(): string {
+    return [
+      `COALESCE(metrics.hot_score, 0)::float AS "hotScore"`,
+      `COALESCE(metrics.view_count, 0)::int AS "viewCount"`,
+      `COALESCE(metrics.download_count, 0)::int AS "downloadCount"`,
+    ].join(",\n              ");
+  }
+
+  private searchMetricsJoinSql(): string {
+    return `LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*) FILTER (WHERE se.event_type = 'VIEW')::int AS view_count,
+           COUNT(*) FILTER (WHERE se.event_type = 'DOWNLOAD')::int AS download_count,
+           (
+             COUNT(*) FILTER (WHERE se.event_type = 'SEARCH') * 1 +
+             COUNT(*) FILTER (WHERE se.event_type = 'CLICK') * 2 +
+             COUNT(*) FILTER (WHERE se.event_type = 'VIEW') * 3 +
+             COUNT(*) FILTER (WHERE se.event_type = 'DOWNLOAD') * 4
+           )::float AS hot_score
+         FROM search_events se
+         WHERE se.tenant_id = d.tenant_id
+           AND (
+             se.document_id = d.id
+             OR (se.content_id IS NOT NULL AND se.content_id = COALESCE(c.content_id, dc.id))
+             OR se.chunk_id = c.id
+           )
+       ) metrics ON TRUE`;
+  }
+
+  private async bm25KeywordFallback(actor: DocumentUserContext, q: string, k: number, filters: SearchFilters) {
     const terms = this.buildKeywordTerms(q);
     if (terms.length === 0) return [];
 
     const preciseQuery = terms.slice(0, 4).join(" ");
     const preciseHits = this.containsChinese(preciseQuery)
-      ? await this.bm25Chinese(tenantId, preciseQuery, k)
-      : await this.bm25English(tenantId, preciseQuery, k);
+      ? await this.bm25Chinese(actor, preciseQuery, k, filters)
+      : await this.bm25English(actor, preciseQuery, k, filters);
     if (preciseHits.length > 0) return preciseHits;
 
     const tsQuery = terms
@@ -315,6 +468,7 @@ export class SearchService {
       .join(" | ");
     if (!tsQuery) return [];
 
+    const queryParts = this.buildSearchQueryParts(actor, [tsQuery], k, filters);
     const rows = await this.db.query<any>(
       `SELECT c.id              AS "chunkId",
               COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
@@ -324,6 +478,9 @@ export class SearchService {
               c.page            AS page,
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
+              d.permission_scope AS "permissionScope",
+              NULL::text AS "categoryPath",
+              ${this.searchMetricsSelectSql()},
               GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
               COALESCE(dc.created_at, d.created_at) AS "createdAt",
               ts_rank_cd(c.tsv_zh, to_tsquery('zhcfg', $1)) +
@@ -332,14 +489,16 @@ export class SearchService {
        FROM chunks c
        LEFT JOIN document_contents dc ON dc.id = c.content_id
        JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
-       WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
+       LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+       ${this.searchMetricsJoinSql()}
+       WHERE ${queryParts.whereSql}
          AND (
            c.tsv_zh @@ to_tsquery('zhcfg', $1)
            OR c.tsv_simple @@ to_tsquery('simple', lower($1))
          )
        ORDER BY rank DESC
-       LIMIT $3`,
-      [tsQuery, tenantId, k],
+       LIMIT ${queryParts.limitParam}`,
+      queryParts.values,
     );
     return rows.map((r) => this.mapRowToHit(r, "bm25", q));
   }
@@ -347,8 +506,9 @@ export class SearchService {
   /**
    * 中文全文检索（使用 zhparser + zhcfg 配置）
    */
-  private async bm25Chinese(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
+  private async bm25Chinese(actor: DocumentUserContext, q: string, k: number, filters: SearchFilters): Promise<SearchHit[]> {
     try {
+      const queryParts = this.buildSearchQueryParts(actor, [q], k, filters);
       const rows = await this.db.query<any>(
         `SELECT c.id              AS "chunkId",
                 COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
@@ -358,6 +518,9 @@ export class SearchService {
                 c.page            AS page,
                 COALESCE(dc.title, d.title) AS "documentTitle",
                 COALESCE(dc.mime, d.mime) AS mime,
+                d.permission_scope AS "permissionScope",
+                NULL::text AS "categoryPath",
+                ${this.searchMetricsSelectSql()},
                 GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
                 COALESCE(dc.created_at, d.created_at) AS "createdAt",
                 ts_rank_cd(c.tsv_zh, plainto_tsquery('zhcfg', $1)) AS rank,
@@ -366,23 +529,26 @@ export class SearchService {
          FROM chunks c
          LEFT JOIN document_contents dc ON dc.id = c.content_id
          JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
-         WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
+         LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+         ${this.searchMetricsJoinSql()}
+         WHERE ${queryParts.whereSql}
            AND c.tsv_zh @@ plainto_tsquery('zhcfg', $1)
          ORDER BY rank DESC
-         LIMIT $3`,
-        [q, tenantId, k],
+         LIMIT ${queryParts.limitParam}`,
+        queryParts.values,
       );
       return rows.map((r) => this.mapRowToHit(r, "bm25", q));
     } catch (e: any) {
       this.logger.warn(`中文检索失败，尝试降级到通用分词: ${e.message}`);
-      return this.bm25English(tenantId, q, k);
+      return this.bm25English(actor, q, k, filters);
     }
   }
 
   /**
    * 英文/通用全文检索（使用 simple 分词配置）
    */
-  private async bm25English(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
+  private async bm25English(actor: DocumentUserContext, q: string, k: number, filters: SearchFilters): Promise<SearchHit[]> {
+    const queryParts = this.buildSearchQueryParts(actor, [q], k, filters);
     const rows = await this.db.query<any>(
       `SELECT c.id              AS "chunkId",
               COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
@@ -392,6 +558,9 @@ export class SearchService {
               c.page            AS page,
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
+              d.permission_scope AS "permissionScope",
+              NULL::text AS "categoryPath",
+              ${this.searchMetricsSelectSql()},
               GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
               COALESCE(dc.created_at, d.created_at) AS "createdAt",
               ts_rank_cd(c.tsv_simple, plainto_tsquery('simple', lower($1))) AS rank,
@@ -400,11 +569,13 @@ export class SearchService {
        FROM chunks c
        LEFT JOIN document_contents dc ON dc.id = c.content_id
        JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
-       WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
+       LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+       ${this.searchMetricsJoinSql()}
+       WHERE ${queryParts.whereSql}
          AND c.tsv_simple @@ plainto_tsquery('simple', lower($1))
        ORDER BY rank DESC
-       LIMIT $3`,
-      [q, tenantId, k],
+       LIMIT ${queryParts.limitParam}`,
+      queryParts.values,
     );
     return rows.map((r) => this.mapRowToHit(r, "bm25", q));
   }
@@ -412,9 +583,10 @@ export class SearchService {
   /**
    * 向量检索
    */
-  private async vector(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
+  private async vector(actor: DocumentUserContext, q: string, k: number, filters: SearchFilters): Promise<SearchHit[]> {
     const embedding = await this.embeddings.embedOne(q, "query");
     const vec = `[${embedding.join(",")}]`;
+    const queryParts = this.buildSearchQueryParts(actor, [vec], k, filters);
     const rows = await this.db.query<any>(
       `SELECT c.id              AS "chunkId",
               COALESCE(dc.canonical_document_id, c.document_id) AS "documentId",
@@ -424,16 +596,22 @@ export class SearchService {
               c.page            AS page,
               COALESCE(dc.title, d.title) AS "documentTitle",
               COALESCE(dc.mime, d.mime) AS mime,
+              d.permission_scope AS "permissionScope",
+              NULL::text AS "categoryPath",
+              ${this.searchMetricsSelectSql()},
               GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
               COALESCE(dc.created_at, d.created_at) AS "createdAt",
               1 - (c.embedding <=> $1::vector) AS similarity
        FROM chunks c
        LEFT JOIN document_contents dc ON dc.id = c.content_id
        JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
-       WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2 AND c.embedding IS NOT NULL
+       LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+       ${this.searchMetricsJoinSql()}
+       WHERE ${queryParts.whereSql}
+         AND c.embedding IS NOT NULL
        ORDER BY c.embedding <=> $1::vector
-       LIMIT $3`,
-      [vec, tenantId, k],
+       LIMIT ${queryParts.limitParam}`,
+      queryParts.values,
     );
     return rows.map((r) => ({
       chunkId: r.chunkId,
@@ -441,10 +619,16 @@ export class SearchService {
       contentId: r.contentId,
       documentTitle: r.documentTitle,
       mime: r.mime,
+      permissionScope: r.permissionScope,
+      canDownload: false,
+      categoryPath: r.categoryPath ?? null,
       idx: r.idx,
       text: r.text,
       highlight: this.buildSafeHighlight(r.text, q),
       score: Number(r.similarity) || 0,
+      hotScore: Number(r.hotScore) || 0,
+      viewCount: Number(r.viewCount) || 0,
+      downloadCount: Number(r.downloadCount) || 0,
       sources: ["vector"] as const,
       page: r.page ?? null,
       updatedAt: this.toIsoString(r.updatedAt),
@@ -452,9 +636,9 @@ export class SearchService {
     }));
   }
 
-  private async safeVector(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
+  private async safeVector(actor: DocumentUserContext, q: string, k: number, filters: SearchFilters): Promise<SearchHit[]> {
     try {
-      return await this.vector(tenantId, q, k);
+      return await this.vector(actor, q, k, filters);
     } catch (e: any) {
       this.logger.warn(`向量检索失败，降级为关键词/模糊检索: ${e.message}`);
       return [];
@@ -466,8 +650,9 @@ export class SearchService {
    * 当精确分词检索无结果时的兜底策略
    * 特别适合：专业术语、部分匹配、拼音/英文缩写等
    */
-  private async trgmSearch(tenantId: string, q: string, k: number): Promise<SearchHit[]> {
+  private async trgmSearch(actor: DocumentUserContext, q: string, k: number, filters: SearchFilters): Promise<SearchHit[]> {
     try {
+      const queryParts = this.buildSearchQueryParts(actor, [q], k, filters);
       // 生成 trigram 相似度查询
       // similarity > 0.1 即可匹配（宽松），但通过 ORDER BY similarity 排序
       const rows = await this.db.query<any>(
@@ -479,6 +664,9 @@ export class SearchService {
                 c.page            AS page,
                 COALESCE(dc.title, d.title) AS "documentTitle",
                 COALESCE(dc.mime, d.mime) AS mime,
+                d.permission_scope AS "permissionScope",
+                NULL::text AS "categoryPath",
+                ${this.searchMetricsSelectSql()},
                 GREATEST(COALESCE(dc.updated_at, d.updated_at), d.updated_at) AS "updatedAt",
                 COALESCE(dc.created_at, d.created_at) AS "createdAt",
                 similarity(c.text, $1) AS similarity,
@@ -487,11 +675,13 @@ export class SearchService {
          FROM chunks c
          LEFT JOIN document_contents dc ON dc.id = c.content_id
          JOIN documents d ON d.id = COALESCE(dc.canonical_document_id, c.document_id)
-         WHERE COALESCE(dc.tenant_id, d.tenant_id) = $2
+         LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+         ${this.searchMetricsJoinSql()}
+         WHERE ${queryParts.whereSql}
            AND c.text % $1
          ORDER BY similarity DESC
-         LIMIT $3`,
-        [q, tenantId, k],
+         LIMIT ${queryParts.limitParam}`,
+        queryParts.values,
       );
       return rows.map((r) => ({
         chunkId: r.chunkId,
@@ -499,10 +689,16 @@ export class SearchService {
         contentId: r.contentId,
         documentTitle: r.documentTitle,
         mime: r.mime,
+        permissionScope: r.permissionScope,
+        canDownload: false,
+        categoryPath: r.categoryPath ?? null,
         idx: r.idx,
         text: r.text,
         highlight: this.normalizeHighlight(r.highlight, r.text, q),
         score: Number(r.similarity) || 0,
+        hotScore: Number(r.hotScore) || 0,
+        viewCount: Number(r.viewCount) || 0,
+        downloadCount: Number(r.downloadCount) || 0,
         sources: ["trgm"] as const,
         page: r.page ?? null,
         updatedAt: this.toIsoString(r.updatedAt),
@@ -524,10 +720,16 @@ export class SearchService {
       contentId: r.contentId,
       documentTitle: r.documentTitle,
       mime: r.mime || "application/pdf",
+      permissionScope: r.permissionScope ?? r.permission_scope,
+      canDownload: false,
+      categoryPath: r.categoryPath ?? r.category_path ?? null,
       idx: r.idx,
       text: r.text,
       highlight: this.normalizeHighlight(r.highlight, r.text, q),
       score: Number(r.rank) || 0,
+      hotScore: Number(r.hotScore ?? r.hot_score) || 0,
+      viewCount: Number(r.viewCount ?? r.view_count) || 0,
+      downloadCount: Number(r.downloadCount ?? r.download_count) || 0,
       sources: [source],
       page: r.page ?? null,
       updatedAt: this.toIsoString(r.updatedAt),
@@ -545,10 +747,16 @@ export class SearchService {
       contentId: r.contentId,
       documentTitle: r.documentTitle,
       mime: r.mime || "application/pdf",
+      permissionScope: r.permissionScope ?? r.permission_scope,
+      canDownload: false,
+      categoryPath: r.categoryPath ?? r.category_path ?? null,
       idx: r.idx,
       text: r.text,
       highlight: this.normalizeHighlight(r.highlight, r.text, ""),
       score: Number(r.similarity) || 0,
+      hotScore: Number(r.hotScore ?? r.hot_score) || 0,
+      viewCount: Number(r.viewCount ?? r.view_count) || 0,
+      downloadCount: Number(r.downloadCount ?? r.download_count) || 0,
       sources: ["trgm"],
       page: r.page ?? null,
       updatedAt: this.toIsoString(r.updatedAt),
@@ -673,8 +881,15 @@ export class SearchService {
           b.score - a.score
         );
       }
-      // Metric-backed sorts are accepted by the PRD contract, but Task 4 will add
-      // the event aggregates needed to order by hot/views/downloads.
+      if (sortBy === "hot") {
+        return (b.hotScore ?? 0) - (a.hotScore ?? 0) || b.score - a.score || this.timestampOf(b) - this.timestampOf(a);
+      }
+      if (sortBy === "views") {
+        return (b.viewCount ?? 0) - (a.viewCount ?? 0) || b.score - a.score || this.timestampOf(b) - this.timestampOf(a);
+      }
+      if (sortBy === "downloads") {
+        return (b.downloadCount ?? 0) - (a.downloadCount ?? 0) || b.score - a.score || this.timestampOf(b) - this.timestampOf(a);
+      }
       return b.score - a.score || this.timestampOf(b) - this.timestampOf(a) || a.idx - b.idx;
     });
   }
@@ -693,6 +908,279 @@ export class SearchService {
     return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
   }
 
+  async searchList(rawQuery: unknown, user?: any) {
+    const parsed = SearchListQuery.safeParse(rawQuery ?? {});
+    if (!parsed.success) {
+      return { query: "", sortBy: "relevance", total: 0, hits: [], took: 0, page: 1, pageSize: 20, error: "invalid_query" };
+    }
+
+    const query = parsed.data;
+    const keyword = this.normalizeKeyword(query.keyword ?? query.q ?? "");
+    if (!keyword) {
+      return { query: "", sortBy: query.sort, total: 0, hits: [], took: 0, page: query.page, pageSize: query.pageSize };
+    }
+
+    const actor = this.toDocumentUserContext(user);
+    const topK = Math.min(query.page * query.pageSize, 50);
+    const result = await this.search({
+      q: keyword,
+      mode: "hybrid",
+      sortBy: query.sort,
+      topK,
+      filters: query,
+      user,
+    });
+    const offset = (query.page - 1) * query.pageSize;
+    const hits = result.hits.slice(offset, offset + query.pageSize);
+
+    await this.recordHistory({
+      q: keyword,
+      mode: "hybrid",
+      sortBy: query.sort,
+      topK,
+      resultCount: result.hits.length,
+      tenantId: actor.tenantId,
+      userId: actor.userId,
+    });
+    await this.recordSearchEvent({
+      keyword,
+      eventType: "SEARCH",
+      resultCount: result.hits.length,
+      tenantId: actor.tenantId,
+      userId: actor.userId,
+      categoryId: query.categoryId ?? null,
+    });
+
+    return {
+      query: keyword,
+      sortBy: query.sort,
+      total: result.hits.length,
+      hits,
+      took: result.took,
+      page: query.page,
+      pageSize: query.pageSize,
+      hasRelevantResults: result.hasRelevantResults,
+    };
+  }
+
+  async listHotSearch(rawQuery: unknown): Promise<HotSearchItem[]> {
+    const parsed = HotSearchQuery.safeParse(rawQuery ?? {});
+    const query = parsed.success ? parsed.data : HotSearchQuery.parse({});
+    const tenantId = this.db.tenantId;
+    if (!tenantId) return [];
+
+    const values: unknown[] = [tenantId];
+    const addValue = (value: unknown) => {
+      values.push(value);
+      return `$${values.length}`;
+    };
+    const eventFilters = ["se.tenant_id = $1"];
+    const pinnedFilters = ["hk.tenant_id = $1", "hk.enabled = TRUE"];
+
+    if (query.categoryId) {
+      const categoryParam = addValue(query.categoryId);
+      eventFilters.push(`se.category_id = ${categoryParam}`);
+      pinnedFilters.push(`(hk.category_id = ${categoryParam} OR hk.category_id IS NULL)`);
+    }
+
+    const rangeSql = this.hotRangeSql(query.range);
+    if (rangeSql) eventFilters.push(rangeSql);
+
+    const limitParam = addValue(query.limit);
+    const rows = await this.db.query<any>(
+      `WITH event_counts AS (
+         SELECT
+           lower(regexp_replace(trim(se.keyword), '\\s+', ' ', 'g')) AS keyword,
+           se.category_id AS "categoryId",
+           COUNT(*) FILTER (WHERE se.event_type = 'SEARCH')::int AS "searchCount",
+           COUNT(*) FILTER (WHERE se.event_type = 'CLICK')::int AS "clickCount",
+           COUNT(*) FILTER (WHERE se.event_type = 'VIEW')::int AS "viewCount",
+           COUNT(*) FILTER (WHERE se.event_type = 'DOWNLOAD')::int AS "downloadCount",
+           COALESCE(SUM(CASE WHEN se.event_type = 'SEARCH' THEN se.result_count ELSE 0 END), 0)::int AS "resultCount"
+         FROM search_events se
+         WHERE ${eventFilters.join(" AND ")}
+         GROUP BY 1, se.category_id
+       ),
+       pinned_keywords AS (
+         SELECT
+           lower(regexp_replace(trim(hk.keyword), '\\s+', ' ', 'g')) AS keyword,
+           hk.category_id AS "categoryId",
+           bool_or(hk.pinned) AS pinned,
+           MAX(CASE WHEN hk.pinned THEN GREATEST(hk.weight, 100) ELSE hk.weight END)::int AS weight
+         FROM hot_search_keywords hk
+         WHERE ${pinnedFilters.join(" AND ")}
+         GROUP BY 1, hk.category_id
+       )
+       SELECT
+         COALESCE(ec.keyword, pk.keyword) AS keyword,
+         COALESCE(ec."categoryId", pk."categoryId") AS "categoryId",
+         COALESCE(ec."searchCount", 0)::int AS "searchCount",
+         COALESCE(ec."clickCount", 0)::int AS "clickCount",
+         COALESCE(ec."viewCount", 0)::int AS "viewCount",
+         COALESCE(ec."downloadCount", 0)::int AS "downloadCount",
+         COALESCE(ec."resultCount", 0)::int AS "resultCount",
+         COALESCE(pk.pinned, FALSE) AS pinned,
+         COALESCE(pk.weight, 0)::int AS "pinnedWeight"
+       FROM event_counts ec
+       FULL OUTER JOIN pinned_keywords pk
+         ON pk.keyword = ec.keyword
+        AND (pk."categoryId" IS NOT DISTINCT FROM ec."categoryId" OR pk."categoryId" IS NULL)
+       ORDER BY (
+         COALESCE(ec."searchCount", 0) * 1 +
+         COALESCE(ec."clickCount", 0) * 2 +
+         COALESCE(ec."viewCount", 0) * 3 +
+         COALESCE(ec."downloadCount", 0) * 4 +
+         COALESCE(pk.weight, 0)
+       ) DESC,
+       keyword ASC
+       LIMIT ${limitParam}`,
+      values,
+    );
+
+    return rows
+      .map((row) => this.mapHotSearchRow(row))
+      .filter((item) => item.keyword.length > 0)
+      .filter((item) => {
+        const resultCount = this.numberOf((item as any).resultCount);
+        return item.pinned || resultCount > 0 || item.clickCount > 0 || item.viewCount > 0 || item.downloadCount > 0;
+      })
+      .sort((a, b) => b.hotScore - a.hotScore || a.keyword.localeCompare(b.keyword))
+      .slice(0, query.limit)
+      .map(({ resultCount: _resultCount, ...item }: HotSearchItem & { resultCount?: number }) => item);
+  }
+
+  async recordSearchEvent(input: SearchEventInput): Promise<void> {
+    const tenantId = input.tenantId || this.db.tenantId;
+    const keyword = this.normalizeKeyword(input.keyword ?? input.q ?? "");
+    if (!tenantId || !keyword) return;
+
+    const eventType = (input.eventType || "SEARCH").trim().toUpperCase() || "SEARCH";
+    const resultCount = Math.max(0, Math.trunc(this.numberOf(input.resultCount)));
+
+    try {
+      await this.db.query(
+        `INSERT INTO search_events (
+           id,
+           tenant_id,
+           user_id,
+           keyword,
+           category_id,
+           document_id,
+           content_id,
+           chunk_id,
+           result_count,
+           event_type
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          randomUUID(),
+          tenantId,
+          input.userId ?? this.db.userId ?? null,
+          keyword,
+          input.categoryId ?? null,
+          input.documentId ?? null,
+          input.contentId ?? null,
+          input.chunkId ?? null,
+          resultCount,
+          eventType,
+        ],
+      );
+    } catch (e: any) {
+      this.logger.warn(`Failed to record search event: ${e.message}`);
+    }
+  }
+
+  private mapHotSearchRow(row: any): HotSearchItem & { resultCount: number } {
+    const searchCount = this.numberOf(row.searchCount ?? row.search_count);
+    const clickCount = this.numberOf(row.clickCount ?? row.click_count);
+    const viewCount = this.numberOf(row.viewCount ?? row.view_count);
+    const downloadCount = this.numberOf(row.downloadCount ?? row.download_count);
+    const pinnedWeight = this.numberOf(row.pinnedWeight ?? row.pinned_weight ?? row.weight);
+    return {
+      keyword: this.normalizeKeyword(row.keyword ?? ""),
+      hotScore: this.hotScore({ searchCount, clickCount, viewCount, downloadCount, pinnedWeight }),
+      searchCount,
+      clickCount,
+      viewCount,
+      downloadCount,
+      resultCount: this.numberOf(row.resultCount ?? row.result_count),
+      trend: "flat",
+      categoryId: row.categoryId ?? row.category_id ?? null,
+      pinned: Boolean(row.pinned),
+    };
+  }
+
+  private hotScore(input: {
+    searchCount?: unknown;
+    clickCount?: unknown;
+    viewCount?: unknown;
+    downloadCount?: unknown;
+    pinnedWeight?: unknown;
+  }): number {
+    return (
+      this.numberOf(input.searchCount) * 1 +
+      this.numberOf(input.clickCount) * 2 +
+      this.numberOf(input.viewCount) * 3 +
+      this.numberOf(input.downloadCount) * 4 +
+      this.numberOf(input.pinnedWeight)
+    );
+  }
+
+  private hotRangeSql(range: "today" | "week" | "month" | "all"): string {
+    if (range === "today") return "se.created_at >= date_trunc('day', NOW())";
+    if (range === "week") return "se.created_at >= NOW() - INTERVAL '7 days'";
+    if (range === "month") return "se.created_at >= NOW() - INTERVAL '30 days'";
+    return "";
+  }
+
+  private normalizeKeyword(value: string): string {
+    return value.trim().replace(/\s+/g, " ").toLowerCase();
+  }
+
+  private numberOf(value: unknown): number {
+    const number = Number(value ?? 0);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  private toDocumentUserContext(user?: any): DocumentUserContext {
+    return {
+      userId: user?.sub ?? user?.userId ?? user?.id ?? this.db.userId ?? "",
+      tenantId: user?.tenantId ?? this.db.tenantId ?? "",
+      role: user?.role ?? (this.db as any).role ?? "viewer",
+      departmentId: user?.departmentId ?? null,
+    };
+  }
+
+  private normalizeSearchFilters(opts: SearchOptions): SearchFilters {
+    return {
+      ...(opts.filters ?? {}),
+      tags: opts.tags ?? opts.filters?.tags,
+    };
+  }
+
+  private normalizeTagIds(tags?: string[] | string) {
+    if (!tags) return [];
+    if (Array.isArray(tags)) return tags.filter((tag) => tag.trim().length > 0);
+    return tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+  }
+
+  private async attachAccessFlags(hits: SearchHit[], actor: DocumentUserContext): Promise<SearchHit[]> {
+    const documentIds = [...new Set(hits.map((hit) => hit.documentId).filter(Boolean))];
+    if (documentIds.length === 0) return [];
+
+    const flags = await this.access.getAccessFlags(documentIds, actor);
+    return hits
+      .filter((hit) => flags[hit.documentId]?.canView ?? false)
+      .map((hit) => this.withAccessFlags(hit, flags[hit.documentId]));
+  }
+
+  private withAccessFlags(hit: SearchHit, flags?: DocumentAccessFlags): SearchHit {
+    return {
+      ...hit,
+      canDownload: flags?.canDownload ?? false,
+    };
+  }
+
   async recordHistory(opts: {
     q: string;
     mode: "hybrid" | "semantic" | "keyword";
@@ -704,9 +1192,17 @@ export class SearchService {
   }): Promise<void> {
     const tenantId = opts.tenantId || this.db.tenantId;
     const userId = opts.userId || this.db.userId;
-    if (!tenantId || !userId) return;
+    const query = this.normalizeKeyword(opts.q);
+    if (!tenantId || !userId || !query) return;
 
     try {
+      await this.db.query(
+        `DELETE FROM search_histories
+         WHERE tenant_id = $1
+           AND user_id = $2
+           AND lower(regexp_replace(trim(query), '\\s+', ' ', 'g')) = $3`,
+        [tenantId, userId, query],
+      );
       await this.db.query(
         `INSERT INTO search_histories
            (id, tenant_id, user_id, query, mode, sort_by, top_k, result_count)
@@ -715,7 +1211,7 @@ export class SearchService {
           randomUUID(),
           tenantId,
           userId,
-          opts.q.trim(),
+          query,
           opts.mode,
           opts.sortBy,
           opts.topK,
