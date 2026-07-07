@@ -955,7 +955,8 @@ export class QaService {
     const raw = typeof user === "string" ? { userId: user } : (user ?? {});
     const userId = raw.userId ?? raw.sub ?? raw.id ?? this.db.userId ?? "";
     const userTenantId = raw.tenantId ?? tenantId ?? this.db.tenantId ?? "";
-    let role = raw.role ?? (this.db as any).role ?? "viewer";
+    const fallbackRole = this.safeFallbackRole(raw.role ?? (this.db as any).role);
+    let role = fallbackRole;
     let departmentId = raw.departmentId ?? null;
 
     if (userId && userTenantId) {
@@ -963,8 +964,8 @@ export class QaService {
         where: { id: userId, tenantId: userTenantId },
         select: { role: true, departmentId: true },
       });
-      role = raw.role ?? (this.db as any).role ?? storedUser?.role ?? role;
-      departmentId = raw.departmentId ?? storedUser?.departmentId ?? null;
+      role = storedUser?.role ?? fallbackRole;
+      departmentId = storedUser ? storedUser.departmentId ?? null : null;
     }
 
     return {
@@ -973,6 +974,11 @@ export class QaService {
       role,
       departmentId,
     };
+  }
+
+  private safeFallbackRole(role?: string | null) {
+    if (role === "admin" || role === "super_admin") return "viewer";
+    return role ?? "viewer";
   }
 
   private compactText(text: string, maxLength: number) {

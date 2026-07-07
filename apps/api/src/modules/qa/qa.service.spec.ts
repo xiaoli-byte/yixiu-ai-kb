@@ -367,6 +367,122 @@ describe("QaService recall permission filtering", () => {
     );
   });
 
+  it("uses the tenant-scoped stored role instead of a stale admin role from auth context", async () => {
+    const { service, prisma, db, search, access } = createService();
+    prisma.user.findFirst.mockResolvedValueOnce({ role: "viewer", departmentId: "dept-1" });
+    const allowed = createHit({
+      chunkId: "chunk-allowed",
+      documentId: "doc-allowed",
+      text: "allowed chunk text",
+    });
+    search.search.mockResolvedValueOnce({
+      hits: [allowed],
+      took: 1,
+      hasRelevantResults: true,
+    });
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-allowed": accessFlags(true),
+    });
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("ai_reference_enabled")) {
+        return [{ id: "doc-allowed", aiReferenceEnabled: true }];
+      }
+      return [];
+    });
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      user: { sub: "user-1", tenantId: "tenant-1", role: "admin" },
+      question: "pricing automation CRM",
+      onChunk: vi.fn(),
+      onCitations: vi.fn(),
+      onNoResults: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(search.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.objectContaining({
+          userId: "user-1",
+          tenantId: "tenant-1",
+          role: "viewer",
+          departmentId: "dept-1",
+        }),
+      }),
+    );
+    expect(search.search.mock.calls[0][0].user.role).not.toBe("admin");
+    expect(access.getAccessFlags).toHaveBeenCalledWith(
+      ["doc-allowed"],
+      expect.objectContaining({
+        userId: "user-1",
+        tenantId: "tenant-1",
+        role: "viewer",
+        departmentId: "dept-1",
+      }),
+    );
+  });
+
+  it("does not preserve an admin auth role when tenant-scoped user lookup misses", async () => {
+    const { service, prisma, db, search, access } = createService();
+    prisma.user.findFirst.mockResolvedValueOnce(null);
+    const allowed = createHit({
+      chunkId: "chunk-allowed",
+      documentId: "doc-allowed",
+      text: "allowed chunk text",
+    });
+    search.search.mockResolvedValueOnce({
+      hits: [allowed],
+      took: 1,
+      hasRelevantResults: true,
+    });
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-allowed": accessFlags(true),
+    });
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("ai_reference_enabled")) {
+        return [{ id: "doc-allowed", aiReferenceEnabled: true }];
+      }
+      return [];
+    });
+
+    await service.ask({
+      userId: "missing-user",
+      tenantId: "tenant-1",
+      user: { sub: "missing-user", tenantId: "tenant-1", role: "admin" },
+      question: "pricing automation CRM",
+      onChunk: vi.fn(),
+      onCitations: vi.fn(),
+      onNoResults: vi.fn(),
+      onDone: vi.fn(),
+      onError: vi.fn(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(search.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.objectContaining({
+          userId: "missing-user",
+          tenantId: "tenant-1",
+          role: "viewer",
+          departmentId: null,
+        }),
+      }),
+    );
+    expect(search.search.mock.calls[0][0].user.role).not.toBe("admin");
+    expect(access.getAccessFlags).toHaveBeenCalledWith(
+      ["doc-allowed"],
+      expect.objectContaining({
+        userId: "missing-user",
+        tenantId: "tenant-1",
+        role: "viewer",
+        departmentId: null,
+      }),
+    );
+  });
+
   it("over-fetches before filtering so later accessible AI-enabled hits can be used", async () => {
     const { service, db, search, access, llm } = createService();
     const aiDisabled = createHit({
