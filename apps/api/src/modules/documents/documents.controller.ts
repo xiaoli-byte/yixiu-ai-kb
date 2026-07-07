@@ -35,7 +35,9 @@ export class DocumentsController {
 
   @Get()
   async list(@Query() query: unknown, @CurrentUser() user: any) {
-    const parsed = DocumentListQuery.parse(query);
+    const result = DocumentListQuery.safeParse(query);
+    if (!result.success) throw new BadRequestException("Invalid document query");
+    const parsed = result.data;
     const tagIds = parsed.tags
       ? parsed.tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0)
       : undefined;

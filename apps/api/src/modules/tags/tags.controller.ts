@@ -10,9 +10,14 @@ import {
 } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { TagsService } from "./tags.service";
-import { DatabaseService } from "../../database/database.service";
+import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { PermissionsGuard, RequirePermissions, AdminOnly } from "../../common/permissions/permissions.guard";
 import { Resource, Action } from "../../common/permissions/permissions.types";
+import {
+  DocumentAccessService,
+  type DocumentAction,
+  type DocumentUserContext,
+} from "../documents/document-access.service";
 
 class CreateTagDto {
   name!: string;
@@ -28,7 +33,7 @@ class UpdateTagDto {
 export class TagsController {
   constructor(
     private readonly tags: TagsService,
-    private readonly db: DatabaseService,
+    private readonly documentAccess: DocumentAccessService,
   ) {}
 
   @Get()
@@ -71,7 +76,9 @@ export class TagsController {
   async addTagToDocument(
     @Param("documentId") documentId: string,
     @Param("tagId") tagId: string,
+    @CurrentUser() user: any,
   ) {
+    await this.assertDocumentAccess(documentId, "EDIT", user);
     return this.tags.addTagToDocument(documentId, tagId);
   }
 
@@ -80,12 +87,32 @@ export class TagsController {
   async removeTagFromDocument(
     @Param("documentId") documentId: string,
     @Param("tagId") tagId: string,
+    @CurrentUser() user: any,
   ) {
+    await this.assertDocumentAccess(documentId, "EDIT", user);
     return this.tags.removeTagFromDocument(documentId, tagId);
   }
 
   @Get("documents/:documentId")
-  async getDocumentTags(@Param("documentId") documentId: string) {
+  async getDocumentTags(@Param("documentId") documentId: string, @CurrentUser() user: any) {
+    await this.assertDocumentAccess(documentId, "VIEW", user);
     return this.tags.getDocumentTags(documentId);
+  }
+
+  private assertDocumentAccess(documentId: string, action: DocumentAction, user: any) {
+    return this.documentAccess.assertDocumentAccess(
+      documentId,
+      action,
+      this.toDocumentUserContext(user),
+    );
+  }
+
+  private toDocumentUserContext(user: any): DocumentUserContext {
+    return {
+      userId: user?.sub ?? user?.userId ?? user?.id,
+      tenantId: user?.tenantId,
+      role: user?.role ?? "viewer",
+      departmentId: user?.departmentId ?? null,
+    };
   }
 }

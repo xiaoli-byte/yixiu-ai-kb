@@ -53,6 +53,11 @@ export const DocumentPermissionUpdateRequest = z.object({
 });
 export type DocumentPermissionUpdateRequest = z.infer<typeof DocumentPermissionUpdateRequest>;
 
+export const DocumentBatchPermissionUpdateRequest = DocumentPermissionUpdateRequest.extend({
+  documentIds: z.array(z.string().min(1)).min(1).max(200).transform((ids) => Array.from(new Set(ids))),
+});
+export type DocumentBatchPermissionUpdateRequest = z.infer<typeof DocumentBatchPermissionUpdateRequest>;
+
 export const DocumentBatchAction = z.enum(["DOWNLOAD", "DELETE", "MOVE", "ARCHIVE", "RESTORE"]);
 export type DocumentBatchAction = z.infer<typeof DocumentBatchAction>;
 

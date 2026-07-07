@@ -15,6 +15,9 @@ function createService() {
       update: vi.fn(),
       delete: vi.fn(),
     },
+    folder: {
+      findFirst: vi.fn(),
+    },
   };
   const db = {
     tenantId: "tenant-1",
@@ -144,6 +147,7 @@ describe("DocumentsService permission-aware operations", () => {
 
   it("upload applies folder inheritance when folderId is present", async () => {
     const { service, prisma, db, storage, queue, access } = createService();
+    prisma.folder.findFirst.mockResolvedValueOnce({ id: "folder-1" });
     db.queryOne.mockResolvedValueOnce(null);
     prisma.document.create.mockResolvedValueOnce({
       id: "doc-1",
@@ -164,6 +168,24 @@ describe("DocumentsService permission-aware operations", () => {
       "folder-1",
       "user-1",
     );
+  });
+
+  it("upload rejects unknown target folder before storing or creating the document", async () => {
+    const { service, prisma, db, storage, queue } = createService();
+    prisma.folder.findFirst.mockResolvedValueOnce(null);
+
+    await expect(service.upload(file(), "user-1", "tenant-1", "missing-folder")).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(prisma.folder.findFirst).toHaveBeenCalledWith({
+      where: { id: "missing-folder", tenantId: "tenant-1" } as any,
+      select: { id: true },
+    });
+    expect(db.queryOne).not.toHaveBeenCalled();
+    expect(storage.putObject).not.toHaveBeenCalled();
+    expect(prisma.document.create).not.toHaveBeenCalled();
+    expect(queue.enqueueDocument).not.toHaveBeenCalled();
   });
 
   it("logical delete sets deletedAt and does not hard-delete or clean graph/storage", async () => {
@@ -221,6 +243,44 @@ describe("DocumentsService permission-aware operations", () => {
     expect(prisma.document.update).not.toHaveBeenCalled();
   });
 
+  it("update validates target folder and applies inherited permissions when folderId changes", async () => {
+    const { service, prisma, access } = createService();
+    prisma.document.findFirst.mockResolvedValueOnce({
+      id: "doc-1",
+      tenantId: "tenant-1",
+      folderId: null,
+    });
+    prisma.folder.findFirst.mockResolvedValueOnce({ id: "folder-1" });
+    prisma.document.update.mockResolvedValueOnce({
+      id: "doc-1",
+      title: "Policy",
+      mime: "application/pdf",
+      size: BigInt(10),
+      status: "READY",
+      folderId: "folder-1",
+      ownerId: "user-1",
+      tenantId: "tenant-1",
+      errorMessage: null,
+      createdAt: new Date("2026-07-07T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-07T00:00:00.000Z"),
+    });
+
+    await expect((service as any).update("doc-1", { folderId: "folder-1" }, user)).resolves.toMatchObject({
+      id: "doc-1",
+      folderId: "folder-1",
+    });
+
+    expect(prisma.folder.findFirst).toHaveBeenCalledWith({
+      where: { id: "folder-1", tenantId: "tenant-1" } as any,
+      select: { id: true },
+    });
+    expect(access.applyInheritedFolderPermissions).toHaveBeenCalledWith(
+      "doc-1",
+      "folder-1",
+      "user-1",
+    );
+  });
+
   it("controller checks document EDIT access before tag mutations", async () => {
     const docs = {
       assertDocumentEditAccess: vi.fn().mockRejectedValue(new ForbiddenException("denied")),
@@ -241,6 +301,17 @@ describe("DocumentsService permission-aware operations", () => {
     expect(docs.assertDocumentEditAccess).toHaveBeenCalledTimes(2);
     expect(tags.addTagToDocument).not.toHaveBeenCalled();
     expect(tags.removeTagFromDocument).not.toHaveBeenCalled();
+  });
+
+  it("controller wraps invalid list query in BadRequestException", async () => {
+    const docs = {
+      list: vi.fn(),
+    };
+    const controller = new DocumentsController(docs as any, {} as any, {} as any);
+
+    await expect(controller.list({ page: "0" }, user)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(docs.list).not.toHaveBeenCalled();
   });
 
   it("batch archive returns per-document results", async () => {
@@ -266,6 +337,34 @@ describe("DocumentsService permission-aware operations", () => {
       where: { id: "doc-1" },
       data: { archived: true, updatedAt: expect.any(Date) },
     });
+  });
+
+  it("batch move rejects unknown target folder before update or inheritance", async () => {
+    const { service, prisma, access } = createService();
+    prisma.folder.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      (service as any).batch(
+        { action: "MOVE", documentIds: ["doc-1"], folderId: "missing-folder" },
+        user,
+      ),
+    ).resolves.toEqual({
+      action: "MOVE",
+      results: [
+        {
+          documentId: "doc-1",
+          ok: false,
+          message: "Folder not found",
+        },
+      ],
+    });
+
+    expect(prisma.folder.findFirst).toHaveBeenCalledWith({
+      where: { id: "missing-folder", tenantId: "tenant-1" } as any,
+      select: { id: true },
+    });
+    expect(prisma.document.update).not.toHaveBeenCalled();
+    expect(access.applyInheritedFolderPermissions).not.toHaveBeenCalled();
   });
 
   it("batch download returns explicit per-document failures instead of succeeding silently", async () => {
@@ -383,6 +482,26 @@ describe("DocumentsService permission-aware operations", () => {
       expect.any(String),
       expect.any(String),
     );
+  });
+
+  it("wraps invalid permission and batch requests in BadRequestException", async () => {
+    const { service, prisma, access } = createService();
+
+    await expect(service.setPermissions("doc-1", { permissionScope: "NOPE" }, user)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect((service as any).batch({ action: "NOPE", documentIds: ["doc-1"] }, user)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(
+      (service as any).setBatchPermissions({ documentIds: [123], permissionScope: "COMPANY" }, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      (service as any).setBatchPermissions({ documentIds: [], permissionScope: "COMPANY" }, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(access.assertDocumentAccess).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it("parse retry rejects non-FAILED documents and re-enqueues FAILED documents", async () => {

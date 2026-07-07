@@ -6,7 +6,9 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
+import { z } from "zod";
 import {
+  DocumentBatchPermissionUpdateRequest,
   DocumentBatchOperationRequest,
   DocumentPermissionUpdateRequest,
 } from "@ai-knowledge/schemas";
@@ -220,6 +222,7 @@ export class DocumentsService {
         `Unsupported file format. Supported formats: ${SUPPORTED_DOCUMENT_EXTENSIONS.join(", ")}`,
       );
     }
+    const targetFolderId = await this.normalizeAndValidateTargetFolder(folderId, tenantId);
 
     const fileHash = sha256Hex(file.buffer);
     const id = uuid();
@@ -237,7 +240,7 @@ export class DocumentsService {
         id,
         tenantId,
         ownerId,
-        folderId: folderId || null,
+        folderId: targetFolderId,
         contentId: exactDuplicate?.content_id ?? null,
         fileHash,
         contentHash: exactDuplicate?.content_hash ?? null,
@@ -251,8 +254,8 @@ export class DocumentsService {
       } as any,
     });
 
-    if (folderId) {
-      await this.access.applyInheritedFolderPermissions(doc.id, folderId, ownerId);
+    if (targetFolderId) {
+      await this.access.applyInheritedFolderPermissions(doc.id, targetFolderId, ownerId);
     }
     if (exactDuplicate?.content_id) {
       await this.refreshContentStats(exactDuplicate.content_id);
@@ -292,14 +295,21 @@ export class DocumentsService {
       where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
     });
     if (!doc) throw new NotFoundException("Document not found");
+    const hasFolderId = Object.prototype.hasOwnProperty.call(data, "folderId");
+    const targetFolderId = hasFolderId
+      ? await this.normalizeAndValidateTargetFolder(data.folderId, actor.tenantId)
+      : undefined;
 
     const updated = await this.prisma.document.update({
       where: { id },
       data: {
         title: data.title,
-        folderId: data.folderId,
+        folderId: hasFolderId ? targetFolderId : undefined,
       },
     });
+    if (targetFolderId) {
+      await this.access.applyInheritedFolderPermissions(id, targetFolderId, actor.userId);
+    }
 
     return {
       id: updated.id,
@@ -344,7 +354,11 @@ export class DocumentsService {
 
   async setPermissions(id: string, body: unknown, user?: any) {
     const actor = this.toDocumentUserContext(user);
-    const parsed = DocumentPermissionUpdateRequest.parse(body);
+    const parsed = this.parseRequest(
+      DocumentPermissionUpdateRequest,
+      body,
+      "Invalid document permission request",
+    );
     await this.access.assertDocumentAccess(id, "MANAGE_PERMISSION", actor);
 
     return this.prisma.$transaction(async (tx) => {
@@ -374,7 +388,7 @@ export class DocumentsService {
         );
       }
 
-      for (const entry of parsed.entries) {
+      for (const entry of parsed.entries ?? []) {
         await runner.$executeRawUnsafe(
           `INSERT INTO document_permissions (
              id,
@@ -429,10 +443,12 @@ export class DocumentsService {
   }
 
   async setBatchPermissions(body: unknown, user?: any) {
-    const payload = body as any;
-    const documentIds = Array.isArray(payload?.documentIds) ? payload.documentIds : [];
-    if (documentIds.length === 0) throw new BadRequestException("documentIds is required");
-    const permissionBody = DocumentPermissionUpdateRequest.parse(payload);
+    const parsed = this.parseRequest(
+      DocumentBatchPermissionUpdateRequest,
+      body,
+      "Invalid batch permission request",
+    );
+    const { documentIds, ...permissionBody } = parsed;
     const results = [];
     for (const documentId of documentIds) {
       try {
@@ -446,7 +462,11 @@ export class DocumentsService {
   }
 
   async batch(body: unknown, user?: any) {
-    const parsed = DocumentBatchOperationRequest.parse(body);
+    const parsed = this.parseRequest(
+      DocumentBatchOperationRequest,
+      body,
+      "Invalid document batch request",
+    );
     const results = [];
     for (const documentId of parsed.documentIds) {
       try {
@@ -559,11 +579,17 @@ export class DocumentsService {
     }
     if (parsed.action === "MOVE") {
       if (!parsed.folderId) throw new BadRequestException("folderId is required");
+      const targetFolderId = await this.normalizeAndValidateTargetFolder(
+        parsed.folderId,
+        actor.tenantId,
+      );
       await this.prisma.document.update({
         where: { id: documentId },
-        data: { folderId: parsed.folderId, updatedAt: new Date() } as any,
+        data: { folderId: targetFolderId, updatedAt: new Date() } as any,
       });
-      await this.access.applyInheritedFolderPermissions(documentId, parsed.folderId, actor.userId);
+      if (targetFolderId) {
+        await this.access.applyInheritedFolderPermissions(documentId, targetFolderId, actor.userId);
+      }
     }
   }
 
@@ -651,6 +677,27 @@ export class DocumentsService {
       JSON.stringify(input.before ?? null),
       JSON.stringify(input.after ?? null),
     );
+  }
+
+  private parseRequest<T>(schema: z.ZodType<T>, body: unknown, message: string): T {
+    const result = schema.safeParse(body);
+    if (!result.success) throw new BadRequestException(message);
+    return result.data;
+  }
+
+  private async normalizeAndValidateTargetFolder(
+    folderId: string | null | undefined,
+    tenantId: string,
+  ) {
+    const normalized = typeof folderId === "string" ? folderId.trim() : folderId;
+    if (!normalized || normalized === "root") return null;
+
+    const folder = await this.prisma.folder.findFirst({
+      where: { id: normalized, tenantId } as any,
+      select: { id: true },
+    });
+    if (!folder) throw new BadRequestException("Folder not found");
+    return normalized;
   }
 
   private toDocumentUserContext(user?: any): DocumentUserContext {
