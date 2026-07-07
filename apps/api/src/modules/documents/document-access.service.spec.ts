@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { DocumentAccessService } from "./document-access.service";
 
-function createService() {
-  const db = { tenantId: "tenant-1", userId: "user-1", query: vi.fn(), queryOne: vi.fn() };
+function createService(options: { tenantId?: string } = {}) {
+  const tenantId = Object.prototype.hasOwnProperty.call(options, "tenantId")
+    ? options.tenantId
+    : "tenant-1";
+  const db = { tenantId, userId: "user-1", query: vi.fn(), queryOne: vi.fn() };
   return { service: new DocumentAccessService(db as any), db };
 }
 
@@ -338,10 +341,10 @@ describe("DocumentAccessService", () => {
   it("snapshots folder defaults without writing inherited rows to document_permissions", async () => {
     const { service, db } = createService();
     db.query.mockResolvedValueOnce([]);
+    db.query.mockResolvedValueOnce([]);
 
     await service.applyInheritedFolderPermissions("doc-1", "folder-1", "actor-1");
 
-    expect(db.query).toHaveBeenCalledTimes(1);
     for (const [sql] of db.query.mock.calls) {
       expect(sql).not.toContain("document_permissions");
     }
@@ -350,10 +353,53 @@ describe("DocumentAccessService", () => {
   it("only snapshots folder defaults onto documents in that folder", async () => {
     const { service, db } = createService();
     db.query.mockResolvedValueOnce([]);
+    db.query.mockResolvedValueOnce([]);
 
     await service.applyInheritedFolderPermissions("doc-1", "folder-1", "actor-1");
 
     const sql = db.query.mock.calls[0][0] as string;
     expect(sql).toContain("AND d.folder_id = $2");
+  });
+
+  it("scopes inherited folder snapshots to current tenant and live documents", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValueOnce([]);
+    db.query.mockResolvedValueOnce([]);
+
+    await service.applyInheritedFolderPermissions("doc-1", "folder-1", "actor-1");
+
+    const [sql, values] = db.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("fp.tenant_id = $3");
+    expect(sql).toContain("d.tenant_id = $3");
+    expect(sql).toContain("d.deleted_at IS NULL");
+    expect(sql).toContain("AND d.folder_id = $2");
+    expect(values).toEqual(["doc-1", "folder-1", "tenant-1"]);
+  });
+
+  it("requires tenant context before applying inherited folder permissions", async () => {
+    const { service, db } = createService({ tenantId: undefined });
+
+    await expect(
+      service.applyInheritedFolderPermissions("doc-1", "folder-1", "actor-1"),
+    ).rejects.toThrow("Tenant context required");
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("writes an inherited folder permission audit log", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValueOnce([]);
+    db.query.mockResolvedValueOnce([]);
+
+    await service.applyInheritedFolderPermissions("doc-1", "folder-1", "actor-1");
+
+    expect(db.query).toHaveBeenCalledTimes(2);
+    const [auditSql, auditValues] = db.query.mock.calls[1] as [string, unknown[]];
+    expect(auditSql).toContain("INSERT INTO permission_audit_logs");
+    expect(auditValues[1]).toBe("tenant-1");
+    expect(auditValues[2]).toBe("actor-1");
+    expect(auditValues[3]).toBe("DOCUMENT");
+    expect(auditValues[4]).toBe("doc-1");
+    expect(auditValues[5]).toBe("FOLDER_INHERIT");
+    expect(auditValues[6]).toBe("INHERITED");
   });
 });

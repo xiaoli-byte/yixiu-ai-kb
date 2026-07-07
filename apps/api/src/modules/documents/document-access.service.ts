@@ -309,7 +309,11 @@ export class DocumentAccessService {
     folderId: string,
     actorId: string,
   ): Promise<void> {
-    void actorId;
+    const tenantId = this.db.tenantId;
+    if (!tenantId) {
+      throw new Error("Tenant context required to apply inherited folder permissions");
+    }
+
     await this.db.query(
       `UPDATE documents d
        SET permission_scope = inherited.permission_scope,
@@ -320,14 +324,27 @@ export class DocumentAccessService {
          SELECT fp.tenant_id, fp.permission_scope, fp.searchable, fp.ai_reference_enabled
          FROM folder_permissions fp
          WHERE fp.folder_id = $2
+           AND fp.tenant_id = $3
          ORDER BY fp.updated_at DESC
          LIMIT 1
        ) inherited
        WHERE d.id = $1
          AND d.folder_id = $2
-         AND d.tenant_id = inherited.tenant_id`,
-      [documentId, folderId],
+         AND d.tenant_id = $3
+         AND d.tenant_id = inherited.tenant_id
+         AND d.deleted_at IS NULL`,
+      [documentId, folderId, tenantId],
     );
+
+    await this.writeAuditLog({
+      tenantId,
+      actorId,
+      targetType: "DOCUMENT",
+      targetId: documentId,
+      action: "FOLDER_INHERIT",
+      mode: "INHERITED",
+      after: { folderId },
+    });
   }
 
   async writeAuditLog(input: PermissionAuditLogInput): Promise<void> {
@@ -386,16 +403,6 @@ export class DocumentAccessService {
       canEdit: false,
       canDelete: false,
       canManagePermission: false,
-    };
-  }
-
-  private fullFlags(): DocumentAccessFlags {
-    return {
-      canView: true,
-      canDownload: true,
-      canEdit: true,
-      canDelete: true,
-      canManagePermission: true,
     };
   }
 
