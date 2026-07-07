@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { SearchQuery } from "@ai-knowledge/schemas";
+import {
+  DocumentBatchOperationRequest,
+  DocumentPermissionScope,
+  DocumentPermissionUpdateRequest,
+  HotSearchQuery,
+  SearchListQuery,
+  SearchQuery,
+} from "@ai-knowledge/schemas";
 import { SearchService, type SearchHit } from "./search.service";
 
 function createService() {
@@ -39,6 +46,48 @@ describe("Search schema", () => {
     expect(SearchQuery.parse({ q: "risk" }).sortBy).toBe("relevance");
     expect(SearchQuery.parse({ q: "risk", sortBy: "time" }).sortBy).toBe("time");
     expect(SearchQuery.parse({ q: "risk", sortBy: "name" }).sortBy).toBe("name");
+  });
+});
+
+describe("Document/search PRD schemas", () => {
+  it("accepts document permission updates with AI and search switches", () => {
+    const parsed = DocumentPermissionUpdateRequest.parse({
+      permissionScope: "COMPANY",
+      entries: [
+        {
+          subjectType: "ROLE",
+          subjectId: "viewer",
+          canView: true,
+          canDownload: false,
+          canEdit: false,
+          canDelete: false,
+          canManagePermission: false,
+        },
+      ],
+      searchable: true,
+      aiReferenceEnabled: false,
+      applyToChildren: false,
+      mode: "APPEND",
+    });
+
+    expect(parsed.permissionScope).toBe("COMPANY");
+    expect(parsed.aiReferenceEnabled).toBe(false);
+  });
+
+  it("accepts search filters and hot search ranges", () => {
+    expect(DocumentPermissionScope.parse("DEPARTMENTS")).toBe("DEPARTMENTS");
+    expect(SearchListQuery.parse({ keyword: "制度", fileType: "PDF", sort: "updatedAt" }).sort).toBe("updatedAt");
+    expect(HotSearchQuery.parse({ range: "week", limit: "20" }).limit).toBe(20);
+  });
+
+  it("accepts batch archive and move document operations", () => {
+    expect(
+      DocumentBatchOperationRequest.parse({
+        action: "MOVE",
+        documentIds: ["doc-1", "doc-2"],
+        folderId: "folder-1",
+      }).action,
+    ).toBe("MOVE");
   });
 });
 

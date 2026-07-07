@@ -3,7 +3,7 @@ import { z } from "zod";
 export const SearchMode = z.enum(["hybrid", "semantic", "keyword"]);
 export type SearchMode = z.infer<typeof SearchMode>;
 
-export const SearchSortBy = z.enum(["relevance", "time", "name"]);
+export const SearchSortBy = z.enum(["relevance", "time", "name", "updatedAt", "hot", "views", "downloads"]);
 export type SearchSortBy = z.infer<typeof SearchSortBy>;
 
 export const SearchQuery = z.object({
@@ -21,6 +21,9 @@ export const SearchHit = z.object({
   contentId: z.string().optional(),
   documentTitle: z.string(),
   mime: z.string().optional(),
+  permissionScope: z.string().optional(),
+  canDownload: z.boolean().default(false),
+  categoryPath: z.string().nullable().optional(),
   idx: z.number().int(),
   text: z.string(),
   highlight: z.string(),
@@ -31,6 +34,44 @@ export const SearchHit = z.object({
   createdAt: z.string().nullable().optional(),
 });
 export type SearchHit = z.infer<typeof SearchHit>;
+
+export const SearchListQuery = z.object({
+  keyword: z.string().optional(),
+  q: z.string().optional(),
+  fileType: z.string().optional(),
+  categoryId: z.string().optional(),
+  tagId: z.string().optional(),
+  permissionScope: z.enum(["PRIVATE", "MEMBERS", "DEPARTMENTS", "COMPANY", "PUBLIC", "ADMIN"]).optional(),
+  updateTimeRange: z.enum(["all", "today", "7d", "30d", "custom"]).default("all"),
+  parseStatus: z.string().optional(),
+  uploaderId: z.string().optional(),
+  departmentId: z.string().optional(),
+  sort: SearchSortBy.default("relevance"),
+  page: z.coerce.number().int().positive().default(1),
+  pageSize: z.coerce.number().int().positive().max(100).default(20),
+  viewMode: z.enum(["list", "grid"]).default("list"),
+});
+export type SearchListQuery = z.infer<typeof SearchListQuery>;
+
+export const HotSearchQuery = z.object({
+  range: z.enum(["today", "week", "month", "all"]).default("today"),
+  categoryId: z.string().optional(),
+  limit: z.coerce.number().int().positive().max(50).default(10),
+});
+export type HotSearchQuery = z.infer<typeof HotSearchQuery>;
+
+export const HotSearchItem = z.object({
+  keyword: z.string(),
+  hotScore: z.number(),
+  searchCount: z.number().int(),
+  clickCount: z.number().int(),
+  viewCount: z.number().int(),
+  downloadCount: z.number().int(),
+  trend: z.enum(["up", "down", "flat"]),
+  categoryId: z.string().nullable().optional(),
+  pinned: z.boolean().default(false),
+});
+export type HotSearchItem = z.infer<typeof HotSearchItem>;
 
 export const SearchResponse = z.object({
   query: z.string(),

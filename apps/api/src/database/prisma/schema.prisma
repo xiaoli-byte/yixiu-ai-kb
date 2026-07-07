@@ -49,6 +49,8 @@ model Folder {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  permissions FolderPermission[]
+
   @@unique([tenantId, name, parentId])
   @@map("folders")
 }
@@ -69,6 +71,12 @@ model Document {
   status       String   @default("PENDING")
   storageKey   String   @map("storage_key")
   errorMessage String?  @map("error_message")
+  permissionScope      String    @default("PRIVATE") @map("permission_scope")
+  searchable           Boolean   @default(true)
+  aiReferenceEnabled   Boolean   @default(true) @map("ai_reference_enabled")
+  archived             Boolean   @default(false)
+  deletedAt            DateTime? @map("deleted_at")
+  deletedBy            String?   @map("deleted_by")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -77,6 +85,7 @@ model Document {
   tags  DocumentTag[]
   chunks Chunk[]
   structuredFacts StructuredFact[]
+  permissions DocumentPermission[]
 
   @@index([tenantId])
   @@index([status])
@@ -85,7 +94,113 @@ model Document {
   @@index([contentId])
   @@index([tenantId, fileHash])
   @@index([tenantId, contentHash])
+  @@index([tenantId, permissionScope], map: "documents_tenant_permission_scope_idx")
+  @@index([tenantId, searchable], map: "documents_tenant_searchable_idx")
+  @@index([tenantId, archived], map: "documents_tenant_archived_idx")
+  @@index([tenantId, deletedAt], map: "documents_tenant_deleted_at_idx")
   @@map("documents")
+}
+
+model DocumentPermission {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  documentId          String   @map("document_id")
+  subjectType         String   @map("subject_type") @db.VarChar(30)
+  subjectId           String   @map("subject_id")
+  canView             Boolean  @default(true) @map("can_view")
+  canDownload         Boolean  @default(false) @map("can_download")
+  canEdit             Boolean  @default(false) @map("can_edit")
+  canDelete           Boolean  @default(false) @map("can_delete")
+  canManagePermission Boolean  @default(false) @map("can_manage_permission")
+  createdBy           String   @map("created_by")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, documentId, subjectType, subjectId], map: "document_permissions_tenant_document_subject_unique")
+  @@index([tenantId, documentId], map: "document_permissions_tenant_document_idx")
+  @@index([tenantId, subjectType, subjectId], map: "document_permissions_tenant_subject_idx")
+  @@map("document_permissions")
+}
+
+model FolderPermission {
+  id                  String   @id @default(cuid())
+  tenantId            String   @map("tenant_id")
+  folderId            String   @map("folder_id")
+  permissionScope     String   @default("PRIVATE") @map("permission_scope") @db.VarChar(30)
+  searchable          Boolean  @default(true)
+  aiReferenceEnabled  Boolean  @default(true) @map("ai_reference_enabled")
+  subjectType         String   @map("subject_type") @db.VarChar(30)
+  subjectId           String   @map("subject_id")
+  canView             Boolean  @default(true) @map("can_view")
+  canDownload         Boolean  @default(false) @map("can_download")
+  canEdit             Boolean  @default(false) @map("can_edit")
+  canDelete           Boolean  @default(false) @map("can_delete")
+  canManagePermission Boolean  @default(false) @map("can_manage_permission")
+  createdBy           String   @map("created_by")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, folderId, subjectType, subjectId], map: "folder_permissions_tenant_folder_subject_unique")
+  @@index([tenantId, folderId], map: "folder_permissions_tenant_folder_idx")
+  @@index([tenantId, subjectType, subjectId], map: "folder_permissions_tenant_subject_idx")
+  @@map("folder_permissions")
+}
+
+model PermissionAuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  actorId    String?  @map("actor_id")
+  targetType String   @map("target_type") @db.VarChar(30)
+  targetId   String   @map("target_id")
+  action     String   @db.VarChar(50)
+  mode       String   @default("DIRECT") @db.VarChar(30)
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, createdAt(sort: Desc)], map: "permission_audit_logs_tenant_created_idx")
+  @@index([tenantId, actorId, createdAt(sort: Desc)], map: "permission_audit_logs_tenant_actor_created_idx")
+  @@index([tenantId, targetType, targetId], map: "permission_audit_logs_tenant_target_idx")
+  @@map("permission_audit_logs")
+}
+
+model SearchEvent {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  userId      String?  @map("user_id")
+  keyword     String
+  categoryId  String?  @map("category_id")
+  resultCount Int      @default(0) @map("result_count")
+  eventType   String   @default("SEARCH") @map("event_type") @db.VarChar(40)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([tenantId, keyword, createdAt(sort: Desc)], map: "search_events_tenant_keyword_created_idx")
+  @@index([tenantId, categoryId, createdAt(sort: Desc)], map: "search_events_tenant_category_created_idx")
+  @@index([tenantId, eventType, createdAt(sort: Desc)], map: "search_events_tenant_event_created_idx")
+  @@index([tenantId, userId, createdAt(sort: Desc)], map: "search_events_tenant_user_created_idx")
+  @@map("search_events")
+}
+
+model HotSearchKeyword {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  keyword    String
+  categoryId String?  @map("category_id")
+  pinned     Boolean  @default(false)
+  weight     Int      @default(0)
+  enabled    Boolean  @default(true)
+  createdBy  String   @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, keyword, categoryId], map: "hot_search_keywords_tenant_keyword_category_unique")
+  @@index([tenantId, enabled], map: "hot_search_keywords_tenant_enabled_idx")
+  @@index([tenantId, pinned, enabled], map: "hot_search_keywords_tenant_pinned_enabled_idx")
+  @@map("hot_search_keywords")
 }
 
 model DocumentContent {
