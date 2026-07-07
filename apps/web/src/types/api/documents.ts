@@ -44,6 +44,7 @@ export interface DocumentPermissionUpdateRequest {
 }
 
 export interface DocumentPermissionResponse {
+  documentId: string;
   permissionScope: DocumentPermissionScope;
   entries: DocumentPermissionEntry[];
   searchable: boolean;
@@ -62,13 +63,18 @@ export interface DocumentBatchOperationRequest {
 
 export interface DocumentBatchOperationResult {
   documentId: string;
-  success: boolean;
-  error?: string;
+  ok: boolean;
+  message?: string;
 }
 
 export interface DocumentBatchOperationResponse {
   action?: DocumentBatchAction;
   results: DocumentBatchOperationResult[];
+}
+
+export interface DocumentParseRetryResponse {
+  id: string;
+  status: DocumentStatus;
 }
 
 export interface DocumentDto {

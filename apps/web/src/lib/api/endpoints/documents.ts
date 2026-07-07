@@ -5,6 +5,7 @@ import type {
   DocumentBatchPermissionUpdateRequest,
   DocumentDetail,
   DocumentListResponse,
+  DocumentParseRetryResponse,
   DocumentPermissionResponse,
   DocumentPermissionUpdateRequest,
   DocumentQuery,
@@ -55,8 +56,8 @@ export async function batchDocuments(
   return apiClient.post<DocumentBatchOperationResponse>("/documents/batch", body);
 }
 
-export async function retryDocumentParse(id: string): Promise<void> {
-  return apiClient.post<void>(`/documents/${id}/parse/retry`);
+export async function retryDocumentParse(id: string): Promise<DocumentParseRetryResponse> {
+  return apiClient.post<DocumentParseRetryResponse>(`/documents/${id}/parse/retry`);
 }
 
 export const retryParse = retryDocumentParse;

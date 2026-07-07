@@ -25,6 +25,7 @@ export type {
   DocumentDto,
   DocumentListQuery,
   DocumentListResponse,
+  DocumentParseRetryResponse,
   DocumentPermissionEntry,
   DocumentPermissionResponse,
   DocumentPermissionScope,
