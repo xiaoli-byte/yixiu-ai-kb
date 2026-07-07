@@ -176,6 +176,56 @@ describe("SearchService result helpers", () => {
 });
 
 describe("SearchService permission-aware search", () => {
+  it("keeps enough candidates for the second SearchList page", async () => {
+    const { service, db, embeddings, access } = createService();
+    embeddings.embedOne.mockRejectedValueOnce(new Error("vector unavailable"));
+
+    const rows = Array.from({ length: 100 }, (_, index) => {
+      const position = index + 1;
+      return {
+        chunkId: `chunk-${position}`,
+        documentId: `doc-${position}`,
+        contentId: `content-${position}`,
+        documentTitle: `Doc ${position}`,
+        mime: "text/plain",
+        permissionScope: "COMPANY",
+        categoryPath: "Policies",
+        idx: 0,
+        text: `risk ${position}`,
+        highlight: `risk ${position}`,
+        rank: 100 - index,
+        page: null,
+        updatedAt: new Date("2026-07-07T10:00:00.000Z"),
+        createdAt: new Date("2026-07-06T10:00:00.000Z"),
+      };
+    });
+    access.getAccessFlags.mockResolvedValueOnce(
+      Object.fromEntries(
+        rows.map((row) => [
+          row.documentId,
+          {
+            canView: true,
+            canDownload: false,
+            canEdit: false,
+            canDelete: false,
+            canManagePermission: false,
+          },
+        ]),
+      ),
+    );
+    db.query.mockResolvedValueOnce(rows).mockResolvedValue([]);
+
+    const result = await service.searchList(
+      { keyword: "risk", page: "2", pageSize: "50" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    expect(result.hits).toHaveLength(50);
+    expect(result.hits[0].chunkId).toBe("chunk-51");
+    expect(result.hits[49].chunkId).toBe("chunk-100");
+    expect(db.query.mock.calls[0][1]).toContain(100);
+  });
+
   it("maps SearchList categoryId to document folder filtering in search SQL", async () => {
     const { service, db, embeddings, access } = createService();
     embeddings.embedOne.mockRejectedValueOnce(new Error("vector unavailable"));
@@ -328,6 +378,16 @@ describe("Document/search database PRD shape", () => {
     expect(migration).toContain("hot_search_keywords_tenant_keyword_category_not_null_unique");
     expect(migration).toContain("WHERE category_id IS NOT NULL");
   });
+
+  it("uses PRD search event names in metric aggregation and rate-limits GET search", () => {
+    const service = readFileSync("apps/api/src/modules/search/search.service.ts", "utf8");
+    const controller = readFileSync("apps/api/src/modules/search/search.controller.ts", "utf8");
+
+    expect(service).toContain("se.event_type IN ('RESULT_CLICK', 'CLICK')");
+    expect(service).toContain("se.event_type IN ('DOCUMENT_VIEW', 'VIEW')");
+    expect(service).toContain("se.event_type IN ('DOCUMENT_DOWNLOAD', 'DOWNLOAD')");
+    expect(controller).toMatch(/@Get\(\)\s*\r?\n\s*@RateLimit\(\{ \.\.\.RateLimitPolicies\.search/);
+  });
 });
 
 describe("SearchService history helpers", () => {
@@ -383,6 +443,32 @@ describe("SearchService history helpers", () => {
         "SEARCH",
       ]),
     );
+  });
+
+  it("normalizes legacy search event aliases to PRD event names", async () => {
+    const { service, db } = createService();
+
+    await (service as any).recordSearchEvent({
+      keyword: "Risk",
+      eventType: "CLICK",
+      resultCount: 0,
+    });
+    await (service as any).recordSearchEvent({
+      keyword: "Risk",
+      eventType: "VIEW",
+      resultCount: 0,
+    });
+    await (service as any).recordSearchEvent({
+      keyword: "Risk",
+      eventType: "DOWNLOAD",
+      resultCount: 0,
+    });
+
+    expect(db.query.mock.calls.map((call) => (call[1] as unknown[])[9])).toEqual([
+      "RESULT_CLICK",
+      "DOCUMENT_VIEW",
+      "DOCUMENT_DOWNLOAD",
+    ]);
   });
 
   it("filters zero-result hot terms without click, view, or download activity", async () => {
@@ -462,7 +548,50 @@ describe("SearchService history helpers", () => {
     expect(sql).toContain("search_events");
     expect(sql).toContain("hot_search_keywords");
     expect(sql).toContain("created_at >=");
-    expect(db.query.mock.calls[0][1]).toEqual(["tenant-1", 10]);
+    expect((db.query.mock.calls[0][1] as unknown[]).at(-1)).toBeGreaterThan(10);
+  });
+
+  it("over-fetches hot search rows so filtering does not under-fill the requested limit", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValueOnce([
+      {
+        keyword: "no results",
+        categoryId: null,
+        searchCount: 3,
+        clickCount: 0,
+        viewCount: 0,
+        downloadCount: 0,
+        resultCount: 0,
+        pinned: false,
+        pinnedWeight: 0,
+      },
+      {
+        keyword: "valid",
+        categoryId: null,
+        searchCount: 1,
+        clickCount: 1,
+        viewCount: 0,
+        downloadCount: 0,
+        resultCount: 0,
+        pinned: false,
+        pinnedWeight: 0,
+      },
+    ]);
+
+    await expect((service as any).listHotSearch({ range: "week", limit: "1" })).resolves.toEqual([
+      {
+        keyword: "valid",
+        hotScore: 3,
+        searchCount: 1,
+        clickCount: 1,
+        viewCount: 0,
+        downloadCount: 0,
+        trend: "flat",
+        categoryId: null,
+        pinned: false,
+      },
+    ]);
+    expect((db.query.mock.calls[0][1] as unknown[]).at(-1)).toBeGreaterThan(1);
   });
 
   it("records and reads search history scoped to tenant and user", async () => {

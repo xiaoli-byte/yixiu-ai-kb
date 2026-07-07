@@ -11,6 +11,7 @@ export class SearchController {
   constructor(private readonly search: SearchService) {}
 
   @Get()
+  @RateLimit({ ...RateLimitPolicies.search, message: "搜索请求过于频繁，请稍后再试" })
   async getSearch(@Query() query: unknown, @CurrentUser() user: any) {
     return this.search.searchList(query, user);
   }

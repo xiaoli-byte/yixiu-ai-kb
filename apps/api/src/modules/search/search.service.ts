@@ -75,6 +75,8 @@ type SearchOptions = {
   mode: SearchModeValue;
   sortBy?: SearchSortBy;
   topK: number;
+  maxResults?: number;
+  candidateLimit?: number;
   tags?: string[];
   user?: any;
   filters?: SearchFilters;
@@ -102,6 +104,8 @@ export class SearchService {
 
   /** 每个文档最多返回的 chunk 数量（防止单一文档霸屏） */
   private readonly MAX_CHUNKS_PER_DOC = 2;
+
+  private readonly SEARCH_LIST_MAX_CANDIDATES = 500;
 
   /** RRF 融合参数 */
   private readonly RRF_K = 60;
@@ -195,8 +199,9 @@ export class SearchService {
     const t0 = Date.now();
     const actor = this.toDocumentUserContext(opts.user);
     const q = opts.q.trim();
-    const k = Math.min(opts.topK || 10, 50);
-    const candidateLimit = 50;
+    const maxResults = this.clampLimit(opts.maxResults ?? 50, 1, this.SEARCH_LIST_MAX_CANDIDATES);
+    const k = this.clampLimit(opts.topK || 10, 1, maxResults);
+    const candidateLimit = this.clampLimit(opts.candidateLimit ?? Math.max(k, 50), k, maxResults);
     const sortBy = opts.sortBy ?? "relevance";
     const filters = this.normalizeSearchFilters(opts);
 
@@ -442,13 +447,13 @@ export class SearchService {
   private searchMetricsJoinSql(): string {
     return `LEFT JOIN LATERAL (
          SELECT
-           COUNT(*) FILTER (WHERE se.event_type = 'VIEW')::int AS view_count,
-           COUNT(*) FILTER (WHERE se.event_type = 'DOWNLOAD')::int AS download_count,
+           COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_VIEW', 'VIEW'))::int AS view_count,
+           COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_DOWNLOAD', 'DOWNLOAD'))::int AS download_count,
            (
              COUNT(*) FILTER (WHERE se.event_type = 'SEARCH') * 1 +
-             COUNT(*) FILTER (WHERE se.event_type = 'CLICK') * 2 +
-             COUNT(*) FILTER (WHERE se.event_type = 'VIEW') * 3 +
-             COUNT(*) FILTER (WHERE se.event_type = 'DOWNLOAD') * 4
+             COUNT(*) FILTER (WHERE se.event_type IN ('RESULT_CLICK', 'CLICK')) * 2 +
+             COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_VIEW', 'VIEW')) * 3 +
+             COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_DOWNLOAD', 'DOWNLOAD')) * 4
            )::float AS hot_score
          FROM search_events se
          WHERE se.tenant_id = d.tenant_id
@@ -935,12 +940,14 @@ export class SearchService {
     }
 
     const actor = this.toDocumentUserContext(user);
-    const topK = Math.min(query.page * query.pageSize, 50);
+    const topK = Math.min(query.page * query.pageSize, this.SEARCH_LIST_MAX_CANDIDATES);
     const result = await this.search({
       q: keyword,
       mode: "hybrid",
       sortBy: query.sort,
       topK,
+      maxResults: this.SEARCH_LIST_MAX_CANDIDATES,
+      candidateLimit: topK,
       filters: query,
       user,
     });
@@ -1000,16 +1007,17 @@ export class SearchService {
     const rangeSql = this.hotRangeSql(query.range);
     if (rangeSql) eventFilters.push(rangeSql);
 
-    const limitParam = addValue(query.limit);
+    const fetchLimit = this.hotSearchFetchLimit(query.limit);
+    const limitParam = addValue(fetchLimit);
     const rows = await this.db.query<any>(
       `WITH event_counts AS (
          SELECT
            lower(regexp_replace(trim(se.keyword), '\\s+', ' ', 'g')) AS keyword,
            se.category_id AS "categoryId",
            COUNT(*) FILTER (WHERE se.event_type = 'SEARCH')::int AS "searchCount",
-           COUNT(*) FILTER (WHERE se.event_type = 'CLICK')::int AS "clickCount",
-           COUNT(*) FILTER (WHERE se.event_type = 'VIEW')::int AS "viewCount",
-           COUNT(*) FILTER (WHERE se.event_type = 'DOWNLOAD')::int AS "downloadCount",
+           COUNT(*) FILTER (WHERE se.event_type IN ('RESULT_CLICK', 'CLICK'))::int AS "clickCount",
+           COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_VIEW', 'VIEW'))::int AS "viewCount",
+           COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_DOWNLOAD', 'DOWNLOAD'))::int AS "downloadCount",
            COALESCE(SUM(CASE WHEN se.event_type = 'SEARCH' THEN se.result_count ELSE 0 END), 0)::int AS "resultCount"
          FROM search_events se
          WHERE ${eventFilters.join(" AND ")}
@@ -1068,7 +1076,7 @@ export class SearchService {
     const keyword = this.normalizeKeyword(input.keyword ?? input.q ?? "");
     if (!tenantId || !keyword) return;
 
-    const eventType = (input.eventType || "SEARCH").trim().toUpperCase() || "SEARCH";
+    const eventType = this.normalizeSearchEventType(input.eventType);
     const resultCount = Math.max(0, Math.trunc(this.numberOf(input.resultCount)));
 
     try {
@@ -1147,6 +1155,18 @@ export class SearchService {
     return "";
   }
 
+  private hotSearchFetchLimit(limit: number): number {
+    return Math.min(Math.max(limit * 5, limit + 20), 250);
+  }
+
+  private normalizeSearchEventType(value?: string): string {
+    const eventType = (value || "SEARCH").trim().toUpperCase() || "SEARCH";
+    if (eventType === "CLICK") return "RESULT_CLICK";
+    if (eventType === "VIEW") return "DOCUMENT_VIEW";
+    if (eventType === "DOWNLOAD") return "DOCUMENT_DOWNLOAD";
+    return eventType;
+  }
+
   private normalizeKeyword(value: string): string {
     return value.trim().replace(/\s+/g, " ").toLowerCase();
   }
@@ -1154,6 +1174,11 @@ export class SearchService {
   private numberOf(value: unknown): number {
     const number = Number(value ?? 0);
     return Number.isFinite(number) ? number : 0;
+  }
+
+  private clampLimit(value: unknown, min: number, max: number): number {
+    const number = Math.trunc(this.numberOf(value));
+    return Math.min(Math.max(number || min, min), max);
   }
 
   private toDocumentUserContext(user?: any): DocumentUserContext {
