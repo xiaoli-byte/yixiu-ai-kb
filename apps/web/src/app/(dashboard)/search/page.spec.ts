@@ -10,6 +10,7 @@ const componentsDir = join(process.cwd(), "apps/web/src/components/search");
 const toolbarSource = readFileSync(join(componentsDir, "SearchResultsToolbar.tsx"), "utf8");
 const listSource = readFileSync(join(componentsDir, "SearchResultList.tsx"), "utf8");
 const gridSource = readFileSync(join(componentsDir, "SearchResultGrid.tsx"), "utf8");
+const filtersSource = readFileSync(join(componentsDir, "SearchFilters.tsx"), "utf8");
 const source = `${pageSource}\n${clientSource}`;
 
 describe("Search page source composition", () => {
@@ -37,6 +38,9 @@ describe("Search page source composition", () => {
 
   it("guards filter-only state, URL changes, request races, and permission notices", () => {
     expect(clientSource).toContain("isMeaningfulFilterValue");
+    expect(clientSource).toContain("keyword.trim().length > 0 || hasActiveFilter || advancedOpen");
+    expect(clientSource).toContain("showResults && keyword.trim()");
+    expect(clientSource).toContain("请先输入关键词，筛选会与关键词组合生效");
     expect(clientSource).not.toContain('applyFilters({ updateTimeRange: "all" })');
     expect(clientSource).toContain("keyword: item.label");
     expect(clientSource).toContain("const paramsKey = searchParams.toString()");
@@ -46,6 +50,12 @@ describe("Search page source composition", () => {
     expect(clientSource).toContain("requestId !== requestSeq.current");
     expect(clientSource).toContain("permissionNotice={hits.some((hit) => hit.canDownload === false)}");
     expect(clientSource).toMatch(/setSort\("relevance"\)/);
+  });
+
+  it("does not treat updateTimeRange all as an active filter in filter controls", () => {
+    expect(filtersSource).toContain("isMeaningfulFilterValue");
+    expect(filtersSource).toContain('value !== "all"');
+    expect(filtersSource).not.toContain("value.fileType || value.updateTimeRange || value.categoryId");
   });
 
   it("renders raw fallback snippets as text and keeps sort options compatible", () => {

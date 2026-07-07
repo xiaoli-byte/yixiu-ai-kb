@@ -58,9 +58,7 @@ export function SearchFilters({
   onClear,
   onToggleExpanded,
 }: SearchFiltersProps) {
-  const hasFilter = Boolean(
-    value.fileType || value.updateTimeRange || value.categoryId || value.tagId || value.permissionScope,
-  );
+  const hasFilter = Object.values(value).some(isMeaningfulFilterValue);
 
   return (
     <div className="border-b border-slate-200 bg-white px-8 py-3">
@@ -139,6 +137,10 @@ export function SearchFilters({
       )}
     </div>
   );
+}
+
+function isMeaningfulFilterValue(value: unknown) {
+  return Boolean(value && value !== "all");
 }
 
 function FilterSelect({

@@ -87,7 +87,7 @@ export default function SearchPageClient() {
   const hasActiveFilter = useMemo(() => {
     return Object.values(filters).some(isMeaningfulFilterValue);
   }, [filters]);
-  const showResults = keyword.trim().length > 0 || advancedOpen;
+  const showResults = keyword.trim().length > 0 || hasActiveFilter || advancedOpen;
 
   const replaceUrl = useCallback(
     (next: {
@@ -422,8 +422,12 @@ export default function SearchPageClient() {
 
       {!loading && !error && hits.length === 0 && (
         <div className="mx-8 my-8 rounded border border-slate-200 bg-slate-50 p-10 text-center">
-          <div className="text-sm font-medium text-slate-900">没有找到匹配结果</div>
-          <div className="mt-2 text-xs text-slate-500">请调整关键词或清空筛选后重试</div>
+          <div className="text-sm font-medium text-slate-900">
+            {keyword.trim() ? "没有找到匹配结果" : "请先输入关键词"}
+          </div>
+          <div className="mt-2 text-xs text-slate-500">
+            {keyword.trim() ? "请调整关键词或清空筛选后重试" : "请先输入关键词，筛选会与关键词组合生效"}
+          </div>
           <button
             className="mt-4 inline-flex h-8 items-center rounded bg-white px-3 text-xs text-brand-700 ring-1 ring-slate-200 hover:bg-brand-50"
             onClick={clearFilters}
