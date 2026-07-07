@@ -11,6 +11,7 @@ import {
   DocumentBatchPermissionUpdateRequest,
   DocumentBatchOperationRequest,
   DocumentPermissionUpdateRequest,
+  DocumentUpdateRequest,
 } from "@ai-knowledge/schemas";
 import { extname } from "path";
 import { v4 as uuid } from "uuid";
@@ -288,22 +289,27 @@ export class DocumentsService {
     if (!doc) throw new NotFoundException("Document not found");
   }
 
-  async update(id: string, data: { title?: string; folderId?: string | null }, user?: any) {
+  async update(id: string, data: unknown, user?: any) {
+    const parsed = this.parseRequest(
+      DocumentUpdateRequest,
+      data,
+      "Invalid document update request",
+    );
     const actor = this.toDocumentUserContext(user);
     await this.access.assertDocumentAccess(id, "EDIT", actor);
     const doc = await this.prisma.document.findFirst({
       where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
     });
     if (!doc) throw new NotFoundException("Document not found");
-    const hasFolderId = Object.prototype.hasOwnProperty.call(data, "folderId");
+    const hasFolderId = Object.prototype.hasOwnProperty.call(parsed, "folderId");
     const targetFolderId = hasFolderId
-      ? await this.normalizeAndValidateTargetFolder(data.folderId, actor.tenantId)
+      ? await this.normalizeAndValidateTargetFolder(parsed.folderId, actor.tenantId)
       : undefined;
 
     const updated = await this.prisma.document.update({
       where: { id },
       data: {
-        title: data.title,
+        title: parsed.title,
         folderId: hasFolderId ? targetFolderId : undefined,
       },
     });
@@ -686,9 +692,12 @@ export class DocumentsService {
   }
 
   private async normalizeAndValidateTargetFolder(
-    folderId: string | null | undefined,
+    folderId: unknown,
     tenantId: string,
   ) {
+    if (folderId !== null && folderId !== undefined && typeof folderId !== "string") {
+      throw new BadRequestException("Invalid folderId");
+    }
     const normalized = typeof folderId === "string" ? folderId.trim() : folderId;
     if (!normalized || normalized === "root") return null;
 

@@ -15,7 +15,7 @@ import {
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { AuthGuard } from "@nestjs/passport";
-import { DocumentListQuery } from "@ai-knowledge/schemas";
+import { DocumentListQuery, DocumentUpdateRequest } from "@ai-knowledge/schemas";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { PermissionsGuard, RequirePermissions } from "../../common/permissions/permissions.guard";
 import { Action, Resource } from "../../common/permissions/permissions.types";
@@ -93,10 +93,12 @@ export class DocumentsController {
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
   async update(
     @Param("id") id: string,
-    @Body() body: { title?: string; folderId?: string | null },
+    @Body() body: unknown,
     @CurrentUser() user: any,
   ) {
-    return this.docs.update(id, body, user);
+    const result = DocumentUpdateRequest.safeParse(body);
+    if (!result.success) throw new BadRequestException("Invalid document update request");
+    return this.docs.update(id, result.data, user);
   }
 
   @Delete(":id")

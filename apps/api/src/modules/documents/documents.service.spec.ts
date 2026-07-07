@@ -281,6 +281,22 @@ describe("DocumentsService permission-aware operations", () => {
     );
   });
 
+  it("update rejects non-string folderId before folder lookup or mutation", async () => {
+    const { service, prisma } = createService();
+    prisma.document.findFirst.mockResolvedValueOnce({
+      id: "doc-1",
+      tenantId: "tenant-1",
+      folderId: null,
+    });
+
+    await expect(
+      (service as any).update("doc-1", { folderId: 123 }, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.folder.findFirst).not.toHaveBeenCalled();
+    expect(prisma.document.update).not.toHaveBeenCalled();
+  });
+
   it("controller checks document EDIT access before tag mutations", async () => {
     const docs = {
       assertDocumentEditAccess: vi.fn().mockRejectedValue(new ForbiddenException("denied")),
@@ -312,6 +328,19 @@ describe("DocumentsService permission-aware operations", () => {
     await expect(controller.list({ page: "0" }, user)).rejects.toBeInstanceOf(BadRequestException);
 
     expect(docs.list).not.toHaveBeenCalled();
+  });
+
+  it("controller rejects invalid update body before calling service", async () => {
+    const docs = {
+      update: vi.fn(),
+    };
+    const controller = new DocumentsController(docs as any, {} as any, {} as any);
+
+    await expect(
+      controller.update("doc-1", { folderId: 123 } as any, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(docs.update).not.toHaveBeenCalled();
   });
 
   it("batch archive returns per-document results", async () => {
@@ -499,9 +528,46 @@ describe("DocumentsService permission-aware operations", () => {
     await expect(
       (service as any).setBatchPermissions({ documentIds: [], permissionScope: "COMPANY" }, user),
     ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      (service as any).setBatchPermissions({ documentIds: ["   "], permissionScope: "COMPANY" }, user),
+    ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(access.assertDocumentAccess).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("trims and deduplicates batch permission documentIds before applying permissions", async () => {
+    const { service } = createService();
+    const setPermissions = vi.spyOn(service, "setPermissions").mockResolvedValue({} as any);
+
+    await expect(
+      (service as any).setBatchPermissions(
+        {
+          documentIds: [" doc-1 ", "doc-1", "doc-2"],
+          permissionScope: "COMPANY",
+        },
+        user,
+      ),
+    ).resolves.toEqual({
+      results: [
+        { documentId: "doc-1", ok: true },
+        { documentId: "doc-2", ok: true },
+      ],
+    });
+
+    expect(setPermissions).toHaveBeenCalledTimes(2);
+    expect(setPermissions).toHaveBeenNthCalledWith(
+      1,
+      "doc-1",
+      expect.objectContaining({ permissionScope: "COMPANY" }),
+      user,
+    );
+    expect(setPermissions).toHaveBeenNthCalledWith(
+      2,
+      "doc-2",
+      expect.objectContaining({ permissionScope: "COMPANY" }),
+      user,
+    );
   });
 
   it("parse retry rejects non-FAILED documents and re-enqueues FAILED documents", async () => {

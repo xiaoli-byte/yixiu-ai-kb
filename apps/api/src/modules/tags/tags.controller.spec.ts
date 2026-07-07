@@ -40,6 +40,23 @@ describe("TagsController document tag access", () => {
     expect(tags.getDocumentTags).toHaveBeenCalledWith("doc-1");
   });
 
+  it("does not read document tags when VIEW access is denied", async () => {
+    const { controller, tags, access } = createController();
+    access.assertDocumentAccess.mockRejectedValue(new ForbiddenException("denied"));
+
+    await expect((controller as any).getDocumentTags("doc-1", user)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+
+    expect(access.assertDocumentAccess).toHaveBeenCalledWith("doc-1", "VIEW", {
+      userId: "user-1",
+      tenantId: "tenant-1",
+      role: "editor",
+      departmentId: "dept-1",
+    });
+    expect(tags.getDocumentTags).not.toHaveBeenCalled();
+  });
+
   it("checks EDIT access before adding or removing document tags", async () => {
     const { controller, tags, access } = createController();
 

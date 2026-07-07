@@ -54,9 +54,20 @@ export const DocumentPermissionUpdateRequest = z.object({
 export type DocumentPermissionUpdateRequest = z.infer<typeof DocumentPermissionUpdateRequest>;
 
 export const DocumentBatchPermissionUpdateRequest = DocumentPermissionUpdateRequest.extend({
-  documentIds: z.array(z.string().min(1)).min(1).max(200).transform((ids) => Array.from(new Set(ids))),
+  documentIds: z.array(z.string().trim().min(1)).min(1).max(200).transform((ids) => Array.from(new Set(ids))),
 });
 export type DocumentBatchPermissionUpdateRequest = z.infer<typeof DocumentBatchPermissionUpdateRequest>;
+
+export const DocumentUpdateRequest = z.object({
+  title: z.string().optional(),
+  folderId: z
+    .string()
+    .trim()
+    .transform((folderId) => (folderId === "" || folderId === "root" ? null : folderId))
+    .nullable()
+    .optional(),
+});
+export type DocumentUpdateRequest = z.infer<typeof DocumentUpdateRequest>;
 
 export const DocumentBatchAction = z.enum(["DOWNLOAD", "DELETE", "MOVE", "ARCHIVE", "RESTORE"]);
 export type DocumentBatchAction = z.infer<typeof DocumentBatchAction>;
