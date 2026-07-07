@@ -92,8 +92,9 @@ export class DocumentsController {
   async update(
     @Param("id") id: string,
     @Body() body: { title?: string; folderId?: string | null },
+    @CurrentUser() user: any,
   ) {
-    return this.docs.update(id, body);
+    return this.docs.update(id, body, user);
   }
 
   @Delete(":id")
@@ -104,13 +105,23 @@ export class DocumentsController {
 
   @Post(":id/tags/:tagId")
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
-  addTag(@Param("id") id: string, @Param("tagId") tagId: string) {
+  async addTag(
+    @Param("id") id: string,
+    @Param("tagId") tagId: string,
+    @CurrentUser() user: any,
+  ) {
+    await this.docs.assertDocumentEditAccess(id, user);
     return this.tags.addTagToDocument(id, tagId);
   }
 
   @Delete(":id/tags/:tagId")
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
-  removeTag(@Param("id") id: string, @Param("tagId") tagId: string) {
+  async removeTag(
+    @Param("id") id: string,
+    @Param("tagId") tagId: string,
+    @CurrentUser() user: any,
+  ) {
+    await this.docs.assertDocumentEditAccess(id, user);
     return this.tags.removeTagFromDocument(id, tagId);
   }
 }

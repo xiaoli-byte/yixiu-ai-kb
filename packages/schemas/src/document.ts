@@ -63,6 +63,14 @@ export const DocumentBatchOperationRequest = z.object({
 });
 export type DocumentBatchOperationRequest = z.infer<typeof DocumentBatchOperationRequest>;
 
+const QueryBoolean = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return value;
+}, z.boolean());
+
 export const DocumentDto = z.object({
   id: z.string(),
   title: z.string(),
@@ -104,7 +112,7 @@ export const DocumentListQuery = z.object({
   departmentId: z.string().optional(),
   uploadedFrom: z.string().optional(),
   uploadedTo: z.string().optional(),
-  archived: z.coerce.boolean().optional(),
+  archived: QueryBoolean.optional(),
   scope: z.enum(["mine", "public", "department", "archive", "all"]).default("all"),
   page: z.coerce.number().int().positive().default(1),
   pageSize: z.coerce.number().int().positive().max(100).default(20),

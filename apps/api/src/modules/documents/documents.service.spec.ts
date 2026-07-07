@@ -1,5 +1,7 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { DocumentListQuery } from "@ai-knowledge/schemas";
 import { describe, expect, it, vi } from "vitest";
+import { DocumentsController } from "./documents.controller";
 import { DocumentsService } from "./documents.service";
 
 function createService() {
@@ -72,6 +74,14 @@ function file(overrides: Partial<Express.Multer.File> = {}) {
 }
 
 describe("DocumentsService permission-aware operations", () => {
+  it("parses archived=false query strings as false", () => {
+    expect(DocumentListQuery.parse({ archived: "false" }).archived).toBe(false);
+    expect(DocumentListQuery.parse({ archived: "true" }).archived).toBe(true);
+    expect(DocumentListQuery.parse({ archived: false }).archived).toBe(false);
+    expect(DocumentListQuery.parse({ archived: true }).archived).toBe(true);
+    expect(DocumentListQuery.parse({}).archived).toBeUndefined();
+  });
+
   it("list calls DocumentAccessService.visibleDocumentWhereSql and returns access flags", async () => {
     const { service, prisma, db, access } = createService();
     prisma.$transaction.mockResolvedValueOnce([[], 0]);
@@ -190,6 +200,49 @@ describe("DocumentsService permission-aware operations", () => {
     expect(storage.removeObject).not.toHaveBeenCalled();
   });
 
+  it("update requires document EDIT access before mutating", async () => {
+    const { service, prisma, access } = createService();
+    access.assertDocumentAccess.mockRejectedValueOnce(new ForbiddenException("denied"));
+
+    await expect(
+      (service as any).update("doc-1", { title: "New title" }, user),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(access.assertDocumentAccess).toHaveBeenCalledWith(
+      "doc-1",
+      "EDIT",
+      {
+        userId: "user-1",
+        tenantId: "tenant-1",
+        role: "editor",
+        departmentId: "dept-1",
+      },
+    );
+    expect(prisma.document.update).not.toHaveBeenCalled();
+  });
+
+  it("controller checks document EDIT access before tag mutations", async () => {
+    const docs = {
+      assertDocumentEditAccess: vi.fn().mockRejectedValue(new ForbiddenException("denied")),
+    };
+    const tags = {
+      addTagToDocument: vi.fn(),
+      removeTagFromDocument: vi.fn(),
+    };
+    const controller = new DocumentsController(docs as any, tags as any, {} as any);
+
+    await expect(controller.addTag("doc-1", "tag-1", user)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(controller.removeTag("doc-1", "tag-1", user)).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+
+    expect(docs.assertDocumentEditAccess).toHaveBeenCalledTimes(2);
+    expect(tags.addTagToDocument).not.toHaveBeenCalled();
+    expect(tags.removeTagFromDocument).not.toHaveBeenCalled();
+  });
+
   it("batch archive returns per-document results", async () => {
     const { service, prisma, access } = createService();
     access.assertDocumentAccess
@@ -213,6 +266,123 @@ describe("DocumentsService permission-aware operations", () => {
       where: { id: "doc-1" },
       data: { archived: true, updatedAt: expect.any(Date) },
     });
+  });
+
+  it("batch download returns explicit per-document failures instead of succeeding silently", async () => {
+    const { service, prisma, access } = createService();
+
+    await expect(
+      (service as any).batch({ action: "DOWNLOAD", documentIds: ["doc-1"] }, user),
+    ).resolves.toEqual({
+      action: "DOWNLOAD",
+      results: [
+        {
+          documentId: "doc-1",
+          ok: false,
+          message: "Batch download is not supported yet",
+        },
+      ],
+    });
+
+    expect(access.assertDocumentAccess).not.toHaveBeenCalled();
+    expect(prisma.document.update).not.toHaveBeenCalled();
+  });
+
+  it("setPermissions performs permission updates and audit log in a Prisma transaction", async () => {
+    const { service, prisma, db, access } = createService();
+    const tx = {
+      $queryRawUnsafe: vi.fn(),
+      $executeRawUnsafe: vi.fn(),
+    };
+    prisma.$transaction.mockImplementation(async (callback: any) => callback(tx));
+    tx.$queryRawUnsafe
+      .mockResolvedValueOnce([
+        {
+          id: "doc-1",
+          permission_scope: "PRIVATE",
+          searchable: true,
+          ai_reference_enabled: true,
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: "doc-1",
+          permission_scope: "COMPANY",
+          searchable: false,
+          ai_reference_enabled: true,
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          subject_type: "USER",
+          subject_id: "user-2",
+          can_view: true,
+          can_download: true,
+          can_edit: false,
+          can_delete: false,
+          can_manage_permission: false,
+        },
+      ]);
+
+    await expect(
+      service.setPermissions(
+        "doc-1",
+        {
+          permissionScope: "COMPANY",
+          searchable: false,
+          aiReferenceEnabled: true,
+          mode: "OVERWRITE",
+          entries: [
+            {
+              subjectType: "USER",
+              subjectId: "user-2",
+              canView: true,
+              canDownload: true,
+              canEdit: false,
+              canDelete: false,
+              canManagePermission: false,
+            },
+          ],
+        },
+        user,
+      ),
+    ).resolves.toMatchObject({
+      documentId: "doc-1",
+      permissionScope: "COMPANY",
+      searchable: false,
+      aiReferenceEnabled: true,
+      entries: [{ subjectType: "USER", subjectId: "user-2" }],
+    });
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.query).not.toHaveBeenCalled();
+    expect(access.writeAuditLog).not.toHaveBeenCalled();
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE documents"),
+      "doc-1",
+      "tenant-1",
+      "COMPANY",
+      false,
+      true,
+    );
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining("DELETE FROM document_permissions"),
+      "doc-1",
+      "tenant-1",
+    );
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO permission_audit_logs"),
+      expect.any(String),
+      "tenant-1",
+      "user-1",
+      "DOCUMENT",
+      "doc-1",
+      "PERMISSION_UPDATE",
+      "OVERWRITE",
+      expect.any(String),
+      expect.any(String),
+    );
   });
 
   it("parse retry rejects non-FAILED documents and re-enqueues FAILED documents", async () => {

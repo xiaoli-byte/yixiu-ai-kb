@@ -23,8 +23,14 @@ import {
   type DocumentAccessFlags,
   type DocumentAction,
   type DocumentUserContext,
+  type PermissionAuditLogInput,
 } from "./document-access.service";
 import { isSupportedDocumentFile, SUPPORTED_DOCUMENT_EXTENSIONS } from "./document-file-types";
+
+type PrismaRawTransaction = {
+  $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
+  $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<number>;
+};
 
 type ListOptions = {
   q?: string;
@@ -269,10 +275,21 @@ export class DocumentsService {
     };
   }
 
-  async update(id: string, data: { title?: string; folderId?: string | null }) {
-    const tenantId = this.db.tenantId!;
+  async assertDocumentEditAccess(id: string, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    await this.access.assertDocumentAccess(id, "EDIT", actor);
     const doc = await this.prisma.document.findFirst({
-      where: { id, tenantId, deletedAt: null } as any,
+      where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
+      select: { id: true } as any,
+    });
+    if (!doc) throw new NotFoundException("Document not found");
+  }
+
+  async update(id: string, data: { title?: string; folderId?: string | null }, user?: any) {
+    const actor = this.toDocumentUserContext(user);
+    await this.access.assertDocumentAccess(id, "EDIT", actor);
+    const doc = await this.prisma.document.findFirst({
+      where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
     });
     if (!doc) throw new NotFoundException("Document not found");
 
@@ -329,57 +346,58 @@ export class DocumentsService {
     const actor = this.toDocumentUserContext(user);
     const parsed = DocumentPermissionUpdateRequest.parse(body);
     await this.access.assertDocumentAccess(id, "MANAGE_PERMISSION", actor);
-    const before = await this.readPermissionSnapshot(id, actor.tenantId);
-    if (!before) throw new NotFoundException("Document not found");
 
-    await this.db.query(
-      `UPDATE documents
-       SET permission_scope = $3,
-           searchable = $4,
-           ai_reference_enabled = $5,
-           updated_at = NOW()
-       WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
-      [
+    return this.prisma.$transaction(async (tx) => {
+      const runner = tx as unknown as PrismaRawTransaction;
+      const before = await this.readPermissionSnapshot(id, actor.tenantId, runner);
+      if (!before) throw new NotFoundException("Document not found");
+
+      await runner.$executeRawUnsafe(
+        `UPDATE documents
+         SET permission_scope = $3,
+             searchable = $4,
+             ai_reference_enabled = $5,
+             updated_at = NOW()
+         WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         id,
         actor.tenantId,
         parsed.permissionScope,
         parsed.searchable,
         parsed.aiReferenceEnabled,
-      ],
-    );
-
-    if (parsed.mode === "OVERWRITE" || parsed.mode === "DIRECT") {
-      await this.db.query(
-        `DELETE FROM document_permissions WHERE document_id = $1 AND tenant_id = $2`,
-        [id, actor.tenantId],
       );
-    }
 
-    for (const entry of parsed.entries) {
-      await this.db.query(
-        `INSERT INTO document_permissions (
-           id,
-           tenant_id,
-           document_id,
-           subject_type,
-           subject_id,
-           can_view,
-           can_download,
-           can_edit,
-           can_delete,
-           can_manage_permission,
-           created_by
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         ON CONFLICT (tenant_id, document_id, subject_type, subject_id)
-         DO UPDATE SET
-           can_view = EXCLUDED.can_view,
-           can_download = EXCLUDED.can_download,
-           can_edit = EXCLUDED.can_edit,
-           can_delete = EXCLUDED.can_delete,
-           can_manage_permission = EXCLUDED.can_manage_permission,
-           updated_at = NOW()`,
-        [
+      if (parsed.mode === "OVERWRITE" || parsed.mode === "DIRECT") {
+        await runner.$executeRawUnsafe(
+          `DELETE FROM document_permissions WHERE document_id = $1 AND tenant_id = $2`,
+          id,
+          actor.tenantId,
+        );
+      }
+
+      for (const entry of parsed.entries) {
+        await runner.$executeRawUnsafe(
+          `INSERT INTO document_permissions (
+             id,
+             tenant_id,
+             document_id,
+             subject_type,
+             subject_id,
+             can_view,
+             can_download,
+             can_edit,
+             can_delete,
+             can_manage_permission,
+             created_by
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           ON CONFLICT (tenant_id, document_id, subject_type, subject_id)
+           DO UPDATE SET
+             can_view = EXCLUDED.can_view,
+             can_download = EXCLUDED.can_download,
+             can_edit = EXCLUDED.can_edit,
+             can_delete = EXCLUDED.can_delete,
+             can_manage_permission = EXCLUDED.can_manage_permission,
+             updated_at = NOW()`,
           uuid(),
           actor.tenantId,
           id,
@@ -391,23 +409,23 @@ export class DocumentsService {
           entry.canDelete,
           entry.canManagePermission,
           actor.userId,
-        ],
-      );
-    }
+        );
+      }
 
-    const after = await this.readPermissionSnapshot(id, actor.tenantId);
-    await this.access.writeAuditLog({
-      tenantId: actor.tenantId,
-      actorId: actor.userId,
-      targetType: "DOCUMENT",
-      targetId: id,
-      action: "PERMISSION_UPDATE",
-      mode: parsed.mode,
-      before,
-      after,
+      const after = await this.readPermissionSnapshot(id, actor.tenantId, runner);
+      await this.writePermissionAuditLog(runner, {
+        tenantId: actor.tenantId,
+        actorId: actor.userId,
+        targetType: "DOCUMENT",
+        targetId: id,
+        action: "PERMISSION_UPDATE",
+        mode: parsed.mode,
+        before,
+        after,
+      });
+
+      return after;
     });
-
-    return after;
   }
 
   async setBatchPermissions(body: unknown, user?: any) {
@@ -514,6 +532,10 @@ export class DocumentsService {
     parsed: DocumentBatchOperationRequest,
     user?: any,
   ) {
+    if (parsed.action === "DOWNLOAD") {
+      throw new BadRequestException("Batch download is not supported yet");
+    }
+
     const actor = this.toDocumentUserContext(user);
     if (parsed.action === "DELETE") {
       await this.remove(documentId, user);
@@ -550,21 +572,28 @@ export class DocumentsService {
     return "EDIT";
   }
 
-  private async readPermissionSnapshot(documentId: string, tenantId: string) {
-    const document = await this.db.queryOne<any>(
+  private async readPermissionSnapshot(
+    documentId: string,
+    tenantId: string,
+    tx?: PrismaRawTransaction,
+  ) {
+    const documents = await this.queryRows<any>(
       `SELECT id, permission_scope, searchable, ai_reference_enabled
        FROM documents
        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
       [documentId, tenantId],
+      tx,
     );
+    const document = documents[0] ?? null;
     if (!document) return null;
 
-    const entries = await this.db.query<any>(
+    const entries = await this.queryRows<any>(
       `SELECT subject_type, subject_id, can_view, can_download, can_edit, can_delete, can_manage_permission
        FROM document_permissions
        WHERE document_id = $1 AND tenant_id = $2
        ORDER BY subject_type ASC, subject_id ASC`,
       [documentId, tenantId],
+      tx,
     );
 
     return {
@@ -582,6 +611,46 @@ export class DocumentsService {
         canManagePermission: Boolean(entry.can_manage_permission),
       })),
     };
+  }
+
+  private async queryRows<T>(
+    sql: string,
+    params: unknown[],
+    tx?: PrismaRawTransaction,
+  ): Promise<T[]> {
+    if (tx) {
+      return (await tx.$queryRawUnsafe<T[]>(sql, ...params)) as T[];
+    }
+    return this.db.query<T>(sql, params);
+  }
+
+  private async writePermissionAuditLog(
+    tx: PrismaRawTransaction,
+    input: PermissionAuditLogInput,
+  ) {
+    await tx.$executeRawUnsafe(
+      `INSERT INTO permission_audit_logs (
+         id,
+         tenant_id,
+         actor_id,
+         target_type,
+         target_id,
+         action,
+         mode,
+         before,
+         after
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)`,
+      uuid(),
+      input.tenantId,
+      input.actorId ?? null,
+      input.targetType,
+      input.targetId,
+      input.action,
+      input.mode ?? "DIRECT",
+      JSON.stringify(input.before ?? null),
+      JSON.stringify(input.after ?? null),
+    );
   }
 
   private toDocumentUserContext(user?: any): DocumentUserContext {
