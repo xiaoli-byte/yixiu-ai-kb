@@ -219,11 +219,64 @@ describe("DocumentAccessService", () => {
     const sql = db.query.mock.calls[0][0] as string;
     expect(sql).not.toContain("BOOL_OR");
     expect(sql).toMatch(
-      /COALESCE\(\s*doc_user\.can_view,\s*doc_dept\.can_view,\s*doc_role\.can_view,\s*folder_user\.can_view,\s*folder_dept\.can_view,\s*folder_role\.can_view,\s*d\.owner_id = \$3 OR d\.permission_scope IN \('COMPANY', 'PUBLIC'\)\s*\)/,
+      /COALESCE\(\s*doc_user\.can_view,\s*doc_dept\.can_view,\s*doc_role\.can_view,\s*folder_user\.can_view,\s*folder_dept\.can_view,\s*folder_role\.can_view,\s*\(d\.owner_id = \$3 AND d\.permission_scope <> 'ADMIN'\) OR d\.permission_scope IN \('COMPANY', 'PUBLIC'\)\s*\)/,
     );
     expect(sql).toContain(
-      "COALESCE(doc_user.can_edit, doc_dept.can_edit, doc_role.can_edit, folder_user.can_edit, folder_dept.can_edit, folder_role.can_edit, d.owner_id = $3)",
+      "COALESCE(doc_user.can_edit, doc_dept.can_edit, doc_role.can_edit, folder_user.can_edit, folder_dept.can_edit, folder_role.can_edit, FALSE)",
     );
+  });
+
+  it("does not grant non-admin owners default view of ADMIN-scope documents", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValueOnce([]);
+
+    await service.getAccessFlags(["doc-1"], {
+      userId: "owner-1",
+      tenantId: "tenant-1",
+      role: "viewer",
+    });
+
+    const accessSql = db.query.mock.calls[0][0] as string;
+    const visibilityFragment = service.visibleDocumentWhereSql("d", {
+      userId: "owner-1",
+      tenantId: "tenant-1",
+      role: "viewer",
+    });
+
+    expect(accessSql).toContain(
+      "(d.owner_id = $3 AND d.permission_scope <> 'ADMIN') OR d.permission_scope IN ('COMPANY', 'PUBLIC')",
+    );
+    expect(visibilityFragment.sql).toContain(
+      "(d.owner_id = $2 AND d.permission_scope <> 'ADMIN') OR d.permission_scope IN ('COMPANY', 'PUBLIC')",
+    );
+  });
+
+  it("defaults owners to view only and requires explicit grants for action flags", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValueOnce([]);
+
+    await service.getAccessFlags(["doc-1"], {
+      userId: "owner-1",
+      tenantId: "tenant-1",
+      role: "viewer",
+    });
+
+    const sql = db.query.mock.calls[0][0] as string;
+    expect(sql).toContain(
+      "(d.owner_id = $3 AND d.permission_scope <> 'ADMIN') OR d.permission_scope IN ('COMPANY', 'PUBLIC')",
+    );
+    expect(sql).toContain(
+      "COALESCE(doc_user.can_download, doc_dept.can_download, doc_role.can_download, folder_user.can_download, folder_dept.can_download, folder_role.can_download, FALSE)",
+    );
+    expect(sql).toContain(
+      "COALESCE(doc_user.can_delete, doc_dept.can_delete, doc_role.can_delete, folder_user.can_delete, folder_dept.can_delete, folder_role.can_delete, FALSE)",
+    );
+    expect(sql).toContain(
+      "COALESCE(doc_user.can_manage_permission, doc_dept.can_manage_permission, doc_role.can_manage_permission, folder_user.can_manage_permission, folder_dept.can_manage_permission, folder_role.can_manage_permission, FALSE)",
+    );
+    expect(sql).not.toContain("folder_role.can_download,\n             d.owner_id = $3");
+    expect(sql).not.toContain("folder_role.can_delete, d.owner_id = $3");
+    expect(sql).not.toContain("folder_role.can_manage_permission,\n             d.owner_id = $3");
   });
 
   it("considers folder grants after explicit document grants", async () => {

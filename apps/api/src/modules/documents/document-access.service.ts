@@ -120,7 +120,7 @@ export class DocumentAccessService {
             AND folder_role.subject_type = 'ROLE'
             AND folder_role.subject_id = ${roleParam}
           LIMIT 1)`,
-      `(${documentAlias}.owner_id = ${userParam} OR ${documentAlias}.permission_scope IN ('COMPANY', 'PUBLIC'))`,
+      `((${documentAlias}.owner_id = ${userParam} AND ${documentAlias}.permission_scope <> 'ADMIN') OR ${documentAlias}.permission_scope IN ('COMPANY', 'PUBLIC'))`,
     );
 
     return {
@@ -167,40 +167,24 @@ export class DocumentAccessService {
              folder_user.can_view,
              folder_dept.can_view,
              folder_role.can_view,
-             d.owner_id = $3 OR d.permission_scope IN ('COMPANY', 'PUBLIC')
+             (d.owner_id = $3 AND d.permission_scope <> 'ADMIN') OR d.permission_scope IN ('COMPANY', 'PUBLIC')
            )
          END AS can_view,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
-           ELSE COALESCE(
-             doc_user.can_download,
-             doc_dept.can_download,
-             doc_role.can_download,
-             folder_user.can_download,
-             folder_dept.can_download,
-             folder_role.can_download,
-             d.owner_id = $3
-           )
+           ELSE COALESCE(doc_user.can_download, doc_dept.can_download, doc_role.can_download, folder_user.can_download, folder_dept.can_download, folder_role.can_download, FALSE)
          END AS can_download,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
-           ELSE COALESCE(doc_user.can_edit, doc_dept.can_edit, doc_role.can_edit, folder_user.can_edit, folder_dept.can_edit, folder_role.can_edit, d.owner_id = $3)
+           ELSE COALESCE(doc_user.can_edit, doc_dept.can_edit, doc_role.can_edit, folder_user.can_edit, folder_dept.can_edit, folder_role.can_edit, FALSE)
          END AS can_edit,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
-           ELSE COALESCE(doc_user.can_delete, doc_dept.can_delete, doc_role.can_delete, folder_user.can_delete, folder_dept.can_delete, folder_role.can_delete, d.owner_id = $3)
+           ELSE COALESCE(doc_user.can_delete, doc_dept.can_delete, doc_role.can_delete, folder_user.can_delete, folder_dept.can_delete, folder_role.can_delete, FALSE)
          END AS can_delete,
          CASE
            WHEN $4 = ANY(ARRAY['super_admin', 'admin']) THEN TRUE
-           ELSE COALESCE(
-             doc_user.can_manage_permission,
-             doc_dept.can_manage_permission,
-             doc_role.can_manage_permission,
-             folder_user.can_manage_permission,
-             folder_dept.can_manage_permission,
-             folder_role.can_manage_permission,
-             d.owner_id = $3
-           )
+           ELSE COALESCE(doc_user.can_manage_permission, doc_dept.can_manage_permission, doc_role.can_manage_permission, folder_user.can_manage_permission, folder_dept.can_manage_permission, folder_role.can_manage_permission, FALSE)
          END AS can_manage_permission
        FROM documents d
        LEFT JOIN LATERAL (
