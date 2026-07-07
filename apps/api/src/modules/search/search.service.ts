@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { DatabaseService } from "../../database/database.service";
 import { EmbeddingsService } from "../embeddings/embeddings.service";
 
-export type SearchSortBy = "relevance" | "time" | "name";
+export type SearchSortBy = "relevance" | "time" | "name" | "updatedAt" | "hot" | "views" | "downloads";
 
 export interface SearchHit {
   chunkId: string;
@@ -664,7 +664,7 @@ export class SearchService {
 
   private sortHits(hits: SearchHit[], sortBy: SearchSortBy): SearchHit[] {
     return [...hits].sort((a, b) => {
-      if (sortBy === "time") {
+      if (sortBy === "time" || sortBy === "updatedAt") {
         return this.timestampOf(b) - this.timestampOf(a) || b.score - a.score || a.idx - b.idx;
       }
       if (sortBy === "name") {
@@ -674,6 +674,8 @@ export class SearchService {
           b.score - a.score
         );
       }
+      // Metric-backed sorts are accepted by the PRD contract, but Task 4 will add
+      // the event aggregates needed to order by hot/views/downloads.
       return b.score - a.score || this.timestampOf(b) - this.timestampOf(a) || a.idx - b.idx;
     });
   }

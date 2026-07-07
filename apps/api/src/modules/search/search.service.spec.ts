@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import {
   DocumentBatchOperationRequest,
@@ -131,6 +132,47 @@ describe("SearchService result helpers", () => {
     expect((service as any).sortHits(hits, "relevance").map((h: SearchHit) => h.chunkId)).toEqual(["b-2", "a-1", "a-3"]);
     expect((service as any).sortHits(hits, "time").map((h: SearchHit) => h.chunkId)).toEqual(["a-3", "a-1", "b-2"]);
     expect((service as any).sortHits(hits, "name").map((h: SearchHit) => h.chunkId)).toEqual(["a-1", "a-3", "b-2"]);
+  });
+
+  it("accepts expanded contract sort values with stable fallbacks", () => {
+    const { service } = createService();
+    const hits = [
+      hit({ chunkId: "old-hot", documentTitle: "Beta", idx: 2, score: 0.9, updatedAt: "2026-07-01T00:00:00.000Z" } as any),
+      hit({ chunkId: "new-low", documentTitle: "Alpha", idx: 1, score: 0.3, updatedAt: "2026-07-03T00:00:00.000Z" } as any),
+      hit({ chunkId: "mid", documentTitle: "Gamma", idx: 3, score: 0.5, updatedAt: "2026-07-02T00:00:00.000Z" } as any),
+    ];
+
+    const updatedAtSort = SearchQuery.parse({ q: "risk", sortBy: "updatedAt" }).sortBy;
+    expect((service as any).sortHits(hits, updatedAtSort).map((h: SearchHit) => h.chunkId)).toEqual(["new-low", "mid", "old-hot"]);
+
+    for (const sortBy of ["hot", "views", "downloads"] as const) {
+      const parsedSort = SearchQuery.parse({ q: "risk", sortBy }).sortBy;
+      expect((service as any).sortHits(hits, parsedSort).map((h: SearchHit) => h.chunkId)).toEqual(["old-hot", "mid", "new-low"]);
+    }
+  });
+});
+
+describe("Document/search database PRD shape", () => {
+  it("keeps search event targets and hot keyword nullable-category uniqueness explicit", () => {
+    const schema = readFileSync("apps/api/src/database/prisma/schema.prisma", "utf8");
+    const migration = readFileSync(
+      "apps/api/src/database/prisma/migrations/0007_document_search_management/migration.sql",
+      "utf8",
+    );
+
+    expect(schema).toContain('documentId  String?  @map("document_id")');
+    expect(schema).toContain('contentId   String?  @map("content_id")');
+    expect(schema).toContain('chunkId     String?  @map("chunk_id")');
+    expect(schema).not.toContain("@@unique([tenantId, keyword, categoryId]");
+
+    expect(migration).toContain("document_id TEXT");
+    expect(migration).toContain("content_id TEXT");
+    expect(migration).toContain("chunk_id TEXT");
+    expect(migration).toContain("search_events_tenant_document_event_created_idx");
+    expect(migration).toContain("hot_search_keywords_tenant_keyword_null_category_unique");
+    expect(migration).toContain("WHERE category_id IS NULL");
+    expect(migration).toContain("hot_search_keywords_tenant_keyword_category_not_null_unique");
+    expect(migration).toContain("WHERE category_id IS NOT NULL");
   });
 });
 

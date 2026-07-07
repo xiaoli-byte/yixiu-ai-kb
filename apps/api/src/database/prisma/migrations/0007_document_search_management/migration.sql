@@ -96,6 +96,9 @@ CREATE TABLE IF NOT EXISTS search_events (
   user_id TEXT,
   keyword TEXT NOT NULL,
   category_id TEXT,
+  document_id TEXT,
+  content_id TEXT,
+  chunk_id TEXT,
   result_count INTEGER NOT NULL DEFAULT 0,
   event_type VARCHAR(40) NOT NULL DEFAULT 'SEARCH',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -109,6 +112,12 @@ CREATE INDEX IF NOT EXISTS search_events_tenant_event_created_idx
   ON search_events (tenant_id, event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS search_events_tenant_user_created_idx
   ON search_events (tenant_id, user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS search_events_tenant_document_event_created_idx
+  ON search_events (tenant_id, document_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS search_events_tenant_content_event_created_idx
+  ON search_events (tenant_id, content_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS search_events_tenant_chunk_event_created_idx
+  ON search_events (tenant_id, chunk_id, event_type, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS hot_search_keywords (
   id TEXT PRIMARY KEY,
@@ -120,11 +129,19 @@ CREATE TABLE IF NOT EXISTS hot_search_keywords (
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   created_by TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT hot_search_keywords_tenant_keyword_category_unique
-    UNIQUE (tenant_id, keyword, category_id)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS hot_search_keywords_tenant_keyword_null_category_unique
+  ON hot_search_keywords (tenant_id, keyword)
+  WHERE category_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS hot_search_keywords_tenant_keyword_category_not_null_unique
+  ON hot_search_keywords (tenant_id, keyword, category_id)
+  WHERE category_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS hot_search_keywords_tenant_keyword_idx
+  ON hot_search_keywords (tenant_id, keyword);
+CREATE INDEX IF NOT EXISTS hot_search_keywords_tenant_keyword_category_idx
+  ON hot_search_keywords (tenant_id, keyword, category_id);
 CREATE INDEX IF NOT EXISTS hot_search_keywords_tenant_enabled_idx
   ON hot_search_keywords (tenant_id, enabled);
 CREATE INDEX IF NOT EXISTS hot_search_keywords_tenant_pinned_enabled_idx

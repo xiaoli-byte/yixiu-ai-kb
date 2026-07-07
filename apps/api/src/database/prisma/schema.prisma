@@ -174,6 +174,9 @@ model SearchEvent {
   userId      String?  @map("user_id")
   keyword     String
   categoryId  String?  @map("category_id")
+  documentId  String?  @map("document_id")
+  contentId   String?  @map("content_id")
+  chunkId     String?  @map("chunk_id")
   resultCount Int      @default(0) @map("result_count")
   eventType   String   @default("SEARCH") @map("event_type") @db.VarChar(40)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -182,6 +185,9 @@ model SearchEvent {
   @@index([tenantId, categoryId, createdAt(sort: Desc)], map: "search_events_tenant_category_created_idx")
   @@index([tenantId, eventType, createdAt(sort: Desc)], map: "search_events_tenant_event_created_idx")
   @@index([tenantId, userId, createdAt(sort: Desc)], map: "search_events_tenant_user_created_idx")
+  @@index([tenantId, documentId, eventType, createdAt(sort: Desc)], map: "search_events_tenant_document_event_created_idx")
+  @@index([tenantId, contentId, eventType, createdAt(sort: Desc)], map: "search_events_tenant_content_event_created_idx")
+  @@index([tenantId, chunkId, eventType, createdAt(sort: Desc)], map: "search_events_tenant_chunk_event_created_idx")
   @@map("search_events")
 }
 
@@ -197,7 +203,8 @@ model HotSearchKeyword {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@unique([tenantId, keyword, categoryId], map: "hot_search_keywords_tenant_keyword_category_unique")
+  @@index([tenantId, keyword], map: "hot_search_keywords_tenant_keyword_idx")
+  @@index([tenantId, keyword, categoryId], map: "hot_search_keywords_tenant_keyword_category_idx")
   @@index([tenantId, enabled], map: "hot_search_keywords_tenant_enabled_idx")
   @@index([tenantId, pinned, enabled], map: "hot_search_keywords_tenant_pinned_enabled_idx")
   @@map("hot_search_keywords")
