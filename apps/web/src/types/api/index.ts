@@ -9,6 +9,8 @@ export type {
   DocumentBatchOperationResponse,
   DocumentBatchOperationResult,
   DocumentBatchPermissionUpdateRequest,
+  DocumentBatchUploadResponse,
+  DocumentBatchUploadResult,
   DocumentDetail,
   DocumentDto,
   DocumentListQuery,

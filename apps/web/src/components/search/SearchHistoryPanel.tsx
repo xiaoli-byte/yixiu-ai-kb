@@ -2,15 +2,16 @@ import { Trash2, X } from "lucide-react";
 import type { SearchHistoryItem } from "@/services/search";
 
 interface SearchHistoryPanelProps {
+  id?: string;
   items: SearchHistoryItem[];
   onSelect: (item: SearchHistoryItem) => void;
   onDelete: (id: string) => void;
   onClear: () => void;
 }
 
-export function SearchHistoryPanel({ items, onSelect, onDelete, onClear }: SearchHistoryPanelProps) {
+export function SearchHistoryPanel({ id, items, onSelect, onDelete, onClear }: SearchHistoryPanelProps) {
   return (
-    <section>
+    <section className="scroll-mt-4" id={id}>
       <div className="flex items-center border-b border-slate-200 pb-3">
         <h2 className="flex-1 text-sm font-medium text-slate-900">搜索历史</h2>
         {items.length > 0 && (

@@ -16,6 +16,7 @@ const source = `${pageSource}\n${clientSource}`;
 describe("Search page source composition", () => {
   it("uses the dedicated search page components and required Chinese labels", () => {
     [
+      "SearchSectionNav",
       "SearchLanding",
       "SearchFilters",
       "SearchResultsToolbar",
@@ -25,11 +26,13 @@ describe("Search page source composition", () => {
       "SearchHistoryPanel",
       "热门搜索",
       "搜索历史",
+      "搜索筛选",
       "推荐分类",
       "高级搜索",
       "清空筛选",
       "权限范围",
       "相关度排序",
+      "搜索页面区块导航",
       "部分内容因权限限制未展示",
     ].forEach((text) => {
       expect(source).toContain(text);
@@ -39,7 +42,11 @@ describe("Search page source composition", () => {
   it("guards filter-only state, URL changes, request races, and permission notices", () => {
     expect(clientSource).toContain("isMeaningfulFilterValue");
     expect(clientSource).toContain("keyword.trim().length > 0 || hasActiveFilter || advancedOpen");
-    expect(clientSource).toContain("showResults && keyword.trim()");
+    expect(clientSource).toContain("const shouldFetchResults = keyword.trim().length > 0 || hasActiveFilter");
+    expect(clientSource).toContain("if (!trimmedKeyword && !hasAnySearchFilter(nextFilters))");
+    expect(clientSource).toContain("if (trimmedKeyword) query.keyword = trimmedKeyword");
+    expect(clientSource).toContain("if (trimmedKeyword) query.q = trimmedKeyword");
+    expect(clientSource).toContain("showResults && shouldFetchResults");
     expect(clientSource).toContain("请先输入关键词，筛选会与关键词组合生效");
     expect(clientSource).not.toContain('applyFilters({ updateTimeRange: "all" })');
     expect(clientSource).toContain("keyword: item.label");
@@ -50,6 +57,8 @@ describe("Search page source composition", () => {
     expect(clientSource).toContain("requestId !== requestSeq.current");
     expect(clientSource).toContain("permissionNotice={hits.some((hit) => hit.canDownload === false)}");
     expect(clientSource).toMatch(/setSort\("relevance"\)/);
+    expect(clientSource).toContain("onView={openSearchHit}");
+    expect(clientSource).toContain("onDownload={downloadSearchHit}");
   });
 
   it("does not treat updateTimeRange all as an active filter in filter controls", () => {

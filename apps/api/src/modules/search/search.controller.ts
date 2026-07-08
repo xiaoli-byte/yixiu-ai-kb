@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
-import { SearchQuery } from "@ai-knowledge/schemas";
+import { SearchEventRequest, SearchQuery } from "@ai-knowledge/schemas";
 import { SearchService } from "./search.service";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
@@ -40,6 +40,31 @@ export class SearchController {
   @Delete("history")
   async clearHistory(@CurrentUser("sub") userId: string) {
     return this.search.clearHistory({ userId });
+  }
+
+  @Post("history/clear")
+  async clearHistoryWithPost(@CurrentUser("sub") userId: string) {
+    return this.search.clearHistory({ userId });
+  }
+
+  @Post("events")
+  async recordEvent(@Body() raw: unknown, @CurrentUser() user: any) {
+    const parsed = SearchEventRequest.safeParse(raw ?? {});
+    if (!parsed.success) return { recorded: false, error: "invalid_event" };
+    const event = parsed.data;
+    const userId = user?.sub ?? user?.userId ?? user?.id;
+    await this.search.recordSearchEvent({
+      keyword: event.keyword ?? event.q,
+      eventType: event.eventType,
+      resultCount: event.resultCount,
+      categoryId: event.categoryId ?? null,
+      documentId: event.documentId ?? null,
+      contentId: event.contentId ?? null,
+      chunkId: event.chunkId ?? null,
+      tenantId: user?.tenantId,
+      userId,
+    });
+    return { recorded: true };
   }
 
   @Post()

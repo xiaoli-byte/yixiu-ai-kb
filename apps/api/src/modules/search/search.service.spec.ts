@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import "reflect-metadata";
+import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { describe, expect, it, vi } from "vitest";
 import {
   DocumentBatchOperationRequest,
@@ -9,6 +11,7 @@ import {
   SearchQuery,
 } from "@ai-knowledge/schemas";
 import { SearchService, type SearchHit } from "./search.service";
+import { SearchController } from "./search.controller";
 
 function createService() {
   const db = {
@@ -342,6 +345,115 @@ describe("SearchService permission-aware search", () => {
       documentId: "doc-1",
       permissionScope: "COMPANY",
       canDownload: true,
+    });
+  });
+
+  it("returns permission-filtered documents when filters are present without a keyword", async () => {
+    const { service, db, embeddings, access } = createService();
+    access.visibleDocumentWhereSql.mockReturnValueOnce({
+      sql: "VISIBILITY_SQL",
+      values: ["tenant-1", "user-2", "viewer"],
+    });
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-1": {
+        canView: true,
+        canDownload: false,
+        canEdit: false,
+        canDelete: false,
+        canManagePermission: false,
+      },
+    });
+    db.query.mockResolvedValueOnce([
+      {
+        chunkId: "chunk-1",
+        documentId: "doc-1",
+        contentId: "content-1",
+        documentTitle: "制度规范",
+        mime: "application/pdf",
+        permissionScope: "COMPANY",
+        categoryPath: "制度规范",
+        idx: 0,
+        text: "制度规范正文摘要",
+        highlight: "制度规范正文摘要",
+        score: 0,
+        hotScore: 2,
+        viewCount: 1,
+        downloadCount: 0,
+        page: null,
+        updatedAt: new Date("2026-07-07T10:00:00.000Z"),
+        createdAt: new Date("2026-07-06T10:00:00.000Z"),
+        totalCount: 1,
+      },
+    ]);
+
+    const result = await service.searchList(
+      { fileType: "pdf", permissionScope: "COMPANY", page: "1", pageSize: "20" },
+      { sub: "user-2", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    expect(result).toMatchObject({
+      query: "",
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    });
+    expect(result.hits[0]).toMatchObject({
+      documentId: "doc-1",
+      documentTitle: "制度规范",
+      canDownload: false,
+      sources: [],
+    });
+    expect(embeddings.embedOne).not.toHaveBeenCalled();
+    const sql = db.query.mock.calls[0][0] as string;
+    const values = db.query.mock.calls[0][1] as unknown[];
+    expect(sql).toContain("VISIBILITY_SQL");
+    expect(sql).toContain("d.searchable = TRUE");
+    expect(sql).toContain("d.mime ILIKE");
+    expect(sql).not.toContain("plainto_tsquery");
+    expect(values).toContain("%pdf%");
+    expect(values).toContain("COMPANY");
+    expect(db.query.mock.calls.some((call) => String(call[0]).includes("search_histories"))).toBe(false);
+  });
+});
+
+describe("SearchController PRD routes", () => {
+  it("exposes POST /search/history/clear for clearing user search history", async () => {
+    const clearHistory = vi.fn().mockResolvedValue({ deleted: 2 });
+    const controller = new SearchController({ clearHistory } as any);
+    const method = (controller as any).clearHistoryWithPost;
+
+    expect(method).toBeTypeOf("function");
+    expect(Reflect.getMetadata(PATH_METADATA, method)).toBe("history/clear");
+    expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(1);
+    await expect(method.call(controller, "user-1")).resolves.toEqual({ deleted: 2 });
+    expect(clearHistory).toHaveBeenCalledWith({ userId: "user-1" });
+  });
+
+  it("exposes POST /search/events for recording result interaction metrics", async () => {
+    const recordSearchEvent = vi.fn().mockResolvedValue(undefined);
+    const controller = new SearchController({ recordSearchEvent } as any);
+    const method = (controller as any).recordEvent;
+
+    expect(method).toBeTypeOf("function");
+    expect(Reflect.getMetadata(PATH_METADATA, method)).toBe("events");
+    expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(1);
+    await expect(
+      method.call(
+        controller,
+        { q: "知识库", eventType: "CLICK", resultCount: "3", documentId: "doc-1" },
+        { sub: "user-1", tenantId: "tenant-1" },
+      ),
+    ).resolves.toEqual({ recorded: true });
+    expect(recordSearchEvent).toHaveBeenCalledWith({
+      keyword: "知识库",
+      eventType: "CLICK",
+      resultCount: 3,
+      categoryId: null,
+      documentId: "doc-1",
+      contentId: null,
+      chunkId: null,
+      tenantId: "tenant-1",
+      userId: "user-1",
     });
   });
 });

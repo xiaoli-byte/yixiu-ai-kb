@@ -13,6 +13,7 @@ import {
   setDocumentPermissions as setPermissionsApi,
   updateDocument as updateDocApi,
   uploadDocument as uploadDocApi,
+  uploadDocuments as uploadDocsApi,
 } from "@/lib/api/endpoints/documents";
 
 export type {
@@ -21,6 +22,8 @@ export type {
   DocumentBatchOperationResponse,
   DocumentBatchOperationResult,
   DocumentBatchPermissionUpdateRequest,
+  DocumentBatchUploadResponse,
+  DocumentBatchUploadResult,
   DocumentDetail,
   DocumentDto,
   DocumentListQuery,
@@ -50,6 +53,7 @@ export const retryParse = retryParseApi;
 export const update = updateDocApi;
 export const remove = deleteDocApi;
 export const upload = uploadDocApi;
+export const uploadBatch = uploadDocsApi;
 export const addTag = addTagApi;
 export const removeTag = removeTagApi;
 
@@ -66,6 +70,7 @@ const documentsApi = {
   update,
   remove,
   upload,
+  uploadBatch,
   addTag,
   removeTag,
 };

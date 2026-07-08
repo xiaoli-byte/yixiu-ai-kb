@@ -18,6 +18,7 @@ import { SearchFilters, type SearchFiltersValue } from "@/components/search/Sear
 import { SearchResultsToolbar } from "@/components/search/SearchResultsToolbar";
 import { SearchResultList } from "@/components/search/SearchResultList";
 import { SearchResultGrid } from "@/components/search/SearchResultGrid";
+import { SearchSectionNav } from "@/components/search/SearchSectionNav";
 
 const RECOMMENDED_CATEGORIES: RecommendedCategory[] = [
   { id: "policy", label: "制度规范", target: "categoryId" },
@@ -31,15 +32,18 @@ const RECOMMENDED_CATEGORIES: RecommendedCategory[] = [
 const REQUIRED_LABELS = [
   "热门搜索",
   "搜索历史",
+  "搜索筛选",
   "推荐分类",
   "高级搜索",
   "清空筛选",
   "权限范围",
   "相关度排序",
+  "搜索页面区块导航",
   "部分内容因权限限制未展示",
 ];
 
 const REQUIRED_COMPONENTS = [
+  "SearchSectionNav",
   "SearchLanding",
   "SearchFilters",
   "SearchResultsToolbar",
@@ -87,6 +91,7 @@ export default function SearchPageClient() {
   const hasActiveFilter = useMemo(() => {
     return Object.values(filters).some(isMeaningfulFilterValue);
   }, [filters]);
+  const shouldFetchResults = keyword.trim().length > 0 || hasActiveFilter;
   const showResults = keyword.trim().length > 0 || hasActiveFilter || advancedOpen;
 
   const replaceUrl = useCallback(
@@ -144,7 +149,7 @@ export default function SearchPageClient() {
   const runSearch = useCallback(
     async (nextKeyword = keyword, nextFilters = filters, nextSort = sort, nextViewMode = viewMode) => {
       const trimmedKeyword = nextKeyword.trim();
-      if (!trimmedKeyword) {
+      if (!trimmedKeyword && !hasAnySearchFilter(nextFilters)) {
         setResult(null);
         setHits([]);
         setError(null);
@@ -154,8 +159,6 @@ export default function SearchPageClient() {
       }
 
       const query: SearchListQuery = {
-        keyword: trimmedKeyword,
-        q: trimmedKeyword,
         fileType: nextFilters.fileType || undefined,
         updateTimeRange: isMeaningfulFilterValue(nextFilters.updateTimeRange)
           ? nextFilters.updateTimeRange
@@ -168,6 +171,8 @@ export default function SearchPageClient() {
         page: 1,
         pageSize: DEFAULT_PAGE_SIZE,
       };
+      if (trimmedKeyword) query.keyword = trimmedKeyword;
+      if (trimmedKeyword) query.q = trimmedKeyword;
 
       const queryKey = JSON.stringify(query);
       if (queryKey === lastQueryKey.current) return;
@@ -212,7 +217,7 @@ export default function SearchPageClient() {
     setFilters(next.filters);
     setSort(next.sort);
     setViewMode(next.viewMode);
-    if (!next.keyword.trim()) {
+    if (!next.keyword.trim() && !hasAnySearchFilter(next.filters)) {
       requestSeq.current += 1;
       lastQueryKey.current = "";
       setResult(null);
@@ -223,10 +228,10 @@ export default function SearchPageClient() {
   }, [paramsKey]);
 
   useEffect(() => {
-    if (showResults && keyword.trim()) {
+    if (showResults && shouldFetchResults) {
       void runSearch(keyword, filters, sort, viewMode);
     }
-  }, [filters, keyword, runSearch, showResults, sort, viewMode]);
+  }, [filters, keyword, runSearch, shouldFetchResults, showResults, sort, viewMode]);
 
   const submitKeyword = useCallback(
     (value = inputValue) => {
@@ -324,6 +329,18 @@ export default function SearchPageClient() {
     [filters, replaceUrl],
   );
 
+  const openSearchHit = useCallback((hit: SearchHit) => {
+    if (typeof window !== "undefined") {
+      window.open(`/api/qa/documents/${encodeURIComponent(hit.documentId)}/file`, "_blank", "noopener,noreferrer");
+    }
+  }, []);
+
+  const downloadSearchHit = useCallback((hit: SearchHit) => {
+    if (typeof window !== "undefined") {
+      window.open(`/api/qa/documents/${encodeURIComponent(hit.documentId)}/file`, "_blank", "noopener,noreferrer");
+    }
+  }, []);
+
   if (!showResults) {
     return (
       <SearchLanding
@@ -349,99 +366,107 @@ export default function SearchPageClient() {
   }
 
   return (
-    <div className="min-h-full bg-white" data-search-labels={compositionForSourceAssertion}>
-      <div className="border-b border-slate-200 bg-white px-8 py-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative h-10 min-w-[260px] flex-1">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              className="h-10 w-full rounded border border-slate-300 bg-white pl-10 pr-9 text-[13px] outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-              placeholder="请输入文档标题、内容关键词"
-              value={inputValue}
-              onChange={(event) => setInputValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") submitKeyword();
-              }}
-            />
-            {inputValue && (
-              <button
-                className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-slate-400 hover:bg-slate-100"
-                onClick={clearAll}
-                title="清空关键词"
-                type="button"
-              >
-                <X size={14} />
-              </button>
-            )}
+    <div className="flex min-h-full bg-white" data-search-labels={compositionForSourceAssertion}>
+      <SearchSectionNav compact onFilterClick={() => setAdvancedOpen(true)} />
+      <div className="min-w-0 flex-1">
+        <div className="border-b border-slate-200 bg-white px-8 py-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative h-10 min-w-[260px] flex-1">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                className="h-10 w-full rounded border border-slate-300 bg-white pl-10 pr-9 text-[13px] outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                placeholder="请输入文档标题、内容关键词"
+                value={inputValue}
+                onChange={(event) => setInputValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") submitKeyword();
+                }}
+              />
+              {inputValue && (
+                <button
+                  className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-slate-400 hover:bg-slate-100"
+                  onClick={clearAll}
+                  title="清空关键词"
+                  type="button"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+            <button
+              className="inline-flex h-10 items-center gap-1.5 rounded bg-brand-600 px-5 text-[13px] font-medium text-white transition hover:bg-brand-700"
+              onClick={() => submitKeyword()}
+              type="button"
+            >
+              <Search size={14} />
+              搜索
+            </button>
           </div>
-          <button
-            className="inline-flex h-10 items-center gap-1.5 rounded bg-brand-600 px-5 text-[13px] font-medium text-white transition hover:bg-brand-700"
-            onClick={() => submitKeyword()}
-            type="button"
-          >
-            <Search size={14} />
-            搜索
-          </button>
         </div>
+
+        <SearchFilters
+          id="search-filters"
+          value={filters}
+          expanded={advancedOpen}
+          onChange={applyFilters}
+          onClear={clearFilters}
+          onToggleExpanded={() => setAdvancedOpen((open) => !open)}
+        />
+
+        <SearchResultsToolbar
+          total={result?.total ?? hits.length}
+          took={result?.took}
+          sort={sort}
+          viewMode={viewMode}
+          permissionNotice={hits.some((hit) => hit.canDownload === false)}
+          onSortChange={handleSortChange}
+          onViewModeChange={handleViewModeChange}
+        />
+
+        {loading && (
+          <div className="flex h-48 items-center justify-center gap-2 text-sm text-slate-500">
+            <Loader2 size={16} className="animate-spin" />
+            正在搜索...
+          </div>
+        )}
+
+        {!loading && error && (
+          <div className="mx-8 my-6 flex items-start gap-2 rounded border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <div className="font-medium">搜索失败</div>
+              <div className="mt-1 text-xs">{error}</div>
+            </div>
+          </div>
+        )}
+
+        {!loading && !error && hits.length === 0 && (
+          <div className="mx-8 my-8 rounded border border-slate-200 bg-slate-50 p-10 text-center">
+            <div className="text-sm font-medium text-slate-900">
+              {keyword.trim() || hasActiveFilter ? "没有找到匹配结果" : "请先输入关键词"}
+            </div>
+            <div className="mt-2 text-xs text-slate-500">
+              {keyword.trim() || hasActiveFilter ? "请调整关键词或清空筛选后重试" : "请先输入关键词，筛选会与关键词组合生效"}
+            </div>
+            <button
+              className="mt-4 inline-flex h-8 items-center rounded bg-white px-3 text-xs text-brand-700 ring-1 ring-slate-200 hover:bg-brand-50"
+              onClick={clearFilters}
+              type="button"
+            >
+              清空筛选
+            </button>
+          </div>
+        )}
+
+        {!loading &&
+          !error &&
+          hits.length > 0 &&
+          (viewMode === "list" ? (
+            <SearchResultList hits={hits} onDownload={downloadSearchHit} onView={openSearchHit} />
+          ) : (
+            <SearchResultGrid hits={hits} onDownload={downloadSearchHit} onView={openSearchHit} />
+          ))}
       </div>
-
-      <SearchFilters
-        value={filters}
-        expanded={advancedOpen}
-        onChange={applyFilters}
-        onClear={clearFilters}
-        onToggleExpanded={() => setAdvancedOpen((open) => !open)}
-      />
-
-      <SearchResultsToolbar
-        total={result?.total ?? hits.length}
-        took={result?.took}
-        sort={sort}
-        viewMode={viewMode}
-        permissionNotice={hits.some((hit) => hit.canDownload === false)}
-        onSortChange={handleSortChange}
-        onViewModeChange={handleViewModeChange}
-      />
-
-      {loading && (
-        <div className="flex h-48 items-center justify-center gap-2 text-sm text-slate-500">
-          <Loader2 size={16} className="animate-spin" />
-          正在搜索...
-        </div>
-      )}
-
-      {!loading && error && (
-        <div className="mx-8 my-6 flex items-start gap-2 rounded border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-          <AlertCircle size={16} className="mt-0.5 shrink-0" />
-          <div>
-            <div className="font-medium">搜索失败</div>
-            <div className="mt-1 text-xs">{error}</div>
-          </div>
-        </div>
-      )}
-
-      {!loading && !error && hits.length === 0 && (
-        <div className="mx-8 my-8 rounded border border-slate-200 bg-slate-50 p-10 text-center">
-          <div className="text-sm font-medium text-slate-900">
-            {keyword.trim() ? "没有找到匹配结果" : "请先输入关键词"}
-          </div>
-          <div className="mt-2 text-xs text-slate-500">
-            {keyword.trim() ? "请调整关键词或清空筛选后重试" : "请先输入关键词，筛选会与关键词组合生效"}
-          </div>
-          <button
-            className="mt-4 inline-flex h-8 items-center rounded bg-white px-3 text-xs text-brand-700 ring-1 ring-slate-200 hover:bg-brand-50"
-            onClick={clearFilters}
-            type="button"
-          >
-            清空筛选
-          </button>
-        </div>
-      )}
-
-      {!loading &&
-        !error &&
-        hits.length > 0 &&
-        (viewMode === "list" ? <SearchResultList hits={hits} /> : <SearchResultGrid hits={hits} />)}
     </div>
   );
 }
@@ -464,6 +489,10 @@ function parseParams(params: Pick<URLSearchParams, "get">): ParsedSearchParams {
 
 function isMeaningfulFilterValue(value: unknown) {
   return Boolean(value && value !== "all");
+}
+
+function hasAnySearchFilter(value: SearchFiltersValue) {
+  return Object.values(value).some(isMeaningfulFilterValue);
 }
 
 function normalizeUpdateTimeRange(value: string | null): SearchFiltersValue["updateTimeRange"] | undefined {

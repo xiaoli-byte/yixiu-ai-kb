@@ -1,4 +1,6 @@
+import "reflect-metadata";
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { DocumentListQuery } from "@ai-knowledge/schemas";
 import { describe, expect, it, vi } from "vitest";
 import { DocumentsController } from "./documents.controller";
@@ -188,6 +190,57 @@ describe("DocumentsService permission-aware operations", () => {
     expect(queue.enqueueDocument).not.toHaveBeenCalled();
   });
 
+  it("batchUpload uploads valid files and reports invalid files without aborting the batch", async () => {
+    const { service, prisma, db, storage, queue } = createService();
+    db.queryOne.mockResolvedValueOnce(null);
+    prisma.document.create.mockResolvedValueOnce({
+      id: "doc-1",
+      title: "policy.pdf",
+      status: "PENDING",
+      contentId: null,
+    });
+
+    await expect(
+      (service as any).batchUpload(
+        [
+          file(),
+          file({
+            originalname: "malware.exe",
+            mimetype: "application/x-msdownload",
+            size: 3,
+            buffer: Buffer.from("bad"),
+          }),
+        ],
+        "user-1",
+        "tenant-1",
+        "root",
+      ),
+    ).resolves.toEqual({
+      total: 2,
+      succeeded: 1,
+      failed: 1,
+      results: [
+        expect.objectContaining({
+          fileName: "policy.pdf",
+          ok: true,
+          documentId: "doc-1",
+          status: "PENDING",
+        }),
+        expect.objectContaining({
+          fileName: "malware.exe",
+          ok: false,
+          message: expect.stringContaining("Unsupported file format"),
+        }),
+      ],
+    });
+
+    expect(storage.putObject).toHaveBeenCalledTimes(1);
+    expect(queue.enqueueDocument).toHaveBeenCalledWith({
+      documentId: "doc-1",
+      tenantId: "tenant-1",
+    });
+  });
+
   it("logical delete sets deletedAt and does not hard-delete or clean graph/storage", async () => {
     const { service, prisma, storage, neo4j, access } = createService();
     prisma.document.findFirst.mockResolvedValueOnce({
@@ -341,6 +394,48 @@ describe("DocumentsService permission-aware operations", () => {
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(docs.update).not.toHaveBeenCalled();
+  });
+
+  it("controller exposes PRD folder creation alias at POST /documents/folder", async () => {
+    const folders = {
+      create: vi.fn().mockResolvedValue({ id: "folder-1", name: "制度规范" }),
+    };
+    const controller = new DocumentsController({} as any, {} as any, { tenantId: "tenant-1" } as any, folders as any);
+    const method = (controller as any).createFolder;
+
+    expect(method).toBeTypeOf("function");
+    expect(Reflect.getMetadata(PATH_METADATA, method)).toBe("folder");
+    expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(1);
+    await expect(method.call(controller, { name: "制度规范" }, { tenantId: "tenant-2" })).resolves.toEqual({
+      id: "folder-1",
+      name: "制度规范",
+    });
+    expect(folders.create).toHaveBeenCalledWith("tenant-2", { name: "制度规范" });
+  });
+
+  it("controller exposes POST /documents/batch/upload for multipart batch uploads", async () => {
+    const docs = {
+      batchUpload: vi.fn().mockResolvedValue({
+        total: 2,
+        succeeded: 2,
+        failed: 0,
+        results: [],
+      }),
+    };
+    const controller = new DocumentsController(docs as any, {} as any, { tenantId: "tenant-1", userId: "fallback-user" } as any);
+    const method = (controller as any).batchUpload;
+    const files = [file({ originalname: "a.pdf" }), file({ originalname: "b.pdf" })];
+
+    expect(method).toBeTypeOf("function");
+    expect(Reflect.getMetadata(PATH_METADATA, method)).toBe("batch/upload");
+    expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(1);
+    await expect(method.call(controller, files, { sub: "user-1", tenantId: "tenant-2" }, "folder-1")).resolves.toEqual({
+      total: 2,
+      succeeded: 2,
+      failed: 0,
+      results: [],
+    });
+    expect(docs.batchUpload).toHaveBeenCalledWith(files, "user-1", "tenant-2", "folder-1");
   });
 
   it("batch archive returns per-document results", async () => {

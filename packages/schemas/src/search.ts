@@ -73,6 +73,29 @@ export const HotSearchItem = z.object({
 });
 export type HotSearchItem = z.infer<typeof HotSearchItem>;
 
+export const SearchEventType = z.enum([
+  "SEARCH",
+  "RESULT_CLICK",
+  "CLICK",
+  "DOCUMENT_VIEW",
+  "VIEW",
+  "DOCUMENT_DOWNLOAD",
+  "DOWNLOAD",
+]);
+export type SearchEventType = z.infer<typeof SearchEventType>;
+
+export const SearchEventRequest = z.object({
+  keyword: z.string().trim().max(500).optional(),
+  q: z.string().trim().max(500).optional(),
+  eventType: SearchEventType.default("SEARCH"),
+  resultCount: z.coerce.number().int().nonnegative().default(0),
+  categoryId: z.string().trim().min(1).nullable().optional(),
+  documentId: z.string().trim().min(1).nullable().optional(),
+  contentId: z.string().trim().min(1).nullable().optional(),
+  chunkId: z.string().trim().min(1).nullable().optional(),
+});
+export type SearchEventRequest = z.infer<typeof SearchEventRequest>;
+
 export const SearchResponse = z.object({
   query: z.string(),
   mode: SearchMode,

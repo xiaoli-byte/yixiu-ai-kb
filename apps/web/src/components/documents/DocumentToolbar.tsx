@@ -1,0 +1,277 @@
+import { ChevronDown, FolderPlus, RefreshCw, Search, SlidersHorizontal, Upload, X } from "lucide-react";
+import type { DocumentPermissionScope, DocumentStatus } from "@/services/documents";
+import { cn } from "@/lib/utils";
+
+interface DocumentToolbarProps {
+  query: string;
+  fileType: string;
+  status: DocumentStatus | "";
+  permissionScope: DocumentPermissionScope | "";
+  uploaderId: string;
+  departmentId: string;
+  uploadedFrom: string;
+  uploadedTo: string;
+  categoryId: string;
+  archivedFilter: "" | "active" | "archived";
+  moreOpen: boolean;
+  loading?: boolean;
+  uploading?: boolean;
+  onQueryChange: (query: string) => void;
+  onFileTypeChange: (fileType: string) => void;
+  onStatusChange: (status: DocumentStatus | "") => void;
+  onPermissionScopeChange: (scope: DocumentPermissionScope | "") => void;
+  onUploaderIdChange: (uploaderId: string) => void;
+  onDepartmentIdChange: (departmentId: string) => void;
+  onUploadedFromChange: (uploadedFrom: string) => void;
+  onUploadedToChange: (uploadedTo: string) => void;
+  onCategoryIdChange: (categoryId: string) => void;
+  onArchivedFilterChange: (archivedFilter: "" | "active" | "archived") => void;
+  onToggleMore: () => void;
+  onClearFilters: () => void;
+  onUploadClick: () => void;
+  onNewFolderClick: () => void;
+  onRefresh: () => void;
+}
+
+const FILE_TYPES = [
+  { value: "", label: "全部类型" },
+  { value: "pdf", label: "PDF" },
+  { value: "word", label: "DOCX" },
+  { value: "excel", label: "XLSX" },
+  { value: "presentation", label: "PPTX" },
+  { value: "text", label: "TXT" },
+];
+
+const STATUSES: Array<{ value: DocumentStatus | ""; label: string }> = [
+  { value: "", label: "全部状态" },
+  { value: "PENDING", label: "待解析" },
+  { value: "PARSING", label: "解析中" },
+  { value: "CHUNKING", label: "切分中" },
+  { value: "EMBEDDING", label: "向量化" },
+  { value: "READY", label: "解析完成" },
+  { value: "FAILED", label: "解析失败" },
+];
+
+const PERMISSIONS: Array<{ value: DocumentPermissionScope | ""; label: string }> = [
+  { value: "", label: "全部权限" },
+  { value: "PRIVATE", label: "仅本人可见" },
+  { value: "MEMBERS", label: "指定成员可见" },
+  { value: "DEPARTMENTS", label: "部门可见" },
+  { value: "COMPANY", label: "公司可见" },
+  { value: "PUBLIC", label: "公开可见" },
+  { value: "ADMIN", label: "管理员可见" },
+];
+
+const ARCHIVED_OPTIONS: Array<{ value: "" | "active" | "archived"; label: string }> = [
+  { value: "", label: "全部归档状态" },
+  { value: "active", label: "未归档" },
+  { value: "archived", label: "已归档" },
+];
+
+export function DocumentToolbar({
+  query,
+  fileType,
+  status,
+  permissionScope,
+  uploaderId,
+  departmentId,
+  uploadedFrom,
+  uploadedTo,
+  categoryId,
+  archivedFilter,
+  moreOpen,
+  loading,
+  uploading,
+  onQueryChange,
+  onFileTypeChange,
+  onStatusChange,
+  onPermissionScopeChange,
+  onUploaderIdChange,
+  onDepartmentIdChange,
+  onUploadedFromChange,
+  onUploadedToChange,
+  onCategoryIdChange,
+  onArchivedFilterChange,
+  onToggleMore,
+  onClearFilters,
+  onUploadClick,
+  onNewFolderClick,
+  onRefresh,
+}: DocumentToolbarProps) {
+  const hasFilters = Boolean(
+    query ||
+      fileType ||
+      status ||
+      permissionScope ||
+      uploaderId ||
+      departmentId ||
+      uploadedFrom ||
+      uploadedTo ||
+      categoryId ||
+      archivedFilter,
+  );
+
+  return (
+    <div className="border-b border-slate-200 bg-white px-6 py-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative h-8 w-64 min-w-[220px]">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            className="h-8 w-full rounded border border-slate-200 bg-white pl-9 pr-8 text-[13px] outline-none placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+            placeholder="搜索文档名称..."
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+          />
+          {query && (
+            <button
+              className="absolute right-1.5 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded text-slate-400 hover:bg-slate-100"
+              onClick={() => onQueryChange("")}
+              title="清空搜索"
+              type="button"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        <ToolbarSelect label="文件类型" value={fileType} options={FILE_TYPES} onChange={onFileTypeChange} />
+        <ToolbarSelect
+          label="解析状态"
+          value={status}
+          options={STATUSES}
+          onChange={(value) => onStatusChange(value as DocumentStatus | "")}
+        />
+        <ToolbarSelect
+          label="权限范围"
+          value={permissionScope}
+          options={PERMISSIONS}
+          onChange={(value) => onPermissionScopeChange(value as DocumentPermissionScope | "")}
+        />
+        <button
+          className={cn(
+            "inline-flex h-8 items-center gap-1 rounded border px-3 text-xs transition",
+            moreOpen
+              ? "border-brand-200 bg-brand-50 text-brand-700"
+              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
+          )}
+          onClick={onToggleMore}
+          type="button"
+        >
+          <SlidersHorizontal size={13} />
+          更多筛选
+        </button>
+        <button
+          className="inline-flex h-8 items-center gap-1 rounded px-2 text-xs text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+          disabled={!hasFilters}
+          onClick={onClearFilters}
+          type="button"
+        >
+          <X size={13} />
+          清空
+        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            className="inline-flex h-8 items-center gap-1.5 rounded bg-brand-600 px-3 text-[13px] font-medium text-white shadow-sm hover:bg-brand-700 disabled:opacity-60"
+            disabled={uploading}
+            onClick={onUploadClick}
+            type="button"
+          >
+            <Upload size={14} />
+            批量上传
+          </button>
+          <button
+            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-700 hover:bg-slate-50"
+            onClick={onNewFolderClick}
+            type="button"
+          >
+            <FolderPlus size={14} />
+            新建文件夹
+          </button>
+          <button
+            className="grid h-8 w-8 place-items-center rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50"
+            disabled={loading}
+            onClick={onRefresh}
+            title="刷新"
+            type="button"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          </button>
+        </div>
+      </div>
+      {moreOpen && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded bg-slate-50 p-3 text-xs text-slate-500">
+          <span className="font-medium text-slate-700">更多筛选</span>
+          <input
+            className="h-8 w-32 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
+            placeholder="上传人"
+            value={uploaderId}
+            onChange={(event) => onUploaderIdChange(event.target.value)}
+          />
+          <input
+            className="h-8 w-32 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
+            placeholder="所属部门"
+            value={departmentId}
+            onChange={(event) => onDepartmentIdChange(event.target.value)}
+          />
+          <input
+            className="h-8 w-32 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
+            placeholder="所属分类"
+            value={categoryId}
+            onChange={(event) => onCategoryIdChange(event.target.value)}
+          />
+          <label className="flex items-center gap-1">
+            <span>上传时间</span>
+            <input
+              className="h-8 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
+              type="date"
+              value={uploadedFrom}
+              onChange={(event) => onUploadedFromChange(event.target.value)}
+            />
+            <span className="text-slate-400">至</span>
+            <input
+              className="h-8 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
+              type="date"
+              value={uploadedTo}
+              onChange={(event) => onUploadedToChange(event.target.value)}
+            />
+          </label>
+          <ToolbarSelect
+            label="是否归档"
+            value={archivedFilter}
+            options={ARCHIVED_OPTIONS}
+            onChange={(value) => onArchivedFilterChange(value as "" | "active" | "archived")}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ToolbarSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="relative inline-flex h-8 items-center">
+      <span className="sr-only">{label}</span>
+      <select
+        className="h-8 min-w-32 appearance-none rounded border border-slate-200 bg-white pl-3 pr-8 text-xs text-slate-800 outline-none transition hover:bg-slate-50 focus:border-brand-500"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {options.map((option) => (
+          <option key={option.value || "all"} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown size={13} className="pointer-events-none absolute right-2 text-slate-400" />
+    </label>
+  );
+}

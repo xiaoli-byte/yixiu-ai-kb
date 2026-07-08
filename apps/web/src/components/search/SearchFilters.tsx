@@ -9,6 +9,7 @@ export type SearchFiltersValue = Pick<
 >;
 
 interface SearchFiltersProps {
+  id?: string;
   value: SearchFiltersValue;
   expanded: boolean;
   onChange: (next: Partial<SearchFiltersValue>) => void;
@@ -52,6 +53,7 @@ const PERMISSIONS: Array<{ value: DocumentPermissionScope | ""; label: string }>
 ];
 
 export function SearchFilters({
+  id,
   value,
   expanded,
   onChange,
@@ -61,7 +63,7 @@ export function SearchFilters({
   const hasFilter = Object.values(value).some(isMeaningfulFilterValue);
 
   return (
-    <div className="border-b border-slate-200 bg-white px-8 py-3">
+    <div className="scroll-mt-4 border-b border-slate-200 bg-white px-8 py-3" id={id}>
       <div className="flex flex-wrap items-center gap-2">
         <FilterSelect
           label="文件类型"

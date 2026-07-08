@@ -8,6 +8,7 @@ import {
   retryParse,
   setBatchPermissions,
   setDocumentPermissions,
+  uploadDocuments,
 } from "./documents";
 import {
   batchDocuments as serviceBatchDocuments,
@@ -15,6 +16,7 @@ import {
   retryParse as serviceRetryParse,
   setBatchPermissions as serviceSetBatchPermissions,
   setPermissions as serviceSetPermissions,
+  uploadBatch as serviceUploadBatch,
 } from "@/services/documents";
 
 vi.mock("../client", () => ({
@@ -82,6 +84,27 @@ describe("document endpoints", () => {
     expect(result).toEqual(response);
   });
 
+  it("posts multipart batch uploads to the batch upload endpoint", async () => {
+    const response = {
+      total: 2,
+      succeeded: 1,
+      failed: 1,
+      results: [
+        { fileName: "policy.pdf", ok: true, documentId: "doc-1", status: "PENDING" },
+        { fileName: "bad.exe", ok: false, message: "Unsupported file format" },
+      ],
+    };
+    vi.mocked(apiClient.post).mockResolvedValueOnce(response);
+    const form = new FormData();
+    form.append("files", new Blob(["pdf"]), "policy.pdf");
+    form.append("files", new Blob(["bad"]), "bad.exe");
+
+    const result = await uploadDocuments(form);
+
+    expect(apiClient.post).toHaveBeenCalledWith("/documents/batch/upload", form);
+    expect(result).toEqual(response);
+  });
+
   it("puts batch document permissions", async () => {
     const response = {
       results: [
@@ -114,6 +137,7 @@ describe("document endpoints", () => {
     expect(serviceRetryParse).toBe(retryParse);
     expect(serviceGetPermissions).toBe(getDocumentPermissions);
     expect(serviceSetPermissions).toBe(setDocumentPermissions);
+    expect(serviceUploadBatch).toBe(uploadDocuments);
   });
 
   it("declares document endpoint response contracts matching the backend", () => {
@@ -125,7 +149,9 @@ describe("document endpoints", () => {
     expect(types).not.toContain("success: boolean;");
     expect(types).not.toContain("error?: string;");
     expect(types).toMatch(/interface DocumentParseRetryResponse \{[^}]*id: string;[^}]*status: DocumentStatus;/);
+    expect(types).toMatch(/interface DocumentBatchUploadResponse \{[^}]*total: number;[^}]*succeeded: number;[^}]*failed: number;/);
     expect(endpoints).toContain("Promise<DocumentParseRetryResponse>");
     expect(endpoints).toContain("apiClient.post<DocumentParseRetryResponse>");
+    expect(endpoints).toContain('apiClient.post<DocumentBatchUploadResponse>("/documents/batch/upload"');
   });
 });

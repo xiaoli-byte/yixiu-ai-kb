@@ -10,10 +10,11 @@ import {
   Put,
   Query,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
+import { FileInterceptor, FilesInterceptor } from "@nestjs/platform-express";
 import { AuthGuard } from "@nestjs/passport";
 import { DocumentListQuery, DocumentUpdateRequest } from "@ai-knowledge/schemas";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
@@ -21,6 +22,7 @@ import { PermissionsGuard, RequirePermissions } from "../../common/permissions/p
 import { Action, Resource } from "../../common/permissions/permissions.types";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { DatabaseService } from "../../database/database.service";
+import { FoldersService } from "../folders/folders.service";
 import { TagsService } from "../tags/tags.service";
 import { DocumentsService } from "./documents.service";
 
@@ -31,6 +33,7 @@ export class DocumentsController {
     private readonly docs: DocumentsService,
     private readonly tags: TagsService,
     private readonly db: DatabaseService,
+    private readonly folders?: FoldersService,
   ) {}
 
   @Get()
@@ -62,6 +65,28 @@ export class DocumentsController {
   @Post("batch")
   async batch(@Body() body: unknown, @CurrentUser() user: any) {
     return this.docs.batch(body, user);
+  }
+
+  @Post("folder")
+  @RequirePermissions({ resource: Resource.FOLDERS, action: Action.CREATE })
+  async createFolder(@Body() body: { name: string; parentId?: string }, @CurrentUser() user: any) {
+    if (!this.folders) throw new BadRequestException("Folders service is unavailable");
+    return this.folders.create(user?.tenantId ?? this.db.tenantId!, body);
+  }
+
+  @Post("batch/upload")
+  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.CREATE })
+  @UseInterceptors(FilesInterceptor("files", 50))
+  @RateLimit({ ...RateLimitPolicies.upload, message: "Upload too frequent, please try again later" })
+  async batchUpload(
+    @UploadedFiles() files: Express.Multer.File[],
+    @CurrentUser() user: any,
+    @Body("folderId") folderId?: string,
+  ) {
+    if (!files || files.length === 0) throw new BadRequestException("Missing files");
+    const tenantId = user?.tenantId ?? this.db.tenantId!;
+    const userId = user?.sub ?? user?.userId ?? user?.id ?? this.db.userId!;
+    return this.docs.batchUpload(files, userId, tenantId, folderId);
   }
 
   @Post("upload")

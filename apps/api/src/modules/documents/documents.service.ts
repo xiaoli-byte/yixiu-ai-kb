@@ -52,6 +52,18 @@ type ListOptions = {
   pageSize: number;
 };
 
+type BatchUploadResult = {
+  fileName: string;
+  ok: boolean;
+  documentId?: string;
+  title?: string;
+  status?: string;
+  contentId?: string | null;
+  deduplicated?: boolean;
+  dedupReason?: string | null;
+  message?: string;
+};
+
 @Injectable()
 export class DocumentsService {
   private readonly logger = new Logger(DocumentsService.name);
@@ -216,7 +228,7 @@ export class DocumentsService {
 
   async upload(file: Express.Multer.File, ownerId: string, tenantId: string, folderId?: string) {
     if (!file) throw new BadRequestException("Missing file");
-    const originalName = Buffer.from(file.originalname, "latin1").toString("utf8");
+    const originalName = this.decodeOriginalName(file.originalname);
     const ext = extname(originalName) || "";
     if (!isSupportedDocumentFile(file.mimetype, originalName)) {
       throw new BadRequestException(
@@ -275,7 +287,49 @@ export class DocumentsService {
         ? reusedStatus === "READY"
           ? "Duplicate file detected and linked to existing parsed content."
           : "Duplicate file detected and linked to content that is still processing."
-        : undefined,
+      : undefined,
+    };
+  }
+
+  async batchUpload(
+    files: Express.Multer.File[],
+    ownerId: string,
+    tenantId: string,
+    folderId?: string,
+  ) {
+    if (!files || files.length === 0) throw new BadRequestException("Missing files");
+
+    const results: BatchUploadResult[] = [];
+    for (const file of files) {
+      const fileName = this.decodeOriginalName(file.originalname);
+      try {
+        const uploaded = await this.upload(file, ownerId, tenantId, folderId);
+        results.push({
+          fileName,
+          ok: true,
+          documentId: uploaded.id,
+          title: uploaded.title,
+          status: uploaded.status,
+          contentId: uploaded.contentId,
+          deduplicated: uploaded.deduplicated,
+          dedupReason: uploaded.dedupReason,
+          message: uploaded.message,
+        });
+      } catch (error: any) {
+        results.push({
+          fileName,
+          ok: false,
+          message: error?.message || "Upload failed",
+        });
+      }
+    }
+
+    const succeeded = results.filter((result) => result.ok).length;
+    return {
+      total: results.length,
+      succeeded,
+      failed: results.length - succeeded,
+      results,
     };
   }
 
@@ -707,6 +761,10 @@ export class DocumentsService {
     });
     if (!folder) throw new BadRequestException("Folder not found");
     return normalized;
+  }
+
+  private decodeOriginalName(originalName: string) {
+    return Buffer.from(originalName, "latin1").toString("utf8");
   }
 
   private toDocumentUserContext(user?: any): DocumentUserContext {

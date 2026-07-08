@@ -77,6 +77,25 @@ export interface DocumentParseRetryResponse {
   status: DocumentStatus;
 }
 
+export interface DocumentBatchUploadResult {
+  fileName: string;
+  ok: boolean;
+  documentId?: string;
+  title?: string;
+  status?: DocumentStatus;
+  contentId?: string | null;
+  deduplicated?: boolean;
+  dedupReason?: string | null;
+  message?: string;
+}
+
+export interface DocumentBatchUploadResponse {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: DocumentBatchUploadResult[];
+}
+
 export interface DocumentDto {
   id: string;
   title: string;

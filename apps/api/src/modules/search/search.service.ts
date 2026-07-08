@@ -783,6 +783,31 @@ export class SearchService {
     };
   }
 
+  private mapFilterDocumentRow(r: any): SearchHit {
+    const text = String(r.text ?? r.documentTitle ?? "");
+    return {
+      chunkId: r.chunkId,
+      documentId: r.documentId,
+      contentId: r.contentId,
+      documentTitle: r.documentTitle,
+      mime: r.mime || "application/octet-stream",
+      permissionScope: r.permissionScope ?? r.permission_scope,
+      canDownload: false,
+      categoryPath: r.categoryPath ?? r.category_path ?? null,
+      idx: Number(r.idx) || 0,
+      text,
+      highlight: this.escapeHtml(text),
+      score: 0,
+      hotScore: Number(r.hotScore ?? r.hot_score) || 0,
+      viewCount: Number(r.viewCount ?? r.view_count) || 0,
+      downloadCount: Number(r.downloadCount ?? r.download_count) || 0,
+      sources: [],
+      page: r.page ?? null,
+      updatedAt: this.toIsoString(r.updatedAt),
+      createdAt: this.toIsoString(r.createdAt),
+    };
+  }
+
   private normalizeHighlight(highlight: unknown, text: unknown, q: string): string {
     const rawHighlight = String(highlight ?? "");
     const sanitized = rawHighlight.trim() ? this.sanitizeHighlight(rawHighlight) : "";
@@ -913,6 +938,27 @@ export class SearchService {
     });
   }
 
+  private documentFilterSortSql(sortBy: SearchSortBy): string {
+    if (sortBy === "name") return `d.title ASC, d.updated_at DESC`;
+    if (sortBy === "hot") return `COALESCE(metrics.hot_score, 0) DESC, d.updated_at DESC`;
+    if (sortBy === "views") return `COALESCE(metrics.view_count, 0) DESC, d.updated_at DESC`;
+    if (sortBy === "downloads") return `COALESCE(metrics.download_count, 0) DESC, d.updated_at DESC`;
+    return `d.updated_at DESC, d.created_at DESC`;
+  }
+
+  private hasActiveSearchListFilter(query: SearchListQuery): boolean {
+    return Boolean(
+      query.fileType ||
+        query.categoryId ||
+        query.tagId ||
+        query.permissionScope ||
+        (query.updateTimeRange && query.updateTimeRange !== "all") ||
+        query.parseStatus ||
+        query.uploaderId ||
+        query.departmentId,
+    );
+  }
+
   private timestampOf(hit: SearchHit): number {
     const value = hit.updatedAt || hit.createdAt;
     if (!value) return 0;
@@ -936,6 +982,9 @@ export class SearchService {
     const query = parsed.data;
     const keyword = this.normalizeKeyword(query.keyword ?? query.q ?? "");
     if (!keyword) {
+      if (this.hasActiveSearchListFilter(query)) {
+        return this.searchListByFilters(query, user);
+      }
       return { query: "", sortBy: query.sort, total: 0, hits: [], took: 0, page: query.page, pageSize: query.pageSize };
     }
 
@@ -981,6 +1030,86 @@ export class SearchService {
       page: query.page,
       pageSize: query.pageSize,
       hasRelevantResults: result.hasRelevantResults,
+    };
+  }
+
+  private async searchListByFilters(query: SearchListQuery, user?: any) {
+    const t0 = Date.now();
+    const actor = this.toDocumentUserContext(user);
+    const queryParts = this.buildSearchQueryParts(actor, [], query.pageSize, query);
+    const values = [...queryParts.values];
+    values.push((query.page - 1) * query.pageSize);
+    const offsetParam = `$${values.length}`;
+
+    const rows = await this.db.query<any>(
+      `SELECT
+         COALESCE(first_chunk.id, d.id) AS "chunkId",
+         d.id AS "documentId",
+         d.content_id AS "contentId",
+         COALESCE(first_chunk.idx, 0) AS idx,
+         COALESCE(first_chunk.text, d.title) AS text,
+         COALESCE(first_chunk.text, d.title) AS highlight,
+         first_chunk.page AS page,
+         d.title AS "documentTitle",
+         d.mime AS mime,
+         d.permission_scope AS "permissionScope",
+         ${this.categoryPathSelectSql()},
+         COALESCE(metrics.hot_score, 0)::float AS "hotScore",
+         COALESCE(metrics.view_count, 0)::int AS "viewCount",
+         COALESCE(metrics.download_count, 0)::int AS "downloadCount",
+         d.updated_at AS "updatedAt",
+         d.created_at AS "createdAt",
+         COUNT(*) OVER()::int AS "totalCount"
+       FROM documents d
+       LEFT JOIN document_contents dc ON dc.id = d.content_id
+       ${this.folderJoinSql()}
+       LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+       LEFT JOIN LATERAL (
+         SELECT c.id, c.idx, c.text, c.page
+         FROM chunks c
+         WHERE c.content_id = d.content_id
+            OR (c.content_id IS NULL AND c.document_id = d.id)
+         ORDER BY c.idx ASC
+         LIMIT 1
+       ) first_chunk ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_VIEW', 'VIEW'))::int AS view_count,
+           COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_DOWNLOAD', 'DOWNLOAD'))::int AS download_count,
+           (
+             COUNT(*) FILTER (WHERE se.event_type = 'SEARCH') * 1 +
+             COUNT(*) FILTER (WHERE se.event_type IN ('RESULT_CLICK', 'CLICK')) * 2 +
+             COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_VIEW', 'VIEW')) * 3 +
+             COUNT(*) FILTER (WHERE se.event_type IN ('DOCUMENT_DOWNLOAD', 'DOWNLOAD')) * 4
+           )::float AS hot_score
+         FROM search_events se
+         WHERE se.tenant_id = d.tenant_id
+           AND (
+             se.document_id = d.id
+             OR (se.content_id IS NOT NULL AND se.content_id = d.content_id)
+             OR se.chunk_id = first_chunk.id
+           )
+       ) metrics ON TRUE
+       WHERE ${queryParts.whereSql}
+       ORDER BY ${this.documentFilterSortSql(query.sort)}
+       LIMIT ${queryParts.limitParam} OFFSET ${offsetParam}`,
+      values,
+    );
+
+    const hits = await this.attachAccessFlags(
+      rows.map((row) => this.mapFilterDocumentRow(row)),
+      actor,
+    );
+
+    return {
+      query: "",
+      sortBy: query.sort,
+      total: rows[0]?.totalCount ? Number(rows[0].totalCount) : 0,
+      hits,
+      took: Date.now() - t0,
+      page: query.page,
+      pageSize: query.pageSize,
+      hasRelevantResults: hits.length > 0,
     };
   }
 

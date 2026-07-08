@@ -10,6 +10,7 @@ const RANGE_TABS: Array<{ value: NonNullable<HotSearchQuery["range"]>; label: st
 ];
 
 interface HotSearchPanelProps {
+  id?: string;
   items: HotSearchItem[];
   activeRange: NonNullable<HotSearchQuery["range"]>;
   loading?: boolean;
@@ -18,6 +19,7 @@ interface HotSearchPanelProps {
 }
 
 export function HotSearchPanel({
+  id,
   items,
   activeRange,
   loading = false,
@@ -25,7 +27,7 @@ export function HotSearchPanel({
   onSelect,
 }: HotSearchPanelProps) {
   return (
-    <section className="min-w-0">
+    <section className="min-w-0 scroll-mt-4" id={id}>
       <div className="flex items-center border-b border-slate-200">
         <h2 className="mr-6 pb-3 text-sm font-medium text-slate-900">热门搜索</h2>
         <div className="flex items-center gap-6">

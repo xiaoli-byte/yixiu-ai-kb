@@ -3,6 +3,7 @@ import type {
   DocumentBatchOperationRequest,
   DocumentBatchOperationResponse,
   DocumentBatchPermissionUpdateRequest,
+  DocumentBatchUploadResponse,
   DocumentDetail,
   DocumentListResponse,
   DocumentParseRetryResponse,
@@ -75,6 +76,10 @@ export async function deleteDocument(id: string): Promise<void> {
 // Upload document
 export async function uploadDocument(formData: FormData): Promise<void> {
   return apiClient.post("/documents/upload", formData);
+}
+
+export async function uploadDocuments(formData: FormData): Promise<DocumentBatchUploadResponse> {
+  return apiClient.post<DocumentBatchUploadResponse>("/documents/batch/upload", formData);
 }
 
 // Add tag

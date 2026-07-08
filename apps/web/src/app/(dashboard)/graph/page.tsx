@@ -4,32 +4,23 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Network } from "lucide-react";
 import { GraphCanvas, type GraphCanvasHandle } from "@/components/graph/GraphCanvas";
 import { GraphEvidenceDrawer, type GraphSelection } from "@/components/graph/GraphEvidenceDrawer";
-import { GraphPathPanel } from "@/components/graph/GraphPathPanel";
-import { GraphSavedViews } from "@/components/graph/GraphSavedViews";
 import { GraphSidebar } from "@/components/graph/GraphSidebar";
 import { GraphToolbar, type GraphExportFormat } from "@/components/graph/GraphToolbar";
 import { buildGraphExportJson, buildGraphSvg } from "@/components/graph/graphExport";
 import { useGraphWorkspace } from "@/hooks/useGraph";
 import {
-  createGraphRelation,
   deleteGraphRelation,
-  deleteGraphView,
   getGraphEdgeEvidence,
   getGraphNodeEvidence,
-  getGraphPath,
-  listGraphViews,
   mergeGraphEntity,
   reviewGraphRelation,
-  saveGraphView,
   updateGraphAliases,
   updateGraphRelation,
 } from "@/lib/api/endpoints/graph";
 import type {
-  GraphData,
   GraphEdgeEvidenceResponse,
   GraphExploreQuery,
   GraphNodeEvidenceResponse,
-  GraphSavedView,
   GraphStats,
   GraphWorkspaceResponse,
 } from "@/types/api";
@@ -59,11 +50,6 @@ export default function GraphPage() {
   const [edgeEvidence, setEdgeEvidence] = useState<GraphEdgeEvidenceResponse | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [pathLoading, setPathLoading] = useState(false);
-  const [pathGraph, setPathGraph] = useState<GraphData | null>(null);
-  const [pathFound, setPathFound] = useState<boolean | null>(null);
-  const [views, setViews] = useState<GraphSavedView[]>([]);
-  const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [layoutCenterNodeId, setLayoutCenterNodeId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -73,28 +59,9 @@ export default function GraphPage() {
 
   const workspace = useMemo(() => withFallback(data), [data]);
   const loading = isLoading || isValidating;
-  const displayGraph = pathGraph || workspace.graph;
+  const displayGraph = workspace.graph;
   const centerNodeId = layoutCenterNodeId || workspace.centerNodeId || undefined;
-  const pathNodeIds = useMemo(() => pathGraph?.nodes.map((node) => node.id) || [], [pathGraph]);
-  const pathEdgeIds = useMemo(() => pathGraph?.edges.map((edge) => edge.id) || [], [pathGraph]);
-  const highlightNodeIds = useMemo(
-    () => [...new Set([...workspace.matchedNodeIds, ...pathNodeIds])],
-    [workspace.matchedNodeIds, pathNodeIds],
-  );
-
-  useEffect(() => {
-    let active = true;
-    void listGraphViews()
-      .then((items) => {
-        if (active) setViews(items);
-      })
-      .catch((err) => {
-        if (active) setActionError(toErrorMessage(err));
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  const highlightNodeIds = workspace.matchedNodeIds;
 
   useEffect(() => {
     let active = true;
@@ -133,19 +100,15 @@ export default function GraphPage() {
   const applySearch = () => {
     const next = normalizeFilters(filters);
     setQuery(next);
-    setActiveViewId(null);
     setLayoutCenterNodeId(null);
-    clearPath();
   };
 
   const resetFilters = () => {
     const next = { ...defaultFilters };
     setFilters(next);
     setQuery(normalizeFilters(next));
-    setActiveViewId(null);
     setLayoutCenterNodeId(null);
     setSelection(null);
-    clearPath();
   };
 
   const refreshSelection = async (target = selection) => {
@@ -166,7 +129,6 @@ export default function GraphPage() {
     try {
       await action();
       await mutate();
-      clearPath();
       if (refreshCurrentSelection) await refreshSelection();
     } catch (err) {
       setActionError(toErrorMessage(err));
@@ -196,7 +158,7 @@ export default function GraphPage() {
           graph: displayGraph,
           filters: query,
           centerNodeId,
-          savedViewId: activeViewId,
+          savedViewId: null,
         }),
         null,
         2,
@@ -205,69 +167,6 @@ export default function GraphPage() {
       "application/json;charset=utf-8",
     );
   };
-
-  const handlePathSearch = async (input: { sourceId: string; targetId: string; maxDepth: number }) => {
-    setPathLoading(true);
-    setActionError(null);
-    try {
-      const result = await getGraphPath(input);
-      setPathFound(result.found);
-      setPathGraph(result.found ? result.graph : null);
-      setLayoutCenterNodeId(input.sourceId);
-    } catch (err) {
-      setActionError(toErrorMessage(err));
-    } finally {
-      setPathLoading(false);
-    }
-  };
-
-  const handleSaveView = async (input: { name: string; visibility: "PRIVATE" | "SHARED" }) => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      const view = await saveGraphView({
-        name: input.name,
-        visibility: input.visibility,
-        filters: query,
-        layout: { centerNodeId: centerNodeId || null },
-      });
-      setViews((current) => [view, ...current.filter((item) => item.id !== view.id)]);
-      setActiveViewId(view.id);
-    } catch (err) {
-      setActionError(toErrorMessage(err));
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleApplyView = (view: GraphSavedView) => {
-    const next = normalizeFilters({ ...defaultFilters, ...view.filters });
-    const savedCenter = typeof view.layout?.centerNodeId === "string" ? view.layout.centerNodeId : null;
-    setFilters(next);
-    setQuery(next);
-    setActiveViewId(view.id);
-    setLayoutCenterNodeId(savedCenter);
-    clearPath();
-  };
-
-  const handleDeleteView = async (id: string) => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await deleteGraphView(id);
-      setViews((current) => current.filter((view) => view.id !== id));
-      if (activeViewId === id) setActiveViewId(null);
-    } catch (err) {
-      setActionError(toErrorMessage(err));
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  function clearPath() {
-    setPathGraph(null);
-    setPathFound(null);
-  }
 
   return (
     <div className="min-h-screen overflow-auto bg-slate-50 p-5">
@@ -292,7 +191,6 @@ export default function GraphPage() {
       <div className="space-y-4">
         <GraphToolbar
           filters={filters}
-          categories={workspace.categories}
           filterOptions={workspace.filterOptions}
           loading={loading}
           onChange={updateFilters}
@@ -305,13 +203,12 @@ export default function GraphPage() {
           <GraphCanvas
             ref={canvasRef}
             graph={displayGraph}
-            loading={loading || pathLoading}
+            loading={loading}
             error={error ? "图谱加载失败" : undefined}
             centerNodeId={centerNodeId}
             selectedNodeId={selection?.type === "node" ? selection.id : null}
             selectedEdgeId={selection?.type === "edge" ? selection.id : null}
             highlightNodeIds={highlightNodeIds}
-            highlightEdgeIds={pathEdgeIds}
             onCenterChange={setLayoutCenterNodeId}
             onNodeSelect={(id) => setSelection({ type: "node", id })}
             onEdgeSelect={(id) => setSelection({ type: "edge", id })}
@@ -322,29 +219,6 @@ export default function GraphPage() {
           />
 
           <div className="space-y-4">
-            <GraphSavedViews
-              views={views}
-              activeViewId={activeViewId}
-              busy={actionLoading}
-              onSave={handleSaveView}
-              onApply={handleApplyView}
-              onDelete={handleDeleteView}
-            />
-            <GraphPathPanel
-              graph={workspace.graph}
-              selectedNodeId={selection?.type === "node" ? selection.id : null}
-              pathActive={pathFound !== null}
-              pathFound={pathFound}
-              busy={pathLoading || actionLoading}
-              onSearch={handlePathSearch}
-              onClear={clearPath}
-              onCreateRelation={(input) =>
-                runGraphAction(async () => {
-                  const created = await createGraphRelation(input);
-                  setSelection({ type: "edge", id: created.edge.id });
-                }, false)
-              }
-            />
             {selection ? (
               <GraphEvidenceDrawer
                 graph={workspace.graph}
