@@ -13,12 +13,43 @@ datasource db {
 
 // 禁止使用 prisma db push 修改业务表结构；开发请使用 prisma migrate dev，部署请使用 prisma migrate deploy。
 
+// KB-01（docs/authz-implementation-backlog.md）：引入 Tenant 实体。
+// `id` 故意不加 @default —— 现有 tenantId 列（User/Document/... 的 tenant_id 字段）早就存着
+// BOOTSTRAP_TENANT_ID 这个裸字符串（如 "tenant_demo"），Tenant.id 必须显式等于这个值才能让
+// 未来给 tenantId 补外键这一步（不在本工单范围内）对得上号；不能让它自动生成成 cuid。
+model Tenant {
+  id        String   @id
+  slug      String   @unique
+  name      String
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("tenants")
+}
+
+// KB-02（docs/authz-implementation-backlog.md）：User.role 单字段 -> Membership.roles[]，
+// 让一个用户能在同一租户下持有多个角色。和 Tenant 一样先不加外键（降风险），仅建表 + 回填；
+// User.role 过渡期保留不删（见下方 @deprecated 注释），供旧代码双读。
+model Membership {
+  userId    String   @map("user_id")
+  tenantId  String   @map("tenant_id")
+  roles     String[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@id([userId, tenantId])
+  @@map("memberships")
+}
+
 model User {
   id           String   @id @default(cuid())
   tenantId     String   @map("tenant_id")
   email        String
   name         String
   passwordHash String   @map("password_hash")
+  /// @deprecated 迁移到 Membership.roles[]（KB-02/KB-03）。过渡期保留供旧代码双读，
+  /// 待 KB-04/KB-05 把读写路径切到 Membership 后再移除。
   role         String   @default("viewer")
   departmentId String?  @map("department_id")
   createdAt    DateTime @default(now()) @map("created_at")

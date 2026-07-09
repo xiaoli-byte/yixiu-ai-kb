@@ -38,6 +38,7 @@
     "@nestjs/serve-static": "^4.0.2",
     "@node-rs/jieba": "^2.0.1",
     "@prisma/client": "^5.22.0",
+    "@xiaoli-byte/authz": "workspace:^",
     "bcrypt": "^5.1.1",
     "bluebird": "^3.7.2",
     "bullmq": "^5.21.0",

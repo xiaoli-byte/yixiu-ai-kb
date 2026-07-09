@@ -1,0 +1,103 @@
+// Reference model definitions for the shared authz data model
+// (see docs/authz-architecture.md §3 in both ai-call and ai-knowledge).
+//
+// This file is NOT wired into any Prisma generator — it is not picked up automatically
+// by `prisma generate`/`migrate` in either repo. Copy the models you need into your own
+// `schema.prisma` and run your own migration (see KB-01/KB-02/CALL-02 in
+// docs/authz-implementation-backlog.md).
+//
+// Field and table (@@map) names ARE the cross-system contract — do not rename them when
+// copying, or ai-call and ai-knowledge will stop being structurally compatible for the
+// shared `@yixiu/authz` code (acl/sql.ts assumes `resource_grants` with exactly these
+// column names).
+
+model Tenant {
+  id        String   @id @default(uuid())
+  slug      String   @unique
+  name      String
+  status    String   @default("active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("tenants")
+}
+
+// NOTE: each host keeps its own `User` model with host-specific fields (passwordHash,
+// name, status, ...). Do not replace it wholesale — just stop putting `role`/single
+// `tenantId` ownership directly on it; that moves to `Membership` below.
+
+model Membership {
+  userId    String
+  tenantId  String
+  roles     String[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@id([userId, tenantId])
+  @@map("memberships")
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  /// null = built-in role shared across all tenants (e.g. "super_admin")
+  tenantId    String?          @map("tenant_id")
+  /// e.g. "super_admin", "kb:editor" — matches Membership.roles[] entries
+  key         String           @unique
+  name        String
+  permissions RolePermission[]
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  /// "{system}:{module}:{action}", e.g. "kb:document:read" (see docs/authz-architecture.md §4)
+  key         String           @unique
+  description String?
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @map("role_id")
+  permissionId String     @map("permission_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model ResourceGrant {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  /// "document" | "folder" | "call_task" | "campaign" | ...
+  resourceType String   @map("resource_type")
+  resourceId   String   @map("resource_id")
+  /// "USER" | "DEPARTMENT" | "ROLE"
+  subjectType  String   @map("subject_type")
+  subjectId    String   @map("subject_id")
+  /// bitmask — see packages/authz/src/acl/types.ts AclPerm
+  perms        Int
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, resourceType, resourceId, subjectType, subjectId])
+  @@index([tenantId, resourceType, resourceId])
+  @@map("resource_grants")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  actor     String
+  action    String
+  subject   String
+  details   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@map("audit_logs")
+}

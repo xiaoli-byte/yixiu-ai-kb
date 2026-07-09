@@ -162,8 +162,8 @@ function buildPostgresHint(connectionString, reason) {
       lines.push(
         "DATABASE_URL currently points at localhost:5432, which often belongs to another local PostgreSQL instance.",
         "If you use this project's Docker PostgreSQL, prefer the non-conflicting host port from .env.example:",
-        "  POSTGRES_PORT=55432",
-        `  DATABASE_URL=postgresql://${user}:<POSTGRES_PASSWORD>@localhost:55432/${dbName}`,
+        "  POSTGRES_PORT=56432",
+        `  DATABASE_URL=postgresql://${user}:<POSTGRES_PASSWORD>@localhost:56432/${dbName}`,
       );
     }
   } catch {

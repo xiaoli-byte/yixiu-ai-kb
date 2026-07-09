@@ -1,0 +1,89 @@
+{
+  "name": "@xiaoli-byte/authz",
+  "version": "0.1.2",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaoli-byte/yixiu-ai-kb.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js",
+      "require": "./dist/core/index.cjs"
+    },
+    "./jwt": {
+      "types": "./dist/jwt/index.d.ts",
+      "import": "./dist/jwt/index.js",
+      "require": "./dist/jwt/index.cjs"
+    },
+    "./nestjs": {
+      "types": "./dist/nestjs/index.d.ts",
+      "import": "./dist/nestjs/index.js",
+      "require": "./dist/nestjs/index.cjs"
+    },
+    "./acl": {
+      "types": "./dist/acl/index.d.ts",
+      "import": "./dist/acl/index.js",
+      "require": "./dist/acl/index.cjs"
+    },
+    "./prisma": {
+      "types": "./dist/prisma/index.d.ts",
+      "import": "./dist/prisma/index.js",
+      "require": "./dist/prisma/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src/prisma/schema.partial.prisma"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "peerDependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "express": "^4.0.0 || ^5.0.0",
+    "nestjs-cls": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@nestjs/common": { "optional": true },
+    "@nestjs/core": { "optional": true },
+    "express": { "optional": true },
+    "nestjs-cls": { "optional": true }
+  },
+  "devDependencies": {
+    "@ai-knowledge/tsconfig": "workspace:*",
+    "@nestjs/common": "^10.4.7",
+    "@nestjs/core": "^10.4.7",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.7.5",
+    "express": "^5.0.0",
+    "nestjs-cls": "^4.4.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.9"
+  }
+}

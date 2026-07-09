@@ -28,6 +28,20 @@ async function main() {
   const password = env.BOOTSTRAP_ADMIN_PASSWORD;
   const name = env.BOOTSTRAP_ADMIN_NAME;
 
+  // KB-01: Tenant.id is intentionally the same literal string already used everywhere
+  // as the bare `tenant_id` column value — see schema.prisma's comment on Tenant.
+  const tenant = await prisma.tenant.upsert({
+    where: { id: tenantId },
+    update: {},
+    create: {
+      id: tenantId,
+      slug: tenantId,
+      name: `Bootstrap Tenant (${tenantId})`,
+      status: "active",
+    },
+  });
+  console.log(`✓ 租户: ${tenant.name} (${tenant.id})`);
+
   const passwordHash = await bcrypt.hash(password, 10);
   const admin = await prisma.user.upsert({
     where: { tenantId_email: { tenantId, email } },
@@ -42,6 +56,21 @@ async function main() {
     },
   });
   console.log(`✓ 用户: ${admin.email} (${admin.role})`);
+
+  // KB-02: 迁移 0009 的回填只覆盖“迁移那一刻已存在的用户”。全新部署时 migrate 先于 seed
+  // 执行、users 表为空，回填插入 0 行；因此 admin 的 Membership 必须在这里补出来，
+  // 否则全新环境的 admin 会没有任何 membership（KB-04/KB-05 切到 Membership 读路径后会被锁死）。
+  // 复合键 (userId, tenantId) upsert 保持幂等；roles 与 User.role 对齐。
+  const membership = await prisma.membership.upsert({
+    where: { userId_tenantId: { userId: admin.id, tenantId } },
+    update: {},
+    create: {
+      userId: admin.id,
+      tenantId,
+      roles: [admin.role],
+    },
+  });
+  console.log(`✓ 成员关系: ${membership.userId} @ ${membership.tenantId} [${membership.roles.join(", ")}]`);
 
   // tags
   const tagNames = ["产品", "技术", "人事", "财务", "客户"];
