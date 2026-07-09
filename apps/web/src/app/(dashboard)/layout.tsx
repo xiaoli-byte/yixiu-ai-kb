@@ -14,10 +14,14 @@ import {
   ChevronsLeft,
   ChevronsRight,
 } from "lucide-react";
-import { useAuth } from "@/lib/store";
+import { useAuth, COOKIE_SESSION } from "@/lib/store";
 import { apiClient } from "@/lib/api/client";
 import { Role, ROLE_LABELS } from "@/types/permissions";
 import { cn } from "@/lib/utils";
+
+// zone 模式（作为 ai-call 的 /knowledge zone 内嵌）时为 "/knowledge"，独立部署为空串。
+// 构建期内联（见 next.config.mjs env）。
+const WEB_BASE_PATH = process.env.NEXT_PUBLIC_WEB_BASE_PATH || "";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -41,6 +45,36 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     });
   };
 
+  // 未登录时的去向：zone 模式应去 ai-call 登录页（域名根 /login，带回跳）——本地
+  // /knowledge/login 对联合身份用户无法登录（占位密码）；独立部署仍走本地登录页。
+  const redirectToLogin = () => {
+    if (WEB_BASE_PATH && typeof window !== "undefined") {
+      const backTo = window.location.pathname + window.location.search;
+      // window.location 不经过 basePath，"/login" 即域名根 = ai-call 登录页。
+      window.location.href = `/login?redirect=${encodeURIComponent(backTo)}`;
+      return;
+    }
+    router.push("/login");
+  };
+
+  // 登出：cookie 会话（无状态联合登录）的真正凭证是 ai-call 的 httpOnly cookie，JS
+  // 清不掉，必须调 ai-call 的登出端点作废——否则回到任意页面都会被 /auth/me 引导重新
+  // 拉起会话，登出形同虚设（原 #1）。"/api/auth/logout" 走域名根，zone 同域下即 ai-call API。
+  const handleLogout = async () => {
+    if (accessToken === COOKIE_SESSION) {
+      try {
+        await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+      } catch {
+        // 网络失败也继续清本地态；cookie 未清时下次进入会被重新引导为登录态。
+      }
+      logout();
+      window.location.href = "/login";
+      return;
+    }
+    logout();
+    router.push("/login");
+  };
+
   // 未登录时：先尝试用同域共享 cookie 引导会话（微前端无状态联合登录），失败才去登录页。
   // 独立部署无 cookie 时 /auth/me 返回 401 → 走登录页，与原行为一致。
   useEffect(() => {
@@ -60,14 +94,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           });
           return;
         }
-        if (!cancelled) router.push("/login");
+        if (!cancelled) redirectToLogin();
       } catch {
-        if (!cancelled) router.push("/login");
+        if (!cancelled) redirectToLogin();
       }
     })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted, accessToken, router, setCookieSession]);
 
   // 支持 super_admin 和 admin
@@ -156,22 +191,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   {getRoleLabel(user?.role)}
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  logout();
-                  router.push("/login");
-                }}
-                className="w-full btn-ghost justify-start"
-              >
+              <button onClick={handleLogout} className="w-full btn-ghost justify-start">
                 <LogOut size={14} /> 退出
               </button>
             </>
           ) : (
             <button
-              onClick={() => {
-                logout();
-                router.push("/login");
-              }}
+              onClick={handleLogout}
               title="退出登录"
               className="w-full flex justify-center py-2 rounded-lg text-slate-600 hover:bg-slate-100 transition"
             >

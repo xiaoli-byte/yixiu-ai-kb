@@ -1,4 +1,18 @@
 import { ApiError, RateLimitError, TokenExpiredError } from "./errors";
+import { useAuth, COOKIE_SESSION } from "../store";
+
+// zone 模式（basePath=/knowledge，构建期内联）下本地登录页在 /knowledge/login；
+// 独立部署为空串，/login 即本地登录页。
+const WEB_BASE_PATH = process.env.NEXT_PUBLIC_WEB_BASE_PATH || "";
+
+// cookie 会话（无状态联合登录）失效时的去向：ai-call 登录页（域名根 /login，带回跳）。
+// window.location 不经过 basePath，所以 "/login" 在 zone 模式下就是 ai-call 的登录页；
+// 本地 /knowledge/login 对联合身份用户无法登录（占位密码）。
+function redirectToFederatedLogin() {
+  if (typeof window === "undefined") return;
+  const backTo = window.location.pathname + window.location.search;
+  window.location.href = `/login?redirect=${encodeURIComponent(backTo)}`;
+}
 
 // Token 存储键
 const TOKEN_KEY = "accessToken";
@@ -114,24 +128,35 @@ async function clientFetch<T>(
     signal,
   });
 
-  if (response.status === 401 && token) {
-    clearAuth();
-    const newToken = await refreshAndRetry();
-    if (newToken) {
-      finalHeaders["Authorization"] = `Bearer ${newToken}`;
-      const retryRes = await fetch(url, {
-        method,
-        headers: finalHeaders,
-        credentials: "include",
-        body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-        signal,
-      });
-      return handleResponse<T>(retryRes);
+  if (response.status === 401) {
+    if (token) {
+      clearAuth();
+      const newToken = await refreshAndRetry();
+      if (newToken) {
+        finalHeaders["Authorization"] = `Bearer ${newToken}`;
+        const retryRes = await fetch(url, {
+          method,
+          headers: finalHeaders,
+          credentials: "include",
+          body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+          signal,
+        });
+        return handleResponse<T>(retryRes);
+      }
+      if (typeof window !== "undefined") {
+        // Bearer 流的本地登录页要带上 basePath（zone 模式下是 /knowledge/login）。
+        window.location.href = `${WEB_BASE_PATH}/login`;
+      }
+      throw new TokenExpiredError();
     }
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
+    // cookie 会话（无状态联合登录）过期/失效：本地没有 refresh token 可刷（真正的凭证
+    // 是 ai-call 的 httpOnly cookie），清内存态后整页跳 ai-call 登录页重新联合登录。
+    // 不处理的话这里会一路抛 ApiError，用户只看到报错且无法自愈（原 #2 死路）。
+    if (useAuth.getState().accessToken === COOKIE_SESSION) {
+      useAuth.getState().logout();
+      redirectToFederatedLogin();
+      throw new TokenExpiredError();
     }
-    throw new TokenExpiredError();
   }
 
   return handleResponse<T>(response);

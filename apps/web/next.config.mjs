@@ -13,6 +13,11 @@ const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ["@ai-knowledge/schemas"],
   ...(webBasePath ? { basePath: webBasePath } : {}),
+  env: {
+    // 客户端 zone 检测（构建期内联）：登录跳转目标要区分 zone 内嵌（去 ai-call 的域名根
+    // /login）和独立部署（本地 /login），见 lib/api/client.ts 与 (dashboard)/layout.tsx。
+    NEXT_PUBLIC_WEB_BASE_PATH: webBasePath ?? "",
+  },
   async rewrites() {
     return [
       {
