@@ -114,11 +114,21 @@ export class SearchController {
     if (!parsed.success) {
       return { query: "", mode: "hybrid", sortBy: "relevance", total: 0, hits: [], took: 0, error: "invalid_query" };
     }
-    const { q, mode, sortBy, topK, tags } = parsed.data;
+    const { q, mode, sortBy, topK, tags, knowledgeBaseId } = parsed.data;
 
     // ServiceAuthGuard 已经从 X-Tenant-Id / X-User-Id headers 提取身份到 CLS
     // 这里通过 user 对象（从 CLS 读取）确保租户过滤生效
-    const { hits, took, hasRelevantResults } = await this.search.search({ q, mode, sortBy, topK, tags, user });
+    // knowledgeBaseId（ai-call 的知识库 id）映射到 folder 维度做按库过滤；未提供或该库不存在
+    // 时 search() 会退回租户级全库检索（见 search.service 的 resolveKnowledgeBaseFilter）。
+    const { hits, took, hasRelevantResults } = await this.search.search({
+      q,
+      mode,
+      sortBy,
+      topK,
+      tags,
+      user,
+      filters: knowledgeBaseId ? { knowledgeBaseId } : undefined,
+    });
 
     // 服务调用不记录历史，避免污染用户的搜索历史
     return { query: q, mode, sortBy, total: hits.length, hits, took, hasRelevantResults };

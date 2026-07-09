@@ -348,6 +348,49 @@ describe("SearchService permission-aware search", () => {
     });
   });
 
+  it("scopes retrieve by knowledgeBaseId when it maps to an existing tenant folder (CALL-10 #1)", async () => {
+    const { service, db } = createService();
+    // 第一次 query = folder 存在性校验；其余 = 检索
+    db.query
+      .mockResolvedValueOnce([{ id: "folder-1" }])
+      .mockResolvedValue([]);
+
+    await service.search({
+      q: "risk",
+      mode: "keyword",
+      topK: 10,
+      user: { sub: "user-2", tenantId: "tenant-1", role: "viewer" },
+      filters: { knowledgeBaseId: "folder-1" },
+    } as any);
+
+    const folderCall = db.query.mock.calls.find((c: any[]) => String(c[0]).includes("FROM folders"));
+    expect(folderCall).toBeTruthy();
+    expect(folderCall![1]).toEqual(["folder-1", "tenant-1"]);
+
+    const searchCall = db.query.mock.calls.find((c: any[]) => String(c[0]).includes("VISIBILITY_SQL"));
+    expect(String(searchCall![0])).toContain("d.folder_id =");
+    expect(searchCall![1]).toContain("folder-1");
+  });
+
+  it("ignores knowledgeBaseId and stays tenant-wide when no matching folder (CALL-10 #1 graceful fallback)", async () => {
+    const { service, db } = createService();
+    db.query.mockResolvedValue([]); // folder 不存在，检索也返回空
+
+    await service.search({
+      q: "risk",
+      mode: "keyword",
+      topK: 10,
+      user: { sub: "user-2", tenantId: "tenant-1", role: "viewer" },
+      filters: { knowledgeBaseId: "kb-unaligned" },
+    } as any);
+
+    const searchCall = db.query.mock.calls.find((c: any[]) => String(c[0]).includes("VISIBILITY_SQL"));
+    expect(searchCall).toBeTruthy();
+    // 未对齐 → 不按 folder 过滤（无 d.folder_id 条件），也不会把 kb id 塞进检索参数
+    expect(String(searchCall![0])).not.toContain("d.folder_id =");
+    expect(searchCall![1]).not.toContain("kb-unaligned");
+  });
+
   it("returns permission-filtered documents when filters are present without a keyword", async () => {
     const { service, db, embeddings, access } = createService();
     access.visibleDocumentWhereSql.mockReturnValueOnce({

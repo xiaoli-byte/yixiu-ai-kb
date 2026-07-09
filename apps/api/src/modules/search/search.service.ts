@@ -68,6 +68,9 @@ type SearchFilters = {
   departmentId?: string;
   archived?: boolean;
   includeArchived?: boolean;
+  // 知识库维度（ai-call → retrieve）：映射到 documents.folder_id。仅当该 id 在本租户对应
+  // 一个真实 folder 时才生效（见 resolveKnowledgeBaseFilter），否则被丢弃退回租户级检索。
+  knowledgeBaseId?: string;
 };
 
 type SearchOptions = {
@@ -204,6 +207,7 @@ export class SearchService {
     const candidateLimit = this.clampLimit(opts.candidateLimit ?? Math.max(k, 50), k, maxResults);
     const sortBy = opts.sortBy ?? "relevance";
     const filters = this.normalizeSearchFilters(opts);
+    await this.resolveKnowledgeBaseFilter(filters, actor);
 
     if (!q) {
       return { hits: [], took: Date.now() - t0, hasRelevantResults: false };
@@ -395,6 +399,8 @@ export class SearchService {
 
     if (filters.fileType) conditions.push(`d.mime ILIKE ${addValue(`%${filters.fileType.trim()}%`)}`);
     if (filters.categoryId) conditions.push(`d.folder_id = ${addValue(filters.categoryId)}`);
+    // 知识库维度：knowledgeBaseId 已在 search() 里校验为本租户存在的 folder（否则被丢弃）。
+    if (filters.knowledgeBaseId) conditions.push(`d.folder_id = ${addValue(filters.knowledgeBaseId)}`);
     if (filters.permissionScope) conditions.push(`d.permission_scope = ${addValue(filters.permissionScope)}`);
     if (filters.parseStatus) conditions.push(`COALESCE(dc.status, d.status) = ${addValue(filters.parseStatus)}`);
     if (filters.uploaderId) conditions.push(`d.owner_id = ${addValue(filters.uploaderId)}`);
@@ -1344,6 +1350,42 @@ export class SearchService {
       ...(opts.filters ?? {}),
       tags: opts.tags ?? opts.filters?.tags,
     };
+  }
+
+  /**
+   * 解析 knowledgeBaseId（ai-call 的知识库 id）→ ai-knowledge 的 folder 维度。
+   *
+   * 优雅兜底：仅当该 id 在调用方租户下确实对应一个 folder 时才保留过滤（buildSearchQueryParts
+   * 会据此加 `d.folder_id = ...`）；否则丢弃该过滤，退回租户级全库检索。
+   *
+   * 这样做的原因：ai-call 一直在 retrieve 请求里携带 knowledgeBaseId，但两系统尚未对齐
+   * 「kb id ↔ folder id」。若无条件按 folder 过滤，未对齐时会命中 0 条、把当前可用的租户级
+   * 检索直接搞坏。存在性校验保证「已对齐→按库过滤生效；未对齐→行为不变」。
+   */
+  private async resolveKnowledgeBaseFilter(
+    filters: SearchFilters,
+    actor: DocumentUserContext,
+  ): Promise<void> {
+    const kbId = filters.knowledgeBaseId?.trim();
+    if (!kbId) {
+      delete filters.knowledgeBaseId;
+      return;
+    }
+    const tenantId = actor.tenantId;
+    if (!tenantId) {
+      delete filters.knowledgeBaseId;
+      return;
+    }
+    const rows = await this.db.query<{ id: string }>(
+      `SELECT id FROM folders WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
+      [kbId, tenantId],
+    );
+    if (rows.length === 0) {
+      // 未对齐：退回租户级检索，不返回空
+      delete filters.knowledgeBaseId;
+    } else {
+      filters.knowledgeBaseId = kbId;
+    }
   }
 
   private normalizeTagIds(tags?: string[] | string) {
