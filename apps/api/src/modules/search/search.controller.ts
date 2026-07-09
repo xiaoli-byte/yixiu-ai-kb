@@ -4,7 +4,6 @@ import { SearchEventRequest, SearchQuery } from "@ai-knowledge/schemas";
 import { SearchService } from "./search.service";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { ServiceAuthGuard } from "@xiaoli-byte/authz";
 
 @UseGuards(AuthGuard("jwt"))
 @Controller("search")
@@ -94,43 +93,6 @@ export class SearchController {
       tenantId: user?.tenantId,
       userId,
     });
-    return { query: q, mode, sortBy, total: hits.length, hits, took, hasRelevantResults };
-  }
-
-  /**
-   * retrieve - 服务间检索端点
-   *
-   * 供 ai-call 通话中 RAG 检索调用。使用 ServiceAuthGuard 保护，要求：
-   * - X-Service-Token: 服务令牌（环境变量 SERVICE_API_TOKEN）
-   * - X-Tenant-Id: 租户 ID（必需，用于租户隔离）
-   * - X-User-Id: 用户 ID（必需，用于文档 ACL 判定）
-   *
-   * **安全约束**：租户过滤必须生效，防止租户 A 的通话检索到租户 B 的文档。
-   */
-  @Post("retrieve")
-  @UseGuards(ServiceAuthGuard)
-  async retrieve(@Body() raw: unknown, @CurrentUser() user: any) {
-    const parsed = SearchQuery.safeParse(raw ?? {});
-    if (!parsed.success) {
-      return { query: "", mode: "hybrid", sortBy: "relevance", total: 0, hits: [], took: 0, error: "invalid_query" };
-    }
-    const { q, mode, sortBy, topK, tags, knowledgeBaseId } = parsed.data;
-
-    // ServiceAuthGuard 已经从 X-Tenant-Id / X-User-Id headers 提取身份到 CLS
-    // 这里通过 user 对象（从 CLS 读取）确保租户过滤生效
-    // knowledgeBaseId（ai-call 的知识库 id）映射到 folder 维度做按库过滤；未提供或该库不存在
-    // 时 search() 会退回租户级全库检索（见 search.service 的 resolveKnowledgeBaseFilter）。
-    const { hits, took, hasRelevantResults } = await this.search.search({
-      q,
-      mode,
-      sortBy,
-      topK,
-      tags,
-      user,
-      filters: knowledgeBaseId ? { knowledgeBaseId } : undefined,
-    });
-
-    // 服务调用不记录历史，避免污染用户的搜索历史
     return { query: q, mode, sortBy, total: hits.length, hits, took, hasRelevantResults };
   }
 }

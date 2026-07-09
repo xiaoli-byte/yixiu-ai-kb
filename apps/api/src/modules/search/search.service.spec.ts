@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import "reflect-metadata";
-import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
+import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { describe, expect, it, vi } from "vitest";
 import {
   DocumentBatchOperationRequest,
@@ -12,6 +12,7 @@ import {
 } from "@ai-knowledge/schemas";
 import { SearchService, type SearchHit } from "./search.service";
 import { SearchController } from "./search.controller";
+import { SearchRetrieveController } from "./search-retrieve.controller";
 
 function createService() {
   const db = {
@@ -804,5 +805,23 @@ describe("SearchService history helpers", () => {
 
     await expect(service.clearHistory()).resolves.toEqual({ deleted: 2 });
     expect(db.query).toHaveBeenLastCalledWith(expect.not.stringContaining("AND id = $3"), ["tenant-1", "user-1"]);
+  });
+});
+
+describe("service retrieve route guard placement (CALL-06/CALL-10 regression)", () => {
+  it("retrieve lives on SearchRetrieveController, not the JWT-guarded SearchController", () => {
+    // 若 retrieve 回到 SearchController，会被其类级 AuthGuard('jwt') 挡掉无 JWT 的服务调用。
+    expect((SearchController.prototype as any).retrieve).toBeUndefined();
+    expect(typeof (SearchRetrieveController.prototype as any).retrieve).toBe("function");
+  });
+
+  it("SearchRetrieveController has no class-level guard; retrieve uses ServiceAuthGuard", () => {
+    const classGuards = Reflect.getMetadata(GUARDS_METADATA, SearchRetrieveController) ?? [];
+    expect(classGuards.length).toBe(0);
+    const methodGuards =
+      Reflect.getMetadata(GUARDS_METADATA, SearchRetrieveController.prototype.retrieve) ?? [];
+    expect(methodGuards.map((g: any) => g?.name ?? g?.constructor?.name)).toContain("ServiceAuthGuard");
+    expect(Reflect.getMetadata(PATH_METADATA, SearchRetrieveController.prototype.retrieve)).toBe("retrieve");
+    expect(Reflect.getMetadata(METHOD_METADATA, SearchRetrieveController.prototype.retrieve)).toBe(1);
   });
 });
