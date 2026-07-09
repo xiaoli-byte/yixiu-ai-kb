@@ -107,6 +107,9 @@ async function clientFetch<T>(
   const response = await fetch(url, {
     method,
     headers: finalHeaders,
+    // 微前端同域内嵌时带上 ai-call 的共享 cookie，实现无状态联合登录（无 Bearer 也能认证）。
+    // 独立部署无该 cookie 时无害，仍走上面的 Authorization: Bearer。
+    credentials: "include",
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
     signal,
   });
@@ -119,6 +122,7 @@ async function clientFetch<T>(
       const retryRes = await fetch(url, {
         method,
         headers: finalHeaders,
+        credentials: "include",
         body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
         signal,
       });

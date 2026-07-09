@@ -8,12 +8,18 @@ export interface User {
   tenantId: string;
 }
 
+// 无状态联合登录（微前端同域内嵌）：ai-call 的 httpOnly cookie 已认证，但 JS 读不到它。
+// 用这个内存哨兵作为 accessToken 令路由守卫通过；不写 localStorage（避免污染独立部署的
+// Bearer 流），API 调用靠 fetch 的 credentials:"include" 带 cookie 认证。
+export const COOKIE_SESSION = "__cookie_session__";
+
 interface AuthState {
   accessToken: string | null;
   refreshToken: string | null;
   user: User | null;
   setAuth: (a: { accessToken: string; refreshToken: string; user: User }) => void;
   setUser: (u: User) => void;
+  setCookieSession: (u: User) => void;
   logout: () => void;
 }
 
@@ -50,6 +56,10 @@ export const useAuth = create<AuthState>((set) => {
     setUser: (user) => {
       localStorage.setItem(USER_KEY, JSON.stringify(user));
       set({ user });
+    },
+    setCookieSession: (user) => {
+      // 仅内存：不写 localStorage，刷新后由布局守卫重新 /auth/me 引导。
+      set({ accessToken: COOKIE_SESSION, refreshToken: null, user });
     },
     logout: () => {
       localStorage.removeItem(ACCESS_KEY);
