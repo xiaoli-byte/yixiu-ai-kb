@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 export interface RecommendedCategory {
   id: string;
   label: string;
-  target: "categoryId" | "tagId";
+  target: "categoryId";
 }
 
 interface SearchLandingProps {
@@ -17,7 +17,6 @@ interface SearchLandingProps {
   historyItems: SearchHistoryItem[];
   recommendedCategories: RecommendedCategory[];
   selectedCategoryId?: string;
-  selectedTagId?: string;
   hotRange: NonNullable<HotSearchQuery["range"]>;
   hotLoading?: boolean;
   onInputChange: (value: string) => void;
@@ -37,7 +36,6 @@ export function SearchLanding({
   historyItems,
   recommendedCategories,
   selectedCategoryId,
-  selectedTagId,
   hotRange,
   hotLoading = false,
   onInputChange,
@@ -109,9 +107,7 @@ export function SearchLanding({
               </div>
               <div className="flex flex-wrap gap-2 pt-4">
                 {recommendedCategories.map((item) => {
-                  const active =
-                    (item.target === "categoryId" && selectedCategoryId === item.id) ||
-                    (item.target === "tagId" && selectedTagId === item.id);
+                  const active = item.target === "categoryId" && selectedCategoryId === item.id;
                   return (
                     <button
                       key={`${item.target}-${item.id}`}

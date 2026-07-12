@@ -17,12 +17,12 @@ const SCOPES: Array<{
   { value: "mine", label: "我的文档", icon: FileText },
   { value: "public", label: "公共文档", icon: FolderOpen },
   { value: "department", label: "部门文档", icon: Users },
-  { value: "archive", label: "文档归档", icon: Archive },
+  { value: "archive", label: "回收站", icon: Archive },
 ];
 
 export function DocumentScopeNav({ value, onChange }: DocumentScopeNavProps) {
   return (
-    <aside className="w-56 shrink-0 border-r border-slate-200 bg-slate-50/80 px-3 py-4">
+    <div className="px-3 py-4">
       <div className="mb-3 px-2 text-xs font-medium text-slate-500">文档范围</div>
       <nav className="space-y-1">
         {SCOPES.map((item) => {
@@ -46,6 +46,6 @@ export function DocumentScopeNav({ value, onChange }: DocumentScopeNavProps) {
           );
         })}
       </nav>
-    </aside>
+    </div>
   );
 }

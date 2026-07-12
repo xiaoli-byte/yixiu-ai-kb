@@ -72,6 +72,7 @@ export function getNodeStyle(node: PositionedNode): Record<string, unknown> {
     x: node.x,
     y: node.y,
     size: radius * 2,
+    opacity: 1,
     fill: palette.fill,
     stroke: "#ffffff",
     lineWidth: 2,
@@ -105,6 +106,7 @@ export function getEdgeStyle(args: {
 }): Record<string, unknown> {
   return {
     stroke: args.isFirstHop ? "#94a3b8" : "#cbd5e1",
+    opacity: 1,
     lineWidth: Math.min(2.2, Math.max(1, args.weight ?? 1)),
     endArrow: true,
     endArrowType: "vee",

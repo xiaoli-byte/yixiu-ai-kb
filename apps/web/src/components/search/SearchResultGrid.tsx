@@ -1,14 +1,13 @@
-import { Bookmark, Download, Eye, FileText } from "lucide-react";
+import { Download, Eye, FileText } from "lucide-react";
 import type { SearchHit } from "@/services/search";
 
 interface SearchResultGridProps {
   hits: SearchHit[];
   onView?: (hit: SearchHit) => void;
   onDownload?: (hit: SearchHit) => void;
-  onFavorite?: (hit: SearchHit) => void;
 }
 
-export function SearchResultGrid({ hits, onView, onDownload, onFavorite }: SearchResultGridProps) {
+export function SearchResultGrid({ hits, onView, onDownload }: SearchResultGridProps) {
   return (
     <div className="grid gap-3 bg-white px-8 py-3 md:grid-cols-2 xl:grid-cols-3">
       {hits.map((hit) => (
@@ -51,14 +50,6 @@ export function SearchResultGrid({ hits, onView, onDownload, onFavorite }: Searc
                 下载
               </button>
             )}
-            <button
-              className="ml-auto grid h-8 w-8 place-items-center rounded text-slate-400 hover:bg-slate-50 hover:text-brand-700"
-              onClick={() => onFavorite?.(hit)}
-              title="收藏"
-              type="button"
-            >
-              <Bookmark size={15} />
-            </button>
           </div>
         </article>
       ))}

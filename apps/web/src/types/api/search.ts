@@ -43,7 +43,6 @@ export interface SearchRequest {
   mode?: SearchMode;
   sortBy?: SearchSortBy;
   topK?: number;
-  tags?: string[];
 }
 
 export interface SearchHistoryItem {
@@ -61,7 +60,6 @@ export interface SearchListQuery {
   q?: string;
   fileType?: string;
   categoryId?: string;
-  tagId?: string;
   permissionScope?: DocumentPermissionScope;
   updateTimeRange?: "all" | "today" | "7d" | "30d" | "custom";
   parseStatus?: string;

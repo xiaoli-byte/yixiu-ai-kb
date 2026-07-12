@@ -11,7 +11,7 @@ import {
   FileText,
   Download,
 } from "lucide-react";
-import { useAuth } from "@/lib/store";
+import { useAuth, COOKIE_SESSION } from "@/lib/store";
 import qaApi from "@/services/qa";
 
 interface PdfViewerProps {
@@ -35,6 +35,9 @@ export default function PdfViewerModal({
   const [scale, setScale] = useState(1.2);
   const [downloading, setDownloading] = useState(false);
   const { accessToken } = useAuth();
+  // 联合登录（cookie 会话）时 accessToken 是 COOKIE_SESSION 哨兵值，不能当 Bearer 用，
+  // 改为带 cookie（credentials/withCredentials）认证
+  const bearerToken = accessToken && accessToken !== COOKIE_SESSION ? accessToken : null;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -53,7 +56,8 @@ export default function PdfViewerModal({
     setDownloading(true);
     try {
       const res = await fetch(pdfUrl, {
-        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+        headers: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined,
+        credentials: "include",
       });
       if (!res.ok) throw new Error(`Download failed with ${res.status}`);
       const blob = await res.blob();
@@ -80,10 +84,14 @@ export default function PdfViewerModal({
       try {
         // v6 ESM: named export, workerSrc still required
         const pdfjsLib = await import("pdfjs-dist");
-        pdfjsLib.GlobalWorkerOptions.workerSrc = `${window.location.origin}/pdf.worker.min.mjs`;
+        // Next.js serves public assets below the configured base path (for
+        // example, /knowledge), so the worker URL must include it as well.
+        const basePath = process.env.NEXT_PUBLIC_WEB_BASE_PATH || "";
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `${window.location.origin}${basePath}/pdf.worker.min.mjs`;
         const pdf = await pdfjsLib.getDocument({
           url: pdfUrl,
-          httpHeaders: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+          httpHeaders: bearerToken ? { Authorization: `Bearer ${bearerToken}` } : undefined,
+          withCredentials: true,
         }).promise;
         if (cancelled) return;
         pdfDocRef.current = pdf;
@@ -96,8 +104,16 @@ export default function PdfViewerModal({
     load();
     return () => {
       cancelled = true;
+      const pdf = pdfDocRef.current;
+      pdfDocRef.current = null;
+      if (pdf && typeof pdf.destroy === "function") {
+        void Promise.resolve(pdf.destroy()).catch(() => {
+          // The document may already have been destroyed during an effect
+          // transition; cleanup should never surface an unhandled error.
+        });
+      }
     };
-  }, [pdfUrl, accessToken]);
+  }, [pdfUrl, bearerToken]);
 
   useEffect(() => {
     const pdf = pdfDocRef.current;

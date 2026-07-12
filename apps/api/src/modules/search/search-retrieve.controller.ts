@@ -26,7 +26,7 @@ export class SearchRetrieveController {
     if (!parsed.success) {
       return { query: "", mode: "hybrid", sortBy: "relevance", total: 0, hits: [], took: 0, error: "invalid_query" };
     }
-    const { q, mode, sortBy, topK, tags, knowledgeBaseId } = parsed.data;
+    const { q, mode, sortBy, topK, knowledgeBaseId } = parsed.data;
 
     // knowledgeBaseId（ai-call 的知识库 id）映射到 folder 维度做按库过滤；未提供或该库不存在
     // 时 search() 会退回租户级全库检索（见 search.service 的 resolveKnowledgeBaseFilter）。
@@ -35,7 +35,6 @@ export class SearchRetrieveController {
       mode,
       sortBy,
       topK,
-      tags,
       user,
       filters: knowledgeBaseId ? { knowledgeBaseId } : undefined,
     });

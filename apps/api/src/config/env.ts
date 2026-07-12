@@ -136,6 +136,8 @@ const envShape = z
     DASHSCOPE_EMBED_DIM: numeric,
     DASHSCOPE_LLM_MOCK: boolString,
     DASHSCOPE_EMBED_MOCK: boolString,
+    DASHSCOPE_RERANK_MODEL: nonEmpty.optional(),
+    DASHSCOPE_RERANK_MOCK: boolString.optional(),
     SEARCH_BM25_TOPK: numeric,
     SEARCH_VECTOR_TOPK: numeric,
     SEARCH_RRF_K: numeric,

@@ -74,8 +74,8 @@ export class SearchController {
     if (!parsed.success) {
       return { query: "", mode: "hybrid", sortBy: "relevance", total: 0, hits: [], took: 0, error: "invalid_query" };
     }
-    const { q, mode, sortBy, topK, tags } = parsed.data;
-    const { hits, took, hasRelevantResults } = await this.search.search({ q, mode, sortBy, topK, tags, user });
+    const { q, mode, sortBy, topK } = parsed.data;
+    const { hits, took, hasRelevantResults } = await this.search.search({ q, mode, sortBy, topK, user });
     const userId = user?.sub ?? user?.userId ?? user?.id;
     await this.search.recordHistory({
       q,

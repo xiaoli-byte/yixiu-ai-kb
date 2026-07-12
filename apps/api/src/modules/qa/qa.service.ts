@@ -5,20 +5,14 @@ import { DatabaseService } from "../../database/database.service";
 import { SearchService, SearchHit } from "../search/search.service";
 import { LlmService, ChatMessage } from "../llm/llm.service";
 import { StorageService } from "../storage/storage.service";
-import { RagFactExtractionService } from "../rag/rag-fact-extraction.service";
-import { RagFactsService } from "../rag/rag-facts.service";
-import { RagRouterService } from "../rag/rag-router.service";
-import { RagToolsService } from "../rag/rag-tools.service";
+import { RerankService } from "../embeddings/rerank.service";
 import {
   DocumentAccessService,
   type DocumentUserContext,
 } from "../documents/document-access.service";
-import type {
-  RagRoute,
-  RagToolResult,
-  StructuredFact,
-  StructuredFactInput,
-} from "../rag/rag.types";
+import { ConversationMemoryService, ConversationMemory } from "./conversation-memory.service";
+import { QueryPlannerService } from "./query-planner.service";
+import { QaRunLogService } from "./qa-run-log.service";
 import { v4 as uuid } from "uuid";
 import { AppConfigService } from "../../config/app-config.service";
 
@@ -59,41 +53,29 @@ type QaUserInput =
   | string
   | (Partial<DocumentUserContext> & { sub?: string; id?: string });
 
+/**
+ * AI 问答主管道：会话记忆 → 查询规划 → 混合召回 → 权限过滤 → 重排 → 多轮生成 → 持久化。
+ */
 @Injectable()
 export class QaService {
   private readonly logger = new Logger(QaService.name);
-  private readonly HISTORY_LIMIT = 12;
-  private readonly MAX_QA_RECALL_CANDIDATES = 50;
-  private readonly FOLLOW_UP_PATTERN =
-    /(他|她|它|他们|她们|它们|这个|那个|这些|那些|上述|上面|前面|刚才|之前|此|该|其|其中|继续|详细|展开|再说|还有|做过哪些|哪些项目|什么项目|相关项目|项目经历|经历呢|优势呢|缺点呢|区别|对比)/;
-  private readonly SHORT_FOLLOW_UP_PATTERN =
-    /^(有哪些|有什么|哪些|什么|为什么|怎么|如何|多少|何时|哪里|谁|总结|继续|展开|详细)/;
-  private readonly CAREER_TIMELINE_PATTERN =
-    /(最后一份工作|最近一份工作|当前工作|目前工作|现任|最近工作|最后工作|最后一家公司|最近一家公司|上一份工作|距今|距离现在|离现在)/;
+
+  /** 送入重排的最大候选数 */
+  private readonly MAX_RECALL_CANDIDATES = 50;
+  /** 重排相关性分数下限，低于此值的候选不进入参考资料 */
+  private readonly RERANK_MIN_SCORE = 0.2;
+
   private readonly SYSTEM_PROMPT = `你是企业内部知识库 AI 助手。
 
 **回答规范**
-- 严格基于【参考资料】回答，引用标注使用 [1][2]...
-- 若资料无答案，明确告知用户并给出合理的通用建议
-- 事实依据优先级：本轮【参考资料】与【当前日期】 > 用户当前问题中的明确限定 > 历史对话；历史中的助手回答不得作为事实来源
-- 如果历史助手回答与本轮参考资料或当前日期冲突，必须主动纠正历史结论
-- 回答结构清晰，优先使用列表/分点方式，便于阅读
-- 专业简洁，控制回答长度（一般不超过 400 字）
-- 遇到表格或对比类问题，优先以表格形式呈现
-- 对专业术语做简要解释，降低理解门槛
+- 严格基于【参考资料】回答，引用标注使用 [1][2]...；关键结论必须能对应到具体资料
+- 资料没有答案时，先明确告知知识库中暂无相关内容，再基于通用知识给出有帮助的建议，并与资料事实分开表述
+- 历史对话（含背景摘要）只用于理解代词、追问对象和用户意图，不作为事实来源；历史结论与本轮参考资料冲突时，以本轮参考资料为准并主动纠正
+- 回答结构清晰，优先使用列表/分点；对比类问题优先使用表格；专业术语做简要解释
+- 保持专业简洁，避免冗长铺陈
 
-**对话上下文**
-- 回答前先结合历史对话判断当前问题里的代词、省略主语和"上述/这个/他/其"等指代
-- 如果当前问题是追问，沿用上文已经确定的主体、范围和限定条件，不要把问题泛化
-- 问到"最后一份工作/最近一份工作/当前工作/距今多久"时，必须重新依据结构化事实或参考资料中的工作经历起止日期排序判断；除非用户明确说"这家公司/该公司/上述公司"等，不要把上一轮提到的公司当作最后一份工作
-- 电商、KTV、外贸、CRM 问题必须优先使用【结构化事实】和【确定性工具结果】；涉及价格、库存、包厢、套餐、报价、交期、客户跟进、商机阶段等动态信息时，要说明资料口径和不确定性
-- 若资料只包含项目类型、职责或能力描述，而没有具体项目名/客户名/上线时间，请明确说明，不要编造
-- 历史对话只用于理解上下文，不作为事实来源；当前【参考资料】不足时，不要仅凭历史助手回答下结论
-
-**无参考资料时的处理**
-- 当【参考资料】标注为"（未检索到相关资料）"且历史上下文也无法回答时，先明确告知用户知识库中暂无相关内容
-- 然后基于通用知识（若你确信）与合理的行业经验，给出有帮助的回答
-- 建议用户尝试换一种表述方式，或上传包含相关内容的文档`;
+**时间计算**
+- "今天/现在/最近/距今"等相对时间，一律以【当前日期】为基准计算，不要使用训练数据时间或历史对话中出现过的旧日期`;
 
   constructor(
     @Inject(PRISMA) private readonly prisma: PrismaClient,
@@ -103,10 +85,10 @@ export class QaService {
     private readonly storage: StorageService,
     private readonly access: DocumentAccessService,
     private readonly config: AppConfigService,
-    private readonly ragRouter: RagRouterService,
-    private readonly ragFacts: RagFactsService,
-    private readonly ragTools: RagToolsService,
-    private readonly ragExtractor: RagFactExtractionService,
+    private readonly rerank: RerankService,
+    private readonly memory: ConversationMemoryService,
+    private readonly planner: QueryPlannerService,
+    private readonly runLog: QaRunLogService,
   ) {}
 
   async listConversations(userId: string, tenantId: string) {
@@ -210,63 +192,7 @@ export class QaService {
     userId: string,
     opts: { conversationId?: string; limit?: number } = {},
   ) {
-    const limit = Math.max(1, Math.min(Number.isFinite(opts.limit) ? opts.limit! : 10, 50));
-    const params: any[] = [tenantId, userId];
-    const where = [`tenant_id = $1`, `user_id = $2`];
-
-    if (opts.conversationId) {
-      params.push(opts.conversationId);
-      where.push(`conversation_id = $${params.length}`);
-    }
-
-    params.push(limit);
-    const rows = await this.db.query<{
-      id: string;
-      conversationId: string | null;
-      question: string;
-      rewrittenQuery: string | null;
-      intent: string;
-      domain: string;
-      facts: unknown;
-      chunks: unknown;
-      toolResult: unknown | null;
-      answer: string | null;
-      error: string | null;
-      createdAt: Date;
-    }>(
-      `SELECT id,
-              conversation_id AS "conversationId",
-              question,
-              rewritten_query AS "rewrittenQuery",
-              intent,
-              domain,
-              facts,
-              chunks,
-              tool_result AS "toolResult",
-              answer,
-              error,
-              created_at AS "createdAt"
-       FROM qa_run_logs
-       WHERE ${where.join(" AND ")}
-       ORDER BY created_at DESC
-       LIMIT $${params.length}`,
-      params,
-    );
-
-    return rows.map((row) => ({
-      id: row.id,
-      conversationId: row.conversationId,
-      question: row.question,
-      rewrittenQuery: row.rewrittenQuery,
-      intent: row.intent,
-      domain: row.domain,
-      facts: Array.isArray(row.facts) ? row.facts : [],
-      chunks: Array.isArray(row.chunks) ? row.chunks : [],
-      toolResult: row.toolResult,
-      answer: row.answer,
-      error: row.error,
-      createdAt: row.createdAt.toISOString(),
-    }));
+    return this.runLog.listDebugRuns(tenantId, userId, opts);
   }
 
   async getDocumentPresignedUrl(docId: string, tenantId: string, user: QaUserInput) {
@@ -319,7 +245,6 @@ export class QaService {
       throw new ForbiddenException("该文档不是 Markdown 格式");
     }
 
-    // 从存储获取文件内容
     const content = await this.storage.getObject(doc.storageKey);
     return {
       title: doc.title,
@@ -367,29 +292,21 @@ export class QaService {
     onDone: (messageId: string, conversationId: string) => void;
     onError: (e: Error) => void;
   }) {
-    let runRoute: RagRoute | undefined;
-    let runFacts: StructuredFact[] = [];
-    let runToolResult: RagToolResult | null = null;
-    let runTopHits: SearchHit[] = [];
-    let runRetrievalQuery = opts.question;
+    let retrievalQuery = opts.question;
+    let topHits: SearchHit[] = [];
     let finalConvId = opts.conversationId;
 
     try {
-      // 1. 读取历史并构建上下文感知的检索问题
+      // 1. 会话记忆（滚动摘要 + 最近轮次全文）
       if (finalConvId) {
         await this.ensureConversationAccess(finalConvId, opts.userId, opts.tenantId);
       }
-      const chatHistory = await this.loadChatHistory(finalConvId);
-      const { query: retrievalQuery, usedContext } = await this.buildContextualSearchQuery(
-        opts.question,
-        chatHistory,
-      );
-      runRoute = this.ragRouter.route({
-        question: opts.question,
-        retrievalQuery,
-        historyText: this.formatRecentHistoryForRewrite(chatHistory),
-      });
-      runRetrievalQuery = runRoute.retrievalQuery;
+      const memory = await this.memory.load(finalConvId);
+
+      // 2. 查询规划：有历史时每轮改写为可独立检索的问题
+      const plan = await this.planner.plan(opts.question, memory);
+      retrievalQuery = plan.retrievalQuery;
+
       const actor = await this.buildDocumentUserContext(
         opts.tenantId,
         opts.user ?? {
@@ -398,24 +315,27 @@ export class QaService {
           departmentId: opts.departmentId,
         },
       );
-      const requestedTopK = opts.topK || 5;
-      const recallTopK = this.recallSearchTopK(requestedTopK);
+      const requestedTopK = Math.max(1, Math.min(opts.topK || 5, 20));
+      const recallTopK = Math.min(
+        Math.max(requestedTopK * 6, 30),
+        this.MAX_RECALL_CANDIDATES,
+      );
 
-      // 2. RAG 检索
-      const { hits, hasRelevantResults } = await this.search.search({
-        q: runRoute.retrievalQuery,
+      // 3. 混合召回（干净的改写问题，不拼接 boost 词，避免污染向量语义）
+      const { hits } = await this.search.search({
+        q: retrievalQuery,
         mode: "hybrid",
         topK: recallTopK,
         user: actor,
       });
 
-      const candidateHits = hits.slice(0, recallTopK);
-      const filteredHits = (
-        await this.filterRecallHits(candidateHits, opts.tenantId, actor)
-      ).slice(0, requestedTopK);
-      runTopHits = filteredHits;
+      // 4. 权限 + AI 引用开关过滤
+      const accessibleHits = await this.filterRecallHits(hits, opts.tenantId, actor);
 
-      // 构建 citations（延迟到 LLM 完成后才发送）
+      // 5. 重排精选（失败降级为召回原序）
+      const filteredHits = await this.rerankHits(retrievalQuery, accessibleHits, requestedTopK);
+      topHits = filteredHits;
+
       const citations: Citation[] = filteredHits.map((h, i) => ({
         index: i + 1,
         chunkId: h.chunkId,
@@ -427,52 +347,25 @@ export class QaService {
         page: h.page,
       }));
 
-      const hasFilteredRelevantResults = filteredHits.length > 0;
-      if (!hasFilteredRelevantResults) {
-        // 无检索结果时，通知前端但不立即返回
-        // 仍调用 LLM 生成有帮助的回复（基于通用知识）
-        const suggestions = this.buildNoResultSuggestions(opts.question, runRoute.retrievalQuery);
-        opts.onNoResults(suggestions);
+      if (citations.length === 0) {
+        // 无检索结果时通知前端展示改写建议，但仍让 LLM 基于通用知识作答
+        opts.onNoResults(this.buildNoResultSuggestions(opts.question, retrievalQuery));
       }
 
-      // 3. 加载结构化事实并执行确定性工具
-      const dateContext = this.getCurrentDateContext();
-      runFacts = await this.loadStructuredFactsForRoute(opts.tenantId, runRoute, filteredHits);
-      runToolResult = await this.ragTools.run({
-        route: runRoute,
-        facts: runFacts,
-        currentDate: dateContext.isoDate,
+      // 6. 构建真正的多轮 messages
+      const messages = this.buildChatMessages({
+        question: opts.question,
+        memory,
+        citations,
+        retrievalQuery,
+        usedContext: plan.usedContext,
       });
 
-      // 4. 构建 context（空 context 时 LLM 基于通用知识回答）
-      const context = citations
-        .map((c, i) => `[${i + 1}] 《${c.documentTitle}》\n${c.snippet}`)
-        .join("\n\n---\n\n");
-
-      // 5. 构建 messages（含历史上下文、路由、结构化事实和工具结果）
-      const retrievalHint =
-        usedContext && runRetrievalQuery !== opts.question
-          ? `【已根据对话上下文补全的检索问题】\n${runRetrievalQuery}\n\n`
-          : "";
-      const timelineHint = this.buildCareerTimelineHint(opts.question);
-      const historyContext = this.buildAnswerHistoryContext(chatHistory);
-      const routeContext = this.buildRagRouteContext(runRoute);
-      const factContext = this.buildStructuredFactContext(runFacts);
-      const toolContext = this.buildToolResultContext(runToolResult);
-      const messages: ChatMessage[] = [
-        { role: "system", content: this.buildSystemPrompt(dateContext) },
-        {
-          role: "user",
-          content:
-            `【当前日期】\n${dateContext.dateText}（${dateContext.timeZone}），${dateContext.dateTimeText}\n\n${routeContext}${historyContext}${factContext}${toolContext}【参考资料】\n${context || "（未检索到相关资料）"}\n\n${retrievalHint}${timelineHint}【当前问题】\n${opts.question}`,
-        },
-      ];
-
       this.logger.debug(
-        `ask: domain=${runRoute.domain} intent=${runRoute.intent} facts=${runFacts.length} tool=${runToolResult?.name || "none"} hits=${filteredHits.length}/${candidateHits.length}, history=${chatHistory.length}, contextual=${usedContext}, hasRelevant=${hasFilteredRelevantResults}, searchRelevant=${hasRelevantResults}, query="${this.compactText(runRetrievalQuery, 120)}"`,
+        `ask: hits=${filteredHits.length}/${accessibleHits.length}/${hits.length}, history=${memory.recentMessages.length}, summary=${memory.summary ? "yes" : "no"}, contextual=${plan.usedContext}, query="${this.compactText(retrievalQuery, 120)}"`,
       );
 
-      // 6. 创建/更新会话
+      // 7. 创建/更新会话，保存用户消息
       if (!finalConvId) {
         const conv = await this.prisma.qAConversation.create({
           data: {
@@ -485,10 +378,9 @@ export class QaService {
         finalConvId = conv.id;
       }
 
-      const userMsgId = uuid();
       await this.prisma.qAMessage.create({
         data: {
-          id: userMsgId,
+          id: uuid(),
           conversationId: finalConvId!,
           role: "user",
           content: opts.question,
@@ -500,90 +392,119 @@ export class QaService {
         data: { updatedAt: new Date() },
       });
 
-      // 7. 流式 LLM
-      let full = "";
-      await this.llm.streamChat(messages, {
-        onChunk: (delta) => {
-          full += delta;
-          opts.onChunk(delta);
-        },
-        onDone: () => {
-          // 8. 落库（此时才发送 citations，确保前端在 LLM 完成前不渲染参考资料）
-          const messageId = uuid();
-          this.prisma.qAMessage.create({
-            data: {
-              id: messageId,
-              conversationId: finalConvId!,
-              role: "assistant",
-              content: full,
-              citations: citations as any,
-            },
-          }).then(async () => {
-            await this.ragFacts.logQaRun({
-              tenantId: opts.tenantId,
-              userId: opts.userId,
-              conversationId: finalConvId,
-              question: opts.question,
-              rewrittenQuery: runRetrievalQuery,
-              intent: runRoute!.intent,
-              domain: runRoute!.domain,
-              facts: runFacts,
-              chunks: runTopHits,
-              toolResult: runToolResult,
-              answer: full,
-            });
-            if (citations.length > 0) {
-              opts.onCitations(citations);
-            }
-            opts.onDone(messageId, finalConvId!);
-          }).catch((e: Error) => {
-            this.logger.error(`保存助手消息失败: ${e.message}`);
-            opts.onError(e);
-          });
-        },
-        onError: (e) => {
-          this.logger.error(`LLM stream error: ${e.message}`);
+      // 8. 流式生成（streamChat 内部出错会 throw，由外层 catch 统一上报前端）
+      const full = await this.llm.streamChat(messages, {
+        onChunk: (delta) => opts.onChunk(delta),
+      });
+
+      // 9. 落库 + 运行日志 + 通知前端（citations 在生成完成后才发送）
+      const messageId = uuid();
+      await this.prisma.qAMessage.create({
+        data: {
+          id: messageId,
+          conversationId: finalConvId!,
+          role: "assistant",
+          content: full,
+          citations: citations as any,
         },
       });
+      await this.runLog.log({
+        tenantId: opts.tenantId,
+        userId: opts.userId,
+        conversationId: finalConvId,
+        question: opts.question,
+        rewrittenQuery: retrievalQuery,
+        chunks: topHits,
+        answer: full,
+      });
+      if (citations.length > 0) {
+        opts.onCitations(citations);
+      }
+      opts.onDone(messageId, finalConvId!);
+
+      // 10. 异步维护滚动摘要（不阻塞响应，失败只记日志）
+      void this.memory.maybeUpdateSummary(finalConvId!);
     } catch (e: any) {
       this.logger.error(`ask error: ${e.message}`, e.stack);
-      if (runRoute) {
-        await this.ragFacts.logQaRun({
-          tenantId: opts.tenantId,
-          userId: opts.userId,
-          conversationId: finalConvId,
-          question: opts.question,
-          rewrittenQuery: runRetrievalQuery,
-          intent: runRoute.intent,
-          domain: runRoute.domain,
-          facts: runFacts,
-          chunks: runTopHits,
-          toolResult: runToolResult,
-          error: e.message,
-        });
-      }
+      await this.runLog.log({
+        tenantId: opts.tenantId,
+        userId: opts.userId,
+        conversationId: finalConvId,
+        question: opts.question,
+        rewrittenQuery: retrievalQuery,
+        chunks: topHits,
+        error: e.message,
+      });
       opts.onError(e);
     }
   }
 
-  private async loadChatHistory(conversationId?: string): Promise<ChatMessage[]> {
-    if (!conversationId) return [];
+  /** 重排候选片段；失败或 mock 时降级为召回原序 */
+  private async rerankHits(
+    query: string,
+    hits: SearchHit[],
+    topK: number,
+  ): Promise<SearchHit[]> {
+    if (hits.length <= 1) return hits.slice(0, topK);
 
-    const rows = await this.db.query<{ role: string; content: string }>(
-      `SELECT role, content FROM (
-         SELECT role, content, created_at
-         FROM qa_messages
-         WHERE conversation_id = $1
-         ORDER BY created_at DESC
-         LIMIT $2
-       ) recent
-       ORDER BY created_at ASC`,
-      [conversationId, this.HISTORY_LIMIT],
-    );
+    try {
+      const documents = hits.map((h) => `《${h.documentTitle}》\n${h.text}`);
+      const results = await this.rerank.rerank(query, documents, Math.min(topK * 2, hits.length));
+      const reranked = results
+        .filter((item) => item.index < hits.length)
+        .filter((item) => item.score >= this.RERANK_MIN_SCORE)
+        .map((item) => ({ ...hits[item.index], score: item.score }))
+        .slice(0, topK);
+      // 阈值过滤后全空时，保底取重排第一名，避免明明有召回却回答"无资料"
+      if (reranked.length === 0 && results.length > 0) {
+        const best = results[0];
+        if (best.index < hits.length) {
+          return [{ ...hits[best.index], score: best.score }];
+        }
+      }
+      return reranked;
+    } catch (e: any) {
+      this.logger.warn(`重排失败，降级为召回原始排序: ${e.message}`);
+      return hits.slice(0, topK);
+    }
+  }
 
-    return rows
-      .filter((r) => r.role === "user" || r.role === "assistant")
-      .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
+  /** 构建多轮对话 messages：system（含摘要与当前日期）+ 历史轮次原文 + 本轮问题（含参考资料） */
+  private buildChatMessages(input: {
+    question: string;
+    memory: ConversationMemory;
+    citations: Citation[];
+    retrievalQuery: string;
+    usedContext: boolean;
+  }): ChatMessage[] {
+    const dateContext = this.getCurrentDateContext();
+    const systemParts = [
+      this.SYSTEM_PROMPT,
+      `\n**当前日期**\n${dateContext.dateText}（${dateContext.timeZone}），${dateContext.dateTimeText}`,
+    ];
+    if (input.memory.summary) {
+      systemParts.push(
+        `\n**对话背景摘要**（此前对话的压缩记录，仅用于理解上下文，不作为事实来源）\n${input.memory.summary}`,
+      );
+    }
+
+    const context = input.citations
+      .map((c, i) => `[${i + 1}] 《${c.documentTitle}》${c.page != null ? `（第${c.page}页）` : ""}\n${c.snippet}`)
+      .join("\n\n---\n\n");
+
+    const retrievalHint =
+      input.usedContext && input.retrievalQuery !== input.question
+        ? `\n\n【检索用的完整问题】\n${input.retrievalQuery}`
+        : "";
+
+    return [
+      { role: "system", content: systemParts.join("\n") },
+      ...input.memory.recentMessages,
+      {
+        role: "user",
+        content: `【参考资料】\n${context || "（未检索到相关资料）"}${retrievalHint}\n\n【当前问题】\n${input.question}`,
+      },
+    ];
   }
 
   private async filterRecallHits(
@@ -629,256 +550,12 @@ export class QaService {
     return flags;
   }
 
-  private async loadStructuredFactsForRoute(
-    tenantId: string,
-    route: RagRoute,
-    hits: SearchHit[],
-  ): Promise<StructuredFact[]> {
-    if (!route.requiresFacts) return [];
-
-    const documentIds = [...new Set(hits.map((hit) => hit.documentId))];
-    if (documentIds.length === 0) return [];
-
-    try {
-      const storedFacts = await this.ragFacts.findFacts({
-        tenantId,
-        domain: route.domain,
-        entityTypes: route.profile.factEntityTypes,
-        query: `${route.originalQuestion} ${route.retrievalQuery}`,
-        documentIds: documentIds.length > 0 ? documentIds : undefined,
-        limit: 24,
-      });
-      if (storedFacts.length > 0) return storedFacts;
-    } catch (e: any) {
-      this.logger.warn(`结构化事实查询失败，降级为本轮片段抽取: ${e.message}`);
-    }
-
-    const runtimeFacts = await this.ragExtractor.extractFactsFromSearchHits({
-      tenantId,
-      domainHint: route.domain,
-      hits,
-    });
-    return runtimeFacts.map((fact, index) => this.toRuntimeFact(fact, hits, index));
-  }
-
-  private toRuntimeFact(
-    fact: StructuredFactInput,
-    hits: SearchHit[],
-    index: number,
-  ): StructuredFact {
-    const hit =
-      hits.find((item) => item.chunkId === fact.chunkId) ||
-      hits.find((item) => item.documentId === fact.documentId);
-    return {
-      ...fact,
-      id: `runtime-${index + 1}`,
-      documentTitle: hit?.documentTitle,
-      mime: hit?.mime,
-      page: hit?.page ?? null,
-    };
-  }
-
-  private buildRagRouteContext(route: RagRoute) {
-    const policy = route.profile.answerPolicy.map((item) => `- ${item}`).join("\n");
-    const warnings =
-      route.warnings.length > 0
-        ? `\n高风险约束：\n${route.warnings.map((item) => `- ${item}`).join("\n")}`
-        : "";
-    return [
-      "【RAG路由】",
-      `领域：${route.profile.displayName}（${route.domain}）`,
-      `意图：${route.intent}`,
-      `风险等级：${route.profile.riskLevel}`,
-      "行业回答策略：",
-      policy,
-      warnings,
-      "",
-    ].join("\n");
-  }
-
-  private buildStructuredFactContext(facts: StructuredFact[]) {
-    if (facts.length === 0) {
-      return "【结构化事实】\n（未命中结构化事实；请优先依据参考资料，资料不足时说明不足）\n\n";
-    }
-    const lines = facts.slice(0, 16).map((fact, i) => {
-      const attrs = this.compactText(JSON.stringify(fact.attributes || {}), 260);
-      const source = fact.documentTitle ? `《${fact.documentTitle}》` : fact.documentId;
-      return `[F${i + 1}] ${fact.domain}/${fact.entityType}/${fact.entityName}，属性：${attrs}，来源：${source}，证据：${this.compactText(fact.sourceText, 220)}`;
-    });
-    return [
-      "【结构化事实】",
-      "以下事实来自文档抽取或本轮参考资料抽取，优先级高于历史对话；关键结论必须能回到这些事实或参考资料。",
-      ...lines,
-      "",
-    ].join("\n");
-  }
-
-  private buildToolResultContext(toolResult: RagToolResult | null) {
-    if (!toolResult) return "";
-    const evidence = toolResult.evidence
-      .slice(0, 8)
-      .map((item, i) => {
-        const source = item.documentTitle ? `《${item.documentTitle}》` : item.documentId || "";
-        return `[T${i + 1}] ${source} ${this.compactText(item.sourceText, 180)}`;
-      })
-      .join("\n");
-    return [
-      "【确定性工具结果】",
-      `工具：${toolResult.name}`,
-      `结论：${toolResult.summary}`,
-      `结构化数据：${this.compactText(JSON.stringify(toolResult.data || {}), 900)}`,
-      evidence ? `证据：\n${evidence}` : "",
-      "",
-    ].join("\n");
-  }
-
   private async ensureConversationAccess(id: string, userId: string, tenantId: string) {
     const conv = await this.prisma.qAConversation.findFirst({
       where: { id, userId, tenantId },
       select: { id: true },
     });
     if (!conv) throw new ForbiddenException("会话不存在或无权访问");
-  }
-
-  private async buildContextualSearchQuery(
-    question: string,
-    history: ChatMessage[],
-  ): Promise<{ query: string; usedContext: boolean }> {
-    const normalizedQuestion = this.compactText(question, 300);
-    if (!this.shouldUseContextualSearch(normalizedQuestion, history)) {
-      return { query: normalizedQuestion, usedContext: false };
-    }
-
-    if (this.isCareerTimelineQuestion(normalizedQuestion)) {
-      return {
-        query: this.buildCareerTimelineSearchQuery(normalizedQuestion, history),
-        usedContext: history.length > 0,
-      };
-    }
-
-    const fallbackQuery = this.buildHeuristicSearchQuery(normalizedQuestion, history);
-    if (this.llm.isMock) {
-      return { query: fallbackQuery, usedContext: true };
-    }
-
-    try {
-      const rewritten = await this.llm.chat(
-        [
-          {
-            role: "system",
-            content:
-              "你是企业知识库检索查询改写器。请基于最近对话，把当前追问改写成一个可独立检索的中文问题或关键词串。只补全省略的主体、对象、时间和限定条件，不回答问题，不新增未知事实。若当前问题询问最后一份工作、最近工作、当前工作或距今多久，只继承人物主体，不要继承上一轮提到的公司名；应检索完整工作经历和起止日期。只输出一行。",
-          },
-          {
-            role: "user",
-            content: `最近对话：\n${this.formatRecentHistoryForRewrite(history)}\n\n当前问题：${normalizedQuestion}`,
-          },
-        ],
-        { temperature: 0, topP: 0.2, maxTokens: 120 },
-      );
-      const query = this.cleanStandaloneQuery(rewritten);
-      if (query) return { query, usedContext: true };
-    } catch (e: any) {
-      this.logger.warn(`上下文检索问题改写失败，使用本地补全: ${e.message}`);
-    }
-
-    return { query: fallbackQuery, usedContext: true };
-  }
-
-  private shouldUseContextualSearch(question: string, history: ChatMessage[]) {
-    if (history.length === 0) return false;
-    const compact = question.replace(/\s+/g, "");
-    return (
-      this.FOLLOW_UP_PATTERN.test(compact) ||
-      (compact.length <= 18 && this.SHORT_FOLLOW_UP_PATTERN.test(compact))
-    );
-  }
-
-  private isCareerTimelineQuestion(question: string) {
-    return this.CAREER_TIMELINE_PATTERN.test(question.replace(/\s+/g, ""));
-  }
-
-  private buildCareerTimelineSearchQuery(question: string, history: ChatMessage[]) {
-    const subject = this.extractConversationSubject(question, history);
-    return this.compactText(
-      [
-        subject,
-        "简历 工作经历 任职经历 公司 起止时间 时间线 最后一份工作 最近一份工作 当前工作",
-        question,
-      ]
-        .filter(Boolean)
-        .join(" "),
-      500,
-    );
-  }
-
-  private buildCareerTimelineHint(question: string) {
-    if (!this.isCareerTimelineQuestion(question)) return "";
-    return [
-      "【时间线判断要求】",
-      "当前问题涉及职业经历时间线。请先从参考资料中列出候选工作经历及起止日期，再按结束日期/当前任职状态判断最后一份或最近一份工作。",
-      "不要因为上一轮问过某家公司，就把该公司当作最后一份工作；只有用户明确指定该公司时才按该公司回答。",
-      "",
-    ].join("\n");
-  }
-
-  private extractConversationSubject(question: string, history: ChatMessage[]) {
-    const texts = [question, ...history.slice().reverse().map((m) => m.content)];
-    for (const text of texts) {
-      const match =
-        text.match(/([\u4e00-\u9fa5]{2,4})是谁/) ||
-        text.match(/^([\u4e00-\u9fa5]{2,4})是(?:一位|一个|[0-9]+|[\u4e00-\u9fa5]+的)/) ||
-        text.match(/(?:关于|查询|分析)([\u4e00-\u9fa5]{2,4})(?:的|简历|工作|项目)/);
-      if (match?.[1]) {
-        return match[1];
-      }
-    }
-    return "";
-  }
-
-  private buildHeuristicSearchQuery(question: string, history: ChatMessage[]) {
-    const recentUser = [...history].reverse().find((m) => m.role === "user")?.content;
-    const recentAssistant = [...history].reverse().find((m) => m.role === "assistant")?.content;
-    const parts = [
-      recentUser ? `上一轮问题：${this.compactText(recentUser, 120)}` : "",
-      recentAssistant ? `上一轮回答：${this.compactText(recentAssistant, 180)}` : "",
-      `当前追问：${question}`,
-    ].filter(Boolean);
-    return this.compactText(parts.join("\n"), 500);
-  }
-
-  private buildAnswerHistoryContext(history: ChatMessage[]) {
-    if (history.length === 0) return "";
-    const lines = history.slice(-6).map((m) => {
-      const role = m.role === "user" ? "用户" : "助手";
-      return `${role}: ${this.compactText(m.content, m.role === "user" ? 120 : 160)}`;
-    });
-    return [
-      "【历史对话】",
-      "以下历史只用于理解代词、追问对象和用户意图，不是事实依据；如与【参考资料】或【当前日期】冲突，必须以本轮参考资料和当前日期为准。",
-      ...lines,
-      "",
-    ].join("\n");
-  }
-
-  private formatRecentHistoryForRewrite(history: ChatMessage[]) {
-    return history
-      .slice(-6)
-      .map((m) => `${m.role === "user" ? "用户" : "助手"}：${this.compactText(m.content, 180)}`)
-      .join("\n");
-  }
-
-  private cleanStandaloneQuery(raw: string) {
-    const firstLine = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean);
-    if (!firstLine) return "";
-    const withoutLabel = firstLine
-      .replace(/^[-*\d.、\s]+/, "")
-      .replace(/^(独立问题|检索问题|改写后问题|问题|关键词串)[:：]\s*/, "")
-      .replace(/^["'`“”]+|["'`“”]+$/g, "");
-    return this.compactText(withoutLabel, 300);
   }
 
   private normalizeFeedback(row?: FeedbackRow | null): QAMessageFeedback {
@@ -909,13 +586,12 @@ export class QaService {
   private buildNoResultSuggestions(question: string, retrievalQuery?: string) {
     const original = this.compactText(question, 180);
     const retrieval = this.compactText(retrievalQuery || question, 180);
-    const focus = this.extractSuggestionFocus(retrieval || original) || "this topic";
+    const focus = this.extractSuggestionFocus(retrieval || original) || "该主题";
     const candidates = [
-      `Search exact keywords: ${focus}`,
-      `Which uploaded documents mention ${focus}?`,
-      `Summarize any records related to ${focus}.`,
-      `Broaden the question: what information is available about ${focus}?`,
-      `Try related terms for ${focus}.`,
+      `用更具体的关键词检索：${focus}`,
+      `哪些已上传的文档提到了${focus}？`,
+      `总结知识库中与${focus}相关的内容`,
+      `换一种表述：关于${focus}有哪些资料？`,
     ];
     const seen = new Set<string>([original.toLowerCase()]);
     return candidates.filter((item) => {
@@ -923,11 +599,11 @@ export class QaService {
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).slice(0, 5);
+    }).slice(0, 4);
   }
 
   private extractSuggestionFocus(text: string) {
-    const tokens = text.match(/[A-Za-z0-9][A-Za-z0-9/_+-]{1,30}|[\u4e00-\u9fa5]{2,12}/g) || [];
+    const tokens = text.match(/[A-Za-z0-9][A-Za-z0-9/_+-]{1,30}|[一-龥]{2,12}/g) || [];
     const unique: string[] = [];
     const seen = new Set<string>();
     for (const token of tokens) {
@@ -935,17 +611,9 @@ export class QaService {
       if (seen.has(key)) continue;
       seen.add(key);
       unique.push(token);
-      if (unique.length >= 8) break;
+      if (unique.length >= 6) break;
     }
-    return this.compactText(unique.join(" ") || text, 120);
-  }
-
-  private recallSearchTopK(requestedTopK: number) {
-    const normalized = Math.max(1, Math.trunc(requestedTopK || 5));
-    return Math.min(
-      Math.max(normalized * 3, normalized + 10),
-      this.MAX_QA_RECALL_CANDIDATES,
-    );
+    return this.compactText(unique.join(" ") || text, 80);
   }
 
   private async buildDocumentUserContext(
@@ -988,23 +656,6 @@ export class QaService {
       .replace(/\s+/g, " ")
       .trim();
     return compact.length > maxLength ? compact.slice(0, maxLength) : compact;
-  }
-
-  private buildSystemPrompt(dateContext = this.getCurrentDateContext()) {
-    return `${this.SYSTEM_PROMPT}
-
-**当前日期与时间计算**
-- 当前日期：${dateContext.dateText}，当前时间：${dateContext.dateTimeText}（时区：${dateContext.timeZone}）
-- 遇到"今天"、"现在"、"当前"、"今年"、"最近"、"距离现在"、"最后一份工作距今多久"等相对时间问题，必须以这个当前日期为唯一基准计算
-- 不要使用模型训练时间、知识截止时间、文档生成时间或示例年份作为当前日期
-- 如果历史对话中曾出现不同的"当前日期/当前年份"，必须忽略旧值，并以本轮【当前日期】为准主动纠正
-- 如果参考资料中的结束日期早于当前日期，按已经结束计算；如果结束日期晚于当前日期，明确说明该资料时间在未来或可能存在录入错误
-- 时间跨度请优先给出精确起止日期和年/月差，不确定时说明口径
-
-**RAG 控制层**
-- 回答优先级：当前日期/确定性工具结果/结构化事实 > 本轮参考资料 > 用户当前问题中的明确限定 > 历史对话
-- 结构化事实和工具结果若与参考资料冲突，请指出冲突并以可追溯证据更完整的一方为准
-- 对电商、KTV、外贸、CRM 场景，必须区分"资料明确写明"、"工具整理得出"和"通用业务建议"`;
   }
 
   private getCurrentDateContext() {

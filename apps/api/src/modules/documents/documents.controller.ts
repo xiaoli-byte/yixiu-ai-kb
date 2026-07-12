@@ -23,7 +23,6 @@ import { Action, Resource } from "../../common/permissions/permissions.types";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { DatabaseService } from "../../database/database.service";
 import { FoldersService } from "../folders/folders.service";
-import { TagsService } from "../tags/tags.service";
 import { DocumentsService } from "./documents.service";
 
 @UseGuards(AuthGuard("jwt"), PermissionsGuard)
@@ -31,7 +30,6 @@ import { DocumentsService } from "./documents.service";
 export class DocumentsController {
   constructor(
     private readonly docs: DocumentsService,
-    private readonly tags: TagsService,
     private readonly db: DatabaseService,
     private readonly folders?: FoldersService,
   ) {}
@@ -40,11 +38,7 @@ export class DocumentsController {
   async list(@Query() query: unknown, @CurrentUser() user: any) {
     const result = DocumentListQuery.safeParse(query);
     if (!result.success) throw new BadRequestException("Invalid document query");
-    const parsed = result.data;
-    const tagIds = parsed.tags
-      ? parsed.tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0)
-      : undefined;
-    return this.docs.list({ ...parsed, tags: tagIds }, user);
+    return this.docs.list(result.data, user);
   }
 
   @Get(":id/permissions")
@@ -130,27 +124,5 @@ export class DocumentsController {
   @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.DELETE })
   async remove(@Param("id") id: string, @CurrentUser() user: any) {
     return this.docs.remove(id, user);
-  }
-
-  @Post(":id/tags/:tagId")
-  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
-  async addTag(
-    @Param("id") id: string,
-    @Param("tagId") tagId: string,
-    @CurrentUser() user: any,
-  ) {
-    await this.docs.assertDocumentEditAccess(id, user);
-    return this.tags.addTagToDocument(id, tagId);
-  }
-
-  @Delete(":id/tags/:tagId")
-  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
-  async removeTag(
-    @Param("id") id: string,
-    @Param("tagId") tagId: string,
-    @CurrentUser() user: any,
-  ) {
-    await this.docs.assertDocumentEditAccess(id, user);
-    return this.tags.removeTagFromDocument(id, tagId);
   }
 }

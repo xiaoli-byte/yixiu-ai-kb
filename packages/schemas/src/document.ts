@@ -10,9 +10,6 @@ export const DocStatus = z.enum([
 ]);
 export type DocStatus = z.infer<typeof DocStatus>;
 
-export const TagType = z.enum(["MANUAL", "AUTO", "DOMAIN"]);
-export type TagType = z.infer<typeof TagType>;
-
 export const Role = z.enum(["super_admin", "admin", "editor", "viewer"]);
 export type Role = z.infer<typeof Role>;
 
@@ -111,7 +108,6 @@ export const DocumentDto = z.object({
   canEdit: z.boolean().default(false),
   canDelete: z.boolean().default(false),
   canManagePermission: z.boolean().default(false),
-  tags: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -121,7 +117,6 @@ export const DocumentListQuery = z.object({
   q: z.string().optional(),
   status: DocStatus.optional(),
   folderId: z.string().optional(),
-  tags: z.string().optional(),
   fileType: z.string().optional(),
   permissionScope: DocumentPermissionScope.optional(),
   uploaderId: z.string().optional(),

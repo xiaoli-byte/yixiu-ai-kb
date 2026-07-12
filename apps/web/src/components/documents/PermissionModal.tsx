@@ -6,6 +6,8 @@ import type {
   DocumentPermissionUpdateRequest,
   PermissionMode,
 } from "@/services/documents";
+import { list as listUsers, type User } from "@/services/users";
+import { list as listDepartments, type Department } from "@/services/departments";
 import { cn } from "@/lib/utils";
 
 export type PermissionModalTarget =
@@ -50,8 +52,7 @@ const ACTIONS: Array<{ key: keyof DocumentPermissionEntry; label: string }> = [
 
 export function PermissionModal({ open, target, saving = false, onClose, onSave }: PermissionModalProps) {
   const [permissionScope, setPermissionScope] = useState<DocumentPermissionScope>("COMPANY");
-  const [subjectType, setSubjectType] = useState<DocumentPermissionEntry["subjectType"]>("ROLE");
-  const [subjectId, setSubjectId] = useState("viewer");
+  const [subjectId, setSubjectId] = useState("");
   const [actions, setActions] = useState<Record<keyof DocumentPermissionEntry, boolean>>({
     subjectType: false,
     subjectId: false,
@@ -65,6 +66,9 @@ export function PermissionModal({ open, target, saving = false, onClose, onSave 
   const [aiReferenceEnabled, setAiReferenceEnabled] = useState(true);
   const [applyToChildren, setApplyToChildren] = useState(false);
   const [mode, setMode] = useState<PermissionMode>("APPEND");
+  const [users, setUsers] = useState<User[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
 
   useEffect(() => {
     if (!open || !target) return;
@@ -79,7 +83,41 @@ export function PermissionModal({ open, target, saving = false, onClose, onSave 
       setAiReferenceEnabled(true);
       setMode("APPEND");
     }
+    setSubjectId("");
   }, [open, target]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setLoadingSubjects(true);
+    Promise.all([listUsers(), listDepartments()])
+      .then(([u, d]) => {
+        if (cancelled) return;
+        setUsers(u);
+        setDepartments(d);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setUsers([]);
+        setDepartments([]);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setLoadingSubjects(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const needsSubject = permissionScope === "MEMBERS" || permissionScope === "DEPARTMENTS";
+  const derivedSubjectType: DocumentPermissionEntry["subjectType"] =
+    permissionScope === "DEPARTMENTS" ? "DEPARTMENT" : "USER";
+
+  function handleScopeChange(scope: DocumentPermissionScope) {
+    setPermissionScope(scope);
+    setSubjectId("");
+  }
 
   if (!open || !target) return null;
 
@@ -92,19 +130,24 @@ export function PermissionModal({ open, target, saving = false, onClose, onSave 
   }
 
   function submit() {
-    const entry: DocumentPermissionEntry = {
-      subjectType,
-      subjectId: subjectId.trim() || "viewer",
-      canView: actions.canView,
-      canDownload: actions.canDownload,
-      canEdit: actions.canEdit,
-      canDelete: actions.canDelete,
-      canManagePermission: actions.canManagePermission,
-    };
+    const entries: DocumentPermissionEntry[] =
+      needsSubject && subjectId
+        ? [
+            {
+              subjectType: derivedSubjectType,
+              subjectId,
+              canView: actions.canView,
+              canDownload: actions.canDownload,
+              canEdit: actions.canEdit,
+              canDelete: actions.canDelete,
+              canManagePermission: actions.canManagePermission,
+            },
+          ]
+        : [];
 
     void onSave({
       permissionScope,
-      entries: [entry],
+      entries,
       searchable,
       aiReferenceEnabled,
       applyToChildren,
@@ -158,35 +201,47 @@ export function PermissionModal({ open, target, saving = false, onClose, onSave 
                   checked={permissionScope === scope.value}
                   description={scope.description}
                   label={scope.label}
-                  onClick={() => setPermissionScope(scope.value)}
+                  onClick={() => handleScopeChange(scope.value)}
                 />
               ))}
             </div>
           </section>
 
-          <section className="border-t border-slate-100 pt-4">
-            <div className="mb-2 text-[13px] font-medium text-slate-900">可见对象</div>
-            <div className="grid gap-2 sm:grid-cols-[150px_1fr]">
-              <label className="relative">
-                <span className="sr-only">对象类型</span>
-                <select
-                  className="h-9 w-full rounded border border-slate-200 bg-white px-3 text-[13px] outline-none focus:border-brand-500"
-                  value={subjectType}
-                  onChange={(event) => setSubjectType(event.target.value as DocumentPermissionEntry["subjectType"])}
-                >
-                  <option value="USER">成员</option>
-                  <option value="DEPARTMENT">部门</option>
-                  <option value="ROLE">角色</option>
-                </select>
-              </label>
-              <input
-                className="h-9 rounded border border-slate-200 px-3 text-[13px] outline-none placeholder:text-slate-400 focus:border-brand-500"
-                placeholder="输入成员、部门或角色 ID"
+          {needsSubject && (
+            <section className="border-t border-slate-100 pt-4">
+              <div className="mb-2 text-[13px] font-medium text-slate-900">
+                可见对象（{permissionScope === "MEMBERS" ? "成员" : "部门"}）
+              </div>
+              <select
+                className="h-9 w-full rounded border border-slate-200 bg-white px-3 text-[13px] outline-none focus:border-brand-500 disabled:bg-slate-50 disabled:text-slate-400"
                 value={subjectId}
                 onChange={(event) => setSubjectId(event.target.value)}
-              />
-            </div>
-          </section>
+                disabled={loadingSubjects}
+              >
+                <option value="">
+                  {loadingSubjects ? "加载中..." : `请选择${permissionScope === "MEMBERS" ? "成员" : "部门"}`}
+                </option>
+                {permissionScope === "MEMBERS"
+                  ? users.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.name}
+                        {u.email ? `（${u.email}）` : ""}
+                      </option>
+                    ))
+                  : departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+              </select>
+              {!loadingSubjects && permissionScope === "MEMBERS" && users.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600">暂无可选成员数据</p>
+              )}
+              {!loadingSubjects && permissionScope === "DEPARTMENTS" && departments.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600">暂无可选部门数据</p>
+              )}
+            </section>
+          )}
 
           <section className="border-t border-slate-100 pt-4">
             <div className="mb-2 text-[13px] font-medium text-slate-900">操作权限</div>
@@ -221,7 +276,7 @@ export function PermissionModal({ open, target, saving = false, onClose, onSave 
             />
           </section>
 
-          <section className="border-t border-slate-100 pt-4">
+          {/* <section className="border-t border-slate-100 pt-4">
             <label className="flex items-center gap-2 text-[13px] text-slate-700">
               <input
                 checked={applyToChildren}
@@ -231,7 +286,7 @@ export function PermissionModal({ open, target, saving = false, onClose, onSave 
               />
               将此权限应用到子文件夹中的所有文档
             </label>
-          </section>
+          </section> */}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-3">

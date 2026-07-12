@@ -1,21 +1,19 @@
-import { Bookmark, Download, Eye, FileText } from "lucide-react";
+import { Download, Eye, FileText } from "lucide-react";
 import type { SearchHit } from "@/services/search";
 
 interface SearchResultListProps {
   hits: SearchHit[];
   onView?: (hit: SearchHit) => void;
   onDownload?: (hit: SearchHit) => void;
-  onFavorite?: (hit: SearchHit) => void;
 }
 
 interface ResultActionProps {
   hit: SearchHit;
   onView?: (hit: SearchHit) => void;
   onDownload?: (hit: SearchHit) => void;
-  onFavorite?: (hit: SearchHit) => void;
 }
 
-export function SearchResultList({ hits, onView, onDownload, onFavorite }: SearchResultListProps) {
+export function SearchResultList({ hits, onView, onDownload }: SearchResultListProps) {
   return (
     <div className="bg-white px-8">
       {hits.map((hit) => (
@@ -30,7 +28,7 @@ export function SearchResultList({ hits, onView, onDownload, onFavorite }: Searc
             />
             <ResultMeta hit={hit} />
           </div>
-          <ResultActions hit={hit} onView={onView} onDownload={onDownload} onFavorite={onFavorite} />
+          <ResultActions hit={hit} onView={onView} onDownload={onDownload} />
         </article>
       ))}
     </div>
@@ -62,7 +60,7 @@ function ResultMeta({ hit }: { hit: SearchHit }) {
   );
 }
 
-function ResultActions({ hit, onView, onDownload, onFavorite }: ResultActionProps) {
+function ResultActions({ hit, onView, onDownload }: ResultActionProps) {
   return (
     <div className="flex shrink-0 items-center gap-3">
       <button className="inline-flex items-center gap-1 text-xs text-brand-700" onClick={() => onView?.(hit)} type="button">
@@ -79,14 +77,6 @@ function ResultActions({ hit, onView, onDownload, onFavorite }: ResultActionProp
           下载
         </button>
       )}
-      <button
-        className="grid h-8 w-8 place-items-center rounded text-slate-400 hover:bg-slate-50 hover:text-brand-700"
-        onClick={() => onFavorite?.(hit)}
-        title="收藏"
-        type="button"
-      >
-        <Bookmark size={15} />
-      </button>
     </div>
   );
 }

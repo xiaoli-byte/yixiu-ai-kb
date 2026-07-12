@@ -181,11 +181,14 @@ Upload (multipart)
 ### AI 问答
 ```
 User question
-  → hybridSearch(topK=5)  [BM25 + 向量 + RRF]
-  → 无结果时返回问题改写建议
-  → 拼装 prompt [context with [1][2] markers]
+  → 会话记忆装配 [滚动摘要 + 最近轮次全文]
+  → LLM 查询改写 [追问补全为可独立检索的问题]
+  → hybridSearch 召回 [BM25 + 向量 + RRF]
+  → 权限 / AI 引用过滤
+  → gte-rerank 重排精选 topK（失败降级召回原序）
+  → 多轮 messages [system + 历史轮次 + 参考资料 [1][2]]
   → qwen-plus streamChat (SSE)
-  → 保存消息 + citations + 可选满意度反馈
+  → 保存消息 + citations + 异步更新会话摘要
 ```
 
 ## ⚙️ 环境变量

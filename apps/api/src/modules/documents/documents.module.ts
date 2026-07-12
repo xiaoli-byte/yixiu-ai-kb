@@ -6,14 +6,12 @@ import { DocumentAccessService } from "./document-access.service";
 import { OfficeParserService } from "./office-parser.service";
 import { FunAsrService } from "./funasr.service";
 import { OcrService } from "./ocr.service";
-import { TagsModule } from "../tags/tags.module";
 import { FoldersModule } from "../folders/folders.module";
 import { PermissionsModule } from "../../common/permissions/permissions.module";
 import { AppConfigService } from "../../config/app-config.service";
 
 @Module({
   imports: [
-    TagsModule,
     FoldersModule,
     PermissionsModule,
     MulterModule.registerAsync({

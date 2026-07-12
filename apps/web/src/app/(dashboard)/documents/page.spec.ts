@@ -37,7 +37,7 @@ describe("Documents page PRD structure", () => {
       "我的文档",
       "公共文档",
       "部门文档",
-      "文档归档",
+      "回收站",
       "批量上传",
       "新建文件夹",
       "文件类型",
@@ -50,8 +50,6 @@ describe("Documents page PRD structure", () => {
       "操作",
       "上传时间",
       "所属部门",
-      "所属分类",
-      "是否归档",
       "跳转至",
     ].forEach((text) => {
       expect(source).toContain(text);
@@ -64,8 +62,6 @@ describe("Documents page PRD structure", () => {
       "departmentId",
       "uploadedFrom",
       "uploadedTo",
-      "archivedFilter",
-      "categoryId",
       "goToPageInput",
     ].forEach((text) => {
       expect(source).toContain(text);
@@ -75,8 +71,7 @@ describe("Documents page PRD structure", () => {
     expect(pageSource).toContain("departmentId: departmentId.trim() || undefined");
     expect(pageSource).toContain("uploadedFrom: uploadedFrom || undefined");
     expect(pageSource).toContain("uploadedTo: uploadedTo || undefined");
-    expect(pageSource).toContain("archived: resolveArchivedQuery(scope, archivedFilter)");
-    expect(pageSource).toContain("tags: categoryId || undefined");
+    expect(pageSource).toContain("archived: resolveArchivedQuery(scope)");
   });
 
   it("uses the backend batch-upload endpoint and shows per-file upload results", () => {

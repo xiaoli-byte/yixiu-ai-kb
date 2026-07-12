@@ -12,7 +12,6 @@ import { AuthModule } from "./modules/auth/auth.module";
 import { UsersModule } from "./modules/users/users.module";
 import { DepartmentsModule } from "./modules/departments/departments.module";
 import { FoldersModule } from "./modules/folders/folders.module";
-import { TagsModule } from "./modules/tags/tags.module";
 import { DocumentsModule } from "./modules/documents/documents.module";
 import { SearchModule } from "./modules/search/search.module";
 import { QaModule } from "./modules/qa/qa.module";
@@ -65,7 +64,6 @@ loadRootEnv();
     UsersModule,
     DepartmentsModule,
     FoldersModule,
-    TagsModule,
     DocumentsModule,
     SearchModule,
     QaModule,

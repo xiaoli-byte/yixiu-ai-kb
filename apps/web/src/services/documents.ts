@@ -1,11 +1,9 @@
 import {
-  addDocumentTag as addTagApi,
   batchDocuments as batchDocumentsApi,
   deleteDocument as deleteDocApi,
   getDocument as getDocApi,
   getDocumentPermissions as getPermissionsApi,
   getDocuments as getDocsApi,
-  removeDocumentTag as removeTagApi,
   retryDocumentParse as retryDocumentParseApi,
   retryParse as retryParseApi,
   setBatchDocumentPermissions as setBatchDocumentPermissionsApi,
@@ -35,7 +33,6 @@ export type {
   DocumentPermissionUpdateRequest,
   DocumentQuery,
   DocumentStatus,
-  DocumentTag,
   DocumentUpdateData,
   PermissionMode,
   PermissionSubjectType,
@@ -54,8 +51,6 @@ export const update = updateDocApi;
 export const remove = deleteDocApi;
 export const upload = uploadDocApi;
 export const uploadBatch = uploadDocsApi;
-export const addTag = addTagApi;
-export const removeTag = removeTagApi;
 
 const documentsApi = {
   list,
@@ -71,8 +66,6 @@ const documentsApi = {
   remove,
   upload,
   uploadBatch,
-  addTag,
-  removeTag,
 };
 
 export default documentsApi;

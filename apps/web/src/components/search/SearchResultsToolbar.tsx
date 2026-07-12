@@ -35,7 +35,9 @@ export function SearchResultsToolbar({
     <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-8 py-3">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm text-slate-900">共找到 {total} 条结果</span>
-        {typeof took === "number" && <span className="text-xs text-slate-500">耗时 {took}ms</span>}
+        {typeof took === "number" && (
+          <span className="text-xs text-slate-500">耗时 {(took / 1000).toFixed(2)} 秒</span>
+        )}
         {permissionNotice && (
           <span className="inline-flex h-7 items-center gap-1 rounded bg-amber-50 px-2 text-xs text-amber-700">
             <AlertCircle size={13} />

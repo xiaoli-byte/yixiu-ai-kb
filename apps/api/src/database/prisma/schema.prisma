@@ -113,7 +113,6 @@ model Document {
 
   owner User           @relation("Owner", fields: [ownerId], references: [id])
   content DocumentContent? @relation(fields: [contentId], references: [id], onDelete: SetNull)
-  tags  DocumentTag[]
   chunks Chunk[]
   structuredFacts StructuredFact[]
   permissions DocumentPermission[]
@@ -296,33 +295,14 @@ model Chunk {
   @@map("chunks")
 }
 
-model Tag {
-  id   String @id @default(cuid())
-  name String
-  type String @default("MANUAL")
-
-  documents DocumentTag[]
-
-  @@unique([name, type])
-  @@map("tags")
-}
-
-model DocumentTag {
-  documentId String @map("document_id")
-  tagId      String @map("tag_id")
-
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-
-  @@id([documentId, tagId])
-  @@map("document_tags")
-}
-
 model QAConversation {
   id        String   @id @default(cuid())
   userId    String   @map("user_id")
   tenantId  String   @map("tenant_id")
   title     String   @default("新会话")
+  // 滚动会话摘要：由 LLM 增量维护，覆盖前 summaryMessageCount 条消息的内容
+  summary             String? @map("summary")
+  summaryMessageCount Int     @default(0) @map("summary_message_count")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

@@ -59,8 +59,6 @@ type SearchModeValue = "hybrid" | "semantic" | "keyword";
 type SearchFilters = {
   fileType?: string;
   categoryId?: string;
-  tagId?: string;
-  tags?: string[] | string;
   permissionScope?: string;
   updateTimeRange?: "all" | "today" | "7d" | "30d" | "custom";
   parseStatus?: string;
@@ -80,7 +78,6 @@ type SearchOptions = {
   topK: number;
   maxResults?: number;
   candidateLimit?: number;
-  tags?: string[];
   user?: any;
   filters?: SearchFilters;
 };
@@ -405,18 +402,6 @@ export class SearchService {
     if (filters.parseStatus) conditions.push(`COALESCE(dc.status, d.status) = ${addValue(filters.parseStatus)}`);
     if (filters.uploaderId) conditions.push(`d.owner_id = ${addValue(filters.uploaderId)}`);
     if (filters.departmentId) conditions.push(`u.department_id = ${addValue(filters.departmentId)}`);
-
-    const tagIds = this.normalizeTagIds(filters.tags ?? filters.tagId);
-    if (tagIds.length > 0) {
-      conditions.push(
-        `EXISTS (
-          SELECT 1
-          FROM document_tags dt_filter
-          WHERE dt_filter.document_id = d.id
-            AND dt_filter.tag_id = ANY(${addValue(tagIds)}::text[])
-        )`,
-      );
-    }
 
     if (filters.updateTimeRange === "today") {
       conditions.push("d.updated_at >= date_trunc('day', NOW())");
@@ -956,7 +941,6 @@ export class SearchService {
     return Boolean(
       query.fileType ||
         query.categoryId ||
-        query.tagId ||
         query.permissionScope ||
         (query.updateTimeRange && query.updateTimeRange !== "all") ||
         query.parseStatus ||
@@ -1348,7 +1332,6 @@ export class SearchService {
   private normalizeSearchFilters(opts: SearchOptions): SearchFilters {
     return {
       ...(opts.filters ?? {}),
-      tags: opts.tags ?? opts.filters?.tags,
     };
   }
 
@@ -1386,12 +1369,6 @@ export class SearchService {
     } else {
       filters.knowledgeBaseId = kbId;
     }
-  }
-
-  private normalizeTagIds(tags?: string[] | string) {
-    if (!tags) return [];
-    if (Array.isArray(tags)) return tags.filter((tag) => tag.trim().length > 0);
-    return tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0);
   }
 
   private async attachAccessFlags(hits: SearchHit[], actor: DocumentUserContext): Promise<SearchHit[]> {

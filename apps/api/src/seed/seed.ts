@@ -72,19 +72,6 @@ async function main() {
   });
   console.log(`✓ 成员关系: ${membership.userId} @ ${membership.tenantId} [${membership.roles.join(", ")}]`);
 
-  // tags
-  const tagNames = ["产品", "技术", "人事", "财务", "客户"];
-  const tags: Record<string, string> = {};
-  for (const tn of tagNames) {
-    const t = await prisma.tag.upsert({
-      where: { name_type: { name: tn, type: "DOMAIN" } },
-      update: {},
-      create: { id: uuid(), name: tn, type: "DOMAIN" },
-    });
-    tags[tn] = t.id;
-  }
-  console.log(`✓ 标签: ${Object.keys(tags).length} 个`);
-
   // 示例文档（仅元数据，不入文件）
   const samples = [
     { title: "Qwen3 技术白皮书.md", mime: "text/markdown" },

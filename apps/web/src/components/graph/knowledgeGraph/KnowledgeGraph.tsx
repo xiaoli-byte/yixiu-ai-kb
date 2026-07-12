@@ -18,6 +18,7 @@ import {
 import type { ReactNode } from "react";
 import { bindGraphEvents } from "./graphEvents";
 import { buildDisplayGraph } from "./graphLayout";
+import { buildGraphElementStates } from "./graphState";
 import { LEGEND_ITEMS } from "./style";
 import type {
   DisplayGraph,
@@ -212,61 +213,14 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
       const instance = graphRef.current;
       if (!instance || display.nodes.length === 0) return;
 
-      const states: Record<string, string[]> = {};
-      const protectedIds = new Set<string>();
-      const addState = (id: string | null | undefined, state: string) => {
-        if (!id) return;
-        states[id] = states[id] ?? [];
-        if (!states[id].includes(state)) states[id].push(state);
-      };
-
-      for (const id of highlightNodeIds) {
-        protectedIds.add(id);
-        addState(id, "highlighted");
-      }
-      for (const id of highlightEdgeIds) {
-        protectedIds.add(id);
-        addState(id, "highlighted");
-      }
-      if (selectedNodeId) {
-        protectedIds.add(selectedNodeId);
-        addState(selectedNodeId, "selected");
-      }
-      if (selectedEdgeId) {
-        protectedIds.add(selectedEdgeId);
-        addState(selectedEdgeId, "selected");
-      }
-
-      if (!hoveredId) {
-        instance.setElementState(states, true);
-        return;
-      }
-
-      const neighborIds = new Set<string>([hoveredId]);
-      for (const edge of display.edges) {
-        if (edge.source === hoveredId) neighborIds.add(edge.target);
-        if (edge.target === hoveredId) neighborIds.add(edge.source);
-      }
-
-      addState(hoveredId, "hover");
-      for (const id of neighborIds) {
-        if (id === hoveredId) continue;
-        addState(id, "related");
-      }
-      for (const node of display.nodes) {
-        if (!neighborIds.has(node.id) && !protectedIds.has(node.id)) {
-          addState(node.id, "dim");
-        }
-      }
-      for (const edge of display.edges) {
-        const isHoverEdge =
-          edge.source === hoveredId || edge.target === hoveredId;
-        if (isHoverEdge) {
-          addState(edge.id, "hover");
-        } else if (!protectedIds.has(edge.id)) {
-          addState(edge.id, "dim");
-        }
-      }
+      const states = buildGraphElementStates({
+        display,
+        hoveredId,
+        highlightNodeIds,
+        highlightEdgeIds,
+        selectedNodeId,
+        selectedEdgeId,
+      });
       instance.setElementState(states, true);
     }, [hoveredId, display, highlightNodeIds, highlightEdgeIds, selectedNodeId, selectedEdgeId]);
 

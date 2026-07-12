@@ -22,7 +22,6 @@ export type {
   DocumentPermissionUpdateRequest,
   DocumentQuery,
   DocumentStatus,
-  DocumentTag,
   DocumentUpdateData,
   PermissionMode,
   PermissionSubjectType,
@@ -30,9 +29,6 @@ export type {
 
 // Folder types
 export type { Folder, CreateFolderData, UpdateFolderData } from "./folders";
-
-// Tag types
-export type { Tag, CreateTagData } from "./tags";
 
 // Graph types
 export type {

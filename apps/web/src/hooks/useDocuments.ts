@@ -5,8 +5,6 @@ import {
   updateDocument,
   deleteDocument,
   uploadDocument,
-  addDocumentTag,
-  removeDocumentTag,
 } from "@/lib/api/endpoints/documents";
 import type {
   DocumentDto,
@@ -48,6 +46,4 @@ export const documentActions = {
   update: updateDocument,
   remove: deleteDocument,
   upload: uploadDocument,
-  addTag: addDocumentTag,
-  removeTag: removeDocumentTag,
 };

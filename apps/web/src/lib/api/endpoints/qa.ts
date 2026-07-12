@@ -54,9 +54,20 @@ export async function updateMessageFeedback(
 export async function getDocumentPdfUrl(
   documentId: string
 ): Promise<PdfUrlResponse> {
-  return apiClient.get<PdfUrlResponse>(
+  const res = await apiClient.get<PdfUrlResponse>(
     `/qa/documents/${documentId}/pdf-url`
   );
+  // 后端返回的 url 硬编码 /api 前缀，zone 模式（/knowledge/api）下会 404，
+  // 统一在前端按 apiBaseUrl 重建文件地址
+  return {
+    ...res,
+    url: buildDocumentFileUrl(documentId),
+  };
+}
+
+// 文档原文件下载/预览地址（带鉴权，需附 Authorization 或同源 cookie）
+export function buildDocumentFileUrl(documentId: string): string {
+  return `${apiBaseUrl}/qa/documents/${encodeURIComponent(documentId)}/file`;
 }
 
 // 获取文档 Markdown 内容

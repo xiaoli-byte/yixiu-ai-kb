@@ -139,12 +139,32 @@ describe("DocumentsService permission-aware operations", () => {
         departmentId: "dept-1",
       },
       expect.any(Number),
+      false,
     );
     expect(result.items[0]).toMatchObject({
       id: "doc-1",
       canView: true,
       canDownload: true,
     });
+  });
+
+  it("archive scope queries deleted_at IS NOT NULL with includeDeleted", async () => {
+    const { service, prisma, db, access } = createService();
+    prisma.$transaction.mockResolvedValueOnce([[], 0]);
+    db.query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ total: 0 }]);
+    access.getAccessFlags.mockResolvedValueOnce({});
+
+    await (service as any).list({ page: 1, pageSize: 20, scope: "archive" }, user);
+
+    expect(access.visibleDocumentWhereSql).toHaveBeenCalledWith(
+      "d",
+      expect.any(Object),
+      expect.any(Number),
+      true,
+    );
+    const sql = db.query.mock.calls[0][0] as string;
+    expect(sql).toContain("d.deleted_at IS NOT NULL");
+    expect(sql).not.toContain("d.archived = TRUE");
   });
 
   it("upload applies folder inheritance when folderId is present", async () => {
@@ -350,33 +370,11 @@ describe("DocumentsService permission-aware operations", () => {
     expect(prisma.document.update).not.toHaveBeenCalled();
   });
 
-  it("controller checks document EDIT access before tag mutations", async () => {
-    const docs = {
-      assertDocumentEditAccess: vi.fn().mockRejectedValue(new ForbiddenException("denied")),
-    };
-    const tags = {
-      addTagToDocument: vi.fn(),
-      removeTagFromDocument: vi.fn(),
-    };
-    const controller = new DocumentsController(docs as any, tags as any, {} as any);
-
-    await expect(controller.addTag("doc-1", "tag-1", user)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
-    await expect(controller.removeTag("doc-1", "tag-1", user)).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
-
-    expect(docs.assertDocumentEditAccess).toHaveBeenCalledTimes(2);
-    expect(tags.addTagToDocument).not.toHaveBeenCalled();
-    expect(tags.removeTagFromDocument).not.toHaveBeenCalled();
-  });
-
   it("controller wraps invalid list query in BadRequestException", async () => {
     const docs = {
       list: vi.fn(),
     };
-    const controller = new DocumentsController(docs as any, {} as any, {} as any);
+    const controller = new DocumentsController(docs as any, {} as any);
 
     await expect(controller.list({ page: "0" }, user)).rejects.toBeInstanceOf(BadRequestException);
 
@@ -387,7 +385,7 @@ describe("DocumentsService permission-aware operations", () => {
     const docs = {
       update: vi.fn(),
     };
-    const controller = new DocumentsController(docs as any, {} as any, {} as any);
+    const controller = new DocumentsController(docs as any, {} as any);
 
     await expect(
       controller.update("doc-1", { folderId: 123 } as any, user),
@@ -400,7 +398,7 @@ describe("DocumentsService permission-aware operations", () => {
     const folders = {
       create: vi.fn().mockResolvedValue({ id: "folder-1", name: "制度规范" }),
     };
-    const controller = new DocumentsController({} as any, {} as any, { tenantId: "tenant-1" } as any, folders as any);
+    const controller = new DocumentsController({} as any, { tenantId: "tenant-1" } as any, folders as any);
     const method = (controller as any).createFolder;
 
     expect(method).toBeTypeOf("function");
@@ -422,7 +420,7 @@ describe("DocumentsService permission-aware operations", () => {
         results: [],
       }),
     };
-    const controller = new DocumentsController(docs as any, {} as any, { tenantId: "tenant-1", userId: "fallback-user" } as any);
+    const controller = new DocumentsController(docs as any, { tenantId: "tenant-1", userId: "fallback-user" } as any);
     const method = (controller as any).batchUpload;
     const files = [file({ originalname: "a.pdf" }), file({ originalname: "b.pdf" })];
 
@@ -460,6 +458,33 @@ describe("DocumentsService permission-aware operations", () => {
     expect(prisma.document.update).toHaveBeenCalledWith({
       where: { id: "doc-1" },
       data: { archived: true, updatedAt: expect.any(Date) },
+    });
+  });
+
+  it("batch restore clears deletedAt and archived with includeDeleted access check", async () => {
+    const { service, prisma, access } = createService();
+    access.assertDocumentAccess.mockResolvedValueOnce(undefined);
+    prisma.document.update.mockResolvedValueOnce({ id: "doc-1" });
+
+    await expect(
+      (service as any).batch(
+        { action: "RESTORE", documentIds: ["doc-1"] },
+        user,
+      ),
+    ).resolves.toEqual({
+      action: "RESTORE",
+      results: [{ documentId: "doc-1", ok: true }],
+    });
+
+    expect(access.assertDocumentAccess).toHaveBeenCalledWith(
+      "doc-1",
+      "EDIT",
+      expect.any(Object),
+      true,
+    );
+    expect(prisma.document.update).toHaveBeenCalledWith({
+      where: { id: "doc-1" },
+      data: { deletedAt: null, archived: false, updatedAt: expect.any(Date) },
     });
   });
 

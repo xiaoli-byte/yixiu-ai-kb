@@ -52,6 +52,7 @@ export class DocumentAccessService {
     alias: string,
     user: DocumentUserContext,
     startIndex = 1,
+    includeDeleted = false,
   ): SqlFragment {
     const documentAlias = this.safeAlias(alias);
     const tenantParam = this.placeholder(startIndex);
@@ -123,10 +124,12 @@ export class DocumentAccessService {
       `((${documentAlias}.owner_id = ${userParam} AND ${documentAlias}.permission_scope <> 'ADMIN') OR ${documentAlias}.permission_scope IN ('COMPANY', 'PUBLIC'))`,
     );
 
+    const deletedCondition = includeDeleted ? "" : `AND ${documentAlias}.deleted_at IS NULL`;
+
     return {
       sql: `(
         ${documentAlias}.tenant_id = ${tenantParam}
-        AND ${documentAlias}.deleted_at IS NULL
+        ${deletedCondition}
         AND (
           ${roleParam} = ANY(ARRAY['super_admin', 'admin'])
           OR (
@@ -143,14 +146,16 @@ export class DocumentAccessService {
     documentId: string,
     action: DocumentAction,
     user: DocumentUserContext,
+    includeDeleted = false,
   ): Promise<boolean> {
-    const flags = await this.getAccessFlags([documentId], user);
+    const flags = await this.getAccessFlags([documentId], user, includeDeleted);
     return flags[documentId]?.[this.flagForAction(action)] ?? false;
   }
 
   async getAccessFlags(
     documentIds: string[],
     user: DocumentUserContext,
+    includeDeleted = false,
   ): Promise<Record<string, DocumentAccessFlags>> {
     const result = Object.fromEntries(
       documentIds.map((documentId) => [documentId, this.emptyFlags()]),
@@ -282,7 +287,7 @@ export class DocumentAccessService {
          LIMIT 1
        ) folder_role ON TRUE
        WHERE d.tenant_id = $2
-         AND d.deleted_at IS NULL
+         ${includeDeleted ? "" : "AND d.deleted_at IS NULL"}
          AND d.id = ANY($1::text[])`,
       [documentIds, user.tenantId, user.userId, user.role, user.departmentId ?? null],
     );
@@ -298,8 +303,9 @@ export class DocumentAccessService {
     documentId: string,
     action: DocumentAction,
     user: DocumentUserContext,
+    includeDeleted = false,
   ): Promise<void> {
-    if (!(await this.canAccessDocument(documentId, action, user))) {
+    if (!(await this.canAccessDocument(documentId, action, user, includeDeleted))) {
       throw new ForbiddenException("Document access denied");
     }
   }

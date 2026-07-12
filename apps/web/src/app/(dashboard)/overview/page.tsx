@@ -524,22 +524,7 @@ function EChart({
 }
 
 function buildCategoryData(documents: DocumentDto[]): CategoryItem[] {
-  const tagCounts = new Map<string, number>();
-
-  for (const doc of documents) {
-    if (!doc.tags?.length) continue;
-    for (const tag of doc.tags) {
-      tagCounts.set(tag.name, (tagCounts.get(tag.name) || 0) + 1);
-    }
-  }
-
-  if (tagCounts.size === 0) return fallbackCategories;
-
-  const colors = ["#1683ff", "#49c785", "#ffb52e", "#9d76d8", "#67bde8"];
-  return Array.from(tagCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-    .map(([name, value], index) => ({ name, value, color: colors[index % colors.length] }));
+  return fallbackCategories;
 }
 
 function buildOperationRows(documents: DocumentDto[], conversations: Conversation[]): OperationRow[] {

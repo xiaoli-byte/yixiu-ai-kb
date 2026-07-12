@@ -102,6 +102,8 @@ export class AppConfigService {
       embedDim: this.number("DASHSCOPE_EMBED_DIM"),
       llmMock: this.bool("DASHSCOPE_LLM_MOCK"),
       embedMock: this.bool("DASHSCOPE_EMBED_MOCK"),
+      rerankModel: this.optionalString("DASHSCOPE_RERANK_MODEL") || "gte-rerank-v2",
+      rerankMock: this.optionalString("DASHSCOPE_RERANK_MOCK").toLowerCase() === "true",
     };
   }
 

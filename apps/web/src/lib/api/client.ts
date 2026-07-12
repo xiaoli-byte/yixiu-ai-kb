@@ -267,5 +267,6 @@ export const apiClient = {
 // 兼容旧 API - 导出统一的 api 函数
 export const api = apiClient;
 
-// 导出 base URL
-export const apiBaseUrl = "/api";
+// 导出 base URL：必须与 apiClient 同源（NEXT_PUBLIC_API_URL），
+// zone 模式下为 /knowledge/api，硬编码 "/api" 会 404
+export const apiBaseUrl = API_BASE;

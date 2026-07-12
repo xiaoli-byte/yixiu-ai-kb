@@ -31,8 +31,6 @@ import { getDocumentFileKind } from "../documents/document-file-types";
 import { LlmService, ChatMessage } from "../llm/llm.service";
 import { Neo4jService } from "../../database/neo4j/neo4j.service";
 import { DocumentJobPayload, DOCUMENT_QUEUE } from "./queue.service";
-import { RagFactExtractionService } from "../rag/rag-fact-extraction.service";
-import { RagFactsService } from "../rag/rag-facts.service";
 import { AppConfigService } from "../../config/app-config.service";
 import { v4 as uuid } from "uuid";
 import {
@@ -65,8 +63,6 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
     private readonly officeParser: OfficeParserService,
     private readonly funAsr: FunAsrService,
     private readonly ocr: OcrService,
-    private readonly ragExtractor: RagFactExtractionService,
-    private readonly ragFacts: RagFactsService,
   ) {}
 
   onModuleInit() {
@@ -219,45 +215,6 @@ export class DocumentProcessor implements OnModuleInit, OnModuleDestroy {
         createdAt: doc.createdAt.toISOString(),
         chunks: chunks.map((c, i) => ({ id: chunkIds[i], idx: i, text: c.text.slice(0, 200) })),
       });
-
-      // 结构化事实抽取：面向电商 / KTV / 外贸 / CRM，同时保留简历时间线回归能力
-      try {
-        await this.ragFacts.replaceDocumentFacts({
-          tenantId,
-          documentId,
-          contentId: reservedContent.id,
-          facts: [],
-        });
-        const facts = await this.ragExtractor.extractDocumentFacts({
-          tenantId,
-          documentId,
-          title: doc.title,
-          mime: doc.mime,
-          fullText,
-          chunks: chunks.map((c, i) => ({
-            id: chunkIds[i],
-            text: c.text,
-            page: c.page ?? null,
-          })),
-        });
-        const contentFacts = facts.map((fact) => ({
-          ...fact,
-          tenantId,
-          documentId,
-          contentId: reservedContent.id,
-        }));
-        if (contentFacts.length > 0) {
-          await this.ragFacts.replaceDocumentFacts({
-            tenantId,
-            documentId,
-            contentId: reservedContent.id,
-            facts: contentFacts,
-          });
-        }
-        this.logger.log(`content ${reservedContent.id} -> ${contentFacts.length} structured facts`);
-      } catch (e: any) {
-        this.logger.warn(`结构化事实抽取失败: ${e.message}`);
-      }
 
       // 实体抽取（可容错：失败不影响主流程）
       try {

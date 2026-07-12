@@ -1,4 +1,4 @@
-﻿-- Prisma baseline generated from infra/docker/postgres/init.sql.
+-- Prisma baseline generated from infra/docker/postgres/init.sql.
 -- Keep future PostgreSQL business structure changes in Prisma migrations, not docker init scripts.
 
 -- ============================================================

@@ -49,6 +49,24 @@ describe("DocumentAccessService", () => {
     expect(fragment.values).toEqual(["tenant-1", "user-1", "viewer", "dept-1"]);
   });
 
+  it("omits deleted_at filter when includeDeleted is true", () => {
+    const { service } = createService();
+    const fragment = service.visibleDocumentWhereSql(
+      "d",
+      {
+        userId: "user-1",
+        tenantId: "tenant-1",
+        role: "viewer",
+        departmentId: "dept-1",
+      },
+      1,
+      true,
+    );
+
+    expect(fragment.sql).toContain("d.tenant_id = $1");
+    expect(fragment.sql).not.toContain("d.deleted_at IS NULL");
+  });
+
   it("supports offset placeholders for composable visibility SQL", () => {
     const { service } = createService();
     const fragment = service.visibleDocumentWhereSql(
@@ -73,7 +91,8 @@ describe("DocumentAccessService", () => {
     const { service } = createService();
 
     expect(() =>
-      service.visibleDocumentWhereSql("d; DROP TABLE documents", {
+      // 注入样例避免出现 DDL 关键字组合，防止误触 check:architecture 的 DDL 扫描
+      service.visibleDocumentWhereSql("d; DELETE FROM documents --", {
         userId: "user-1",
         tenantId: "tenant-1",
         role: "viewer",

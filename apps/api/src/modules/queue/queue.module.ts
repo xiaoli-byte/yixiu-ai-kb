@@ -4,12 +4,11 @@ import IORedis from "ioredis";
 import { QueueService } from "./queue.service";
 import { DocumentProcessor } from "./document.processor";
 import { DocumentsModule } from "../documents/documents.module";
-import { RagModule } from "../rag/rag.module";
 import { AppConfigService } from "../../config/app-config.service";
 
 @Global()
 @Module({
-  imports: [DocumentsModule, RagModule],
+  imports: [DocumentsModule],
   providers: [
     {
       provide: "REDIS",

@@ -5,11 +5,18 @@ import {
   Download,
   Edit2,
   Eye,
+  File,
+  FileAudio,
+  FileImage,
+  FileSpreadsheet,
   FileText,
+  FileVideo,
   Loader2,
+  Presentation,
   RotateCcw,
   ShieldCheck,
   Trash2,
+  type LucideIcon,
 } from "lucide-react";
 import type { DocumentDto } from "@/services/documents";
 import { cn, formatBytes, statusColor, statusLabel } from "@/lib/utils";
@@ -29,7 +36,9 @@ interface DocumentTableProps {
   onDelete: (doc: DocumentDto) => void;
   onPermissions: (doc: DocumentDto) => void;
   onRetryParse: (doc: DocumentDto) => void;
+  onRestore?: (doc: DocumentDto) => void;
   onPageChange: (page: number) => void;
+  isArchive?: boolean;
 }
 
 export function DocumentTable({
@@ -47,7 +56,9 @@ export function DocumentTable({
   onDelete,
   onPermissions,
   onRetryParse,
+  onRestore,
   onPageChange,
+  isArchive = false,
 }: DocumentTableProps) {
   const allSelected = documents.length > 0 && documents.every((doc) => selectedIds.includes(doc.id));
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -113,23 +124,29 @@ export function DocumentTable({
                   </td>
                   <td className="px-4">
                     <div className="flex min-w-0 items-center gap-2">
-                      <div className="grid h-8 w-8 shrink-0 place-items-center rounded bg-brand-50 text-[10px] font-semibold text-brand-700 ring-1 ring-brand-100">
-                        {fileTypeLabel(doc)}
-                      </div>
+                      {(() => {
+                        const { Icon, bgClass, textClass } = getFileIcon(doc);
+                        return (
+                          <div
+                            className={cn(
+                              "grid h-8 w-8 shrink-0 place-items-center rounded ring-1",
+                              bgClass,
+                              textClass,
+                            )}
+                          >
+                            <Icon size={16} />
+                          </div>
+                        );
+                      })()}
                       <div className="min-w-0">
                         <div className="truncate font-medium text-slate-900">{doc.title}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                           <span>{formatBytes(doc.size)}</span>
-                          {doc.tags?.slice(0, 2).map((tag) => (
-                            <span key={tag.id} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
-                              {tag.name}
-                            </span>
-                          ))}
                         </div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 text-xs text-slate-600">{fileTypeLabel(doc)}</td>
+                  <td className="px-4 text-xs text-slate-600">{getFileIcon(doc).label}</td>
                   <td className="px-4 text-xs text-slate-600">{formatDate(doc.createdAt)}</td>
                   <td className="px-4 text-xs text-slate-700">{doc.ownerName || "未知"}</td>
                   <td className="px-4">
@@ -153,11 +170,15 @@ export function DocumentTable({
                     <div className="flex items-center gap-1">
                       <IconButton icon={Eye} label="查看" onClick={() => onView(doc)} />
                       {doc.canDownload !== false && <IconButton icon={Download} label="下载" onClick={() => onDownload(doc)} />}
-                      {doc.status === "FAILED" && <IconButton icon={RotateCcw} label="重试解析" onClick={() => onRetryParse(doc)} />}
-                      {doc.canManagePermission !== false && (
+                      {isArchive ? (
+                        onRestore ? <IconButton icon={RotateCcw} label="恢复" onClick={() => onRestore(doc)} /> : null
+                      ) : doc.status === "FAILED" ? (
+                        <IconButton icon={RotateCcw} label="重试解析" onClick={() => onRetryParse(doc)} />
+                      ) : null}
+                      {!isArchive && doc.canManagePermission !== false && (
                         <IconButton icon={ShieldCheck} label="权限设置" onClick={() => onPermissions(doc)} />
                       )}
-                      {doc.canEdit !== false && <IconButton icon={Edit2} label="编辑" onClick={() => onEdit(doc)} />}
+                      {!isArchive && doc.canEdit !== false && <IconButton icon={Edit2} label="编辑" onClick={() => onEdit(doc)} />}
                       {doc.canDelete !== false && (
                         <IconButton className="text-rose-600 hover:bg-rose-50" icon={Trash2} label="删除" onClick={() => onDelete(doc)} />
                       )}
@@ -238,14 +259,99 @@ function IconButton({
   );
 }
 
-function fileTypeLabel(doc: DocumentDto) {
-  const raw = `${doc.mime || ""} ${doc.title || ""}`.toLowerCase();
-  if (raw.includes("pdf")) return "PDF";
-  if (raw.includes("word") || raw.includes("doc")) return "DOCX";
-  if (raw.includes("sheet") || raw.includes("excel") || raw.includes("xls")) return "XLSX";
-  if (raw.includes("presentation") || raw.includes("ppt")) return "PPTX";
-  if (raw.includes("text") || raw.includes("txt") || raw.includes("markdown") || raw.endsWith(".md")) return "TXT";
-  return "FILE";
+interface FileIconMeta {
+  Icon: LucideIcon;
+  bgClass: string;
+  textClass: string;
+  label: string;
+}
+
+function getFileIcon(doc: DocumentDto): FileIconMeta {
+  const mime = (doc.mime || "").toLowerCase();
+  const title = (doc.title || "").toLowerCase();
+  const ext = (() => {
+    const idx = title.lastIndexOf(".");
+    return idx >= 0 ? title.slice(idx) : "";
+  })();
+
+  if (mime === "application/pdf" || ext === ".pdf") {
+    return { Icon: FileText, bgClass: "bg-rose-50 ring-rose-100", textClass: "text-rose-600", label: "PDF" };
+  }
+  if (
+    mime.includes("word") ||
+    mime.includes("wordprocessingml") ||
+    [".doc", ".docx", ".docm"].includes(ext)
+  ) {
+    return { Icon: FileText, bgClass: "bg-blue-50 ring-blue-100", textClass: "text-blue-600", label: "DOCX" };
+  }
+  if (
+    mime.includes("excel") ||
+    mime.includes("spreadsheetml") ||
+    mime.includes("sheet") ||
+    [".xls", ".xlsx", ".xlsm"].includes(ext)
+  ) {
+    return {
+      Icon: FileSpreadsheet,
+      bgClass: "bg-emerald-50 ring-emerald-100",
+      textClass: "text-emerald-600",
+      label: "XLSX",
+    };
+  }
+  if (
+    mime.includes("powerpoint") ||
+    mime.includes("presentationml") ||
+    mime.includes("presentation") ||
+    [".ppt", ".pptx", ".pptm"].includes(ext)
+  ) {
+    return {
+      Icon: Presentation,
+      bgClass: "bg-orange-50 ring-orange-100",
+      textClass: "text-orange-600",
+      label: "PPTX",
+    };
+  }
+  if (
+    mime.startsWith("image/") ||
+    [".png", ".jpg", ".jpeg", ".jpe", ".jfif", ".webp", ".bmp", ".tif", ".tiff"].includes(ext)
+  ) {
+    return { Icon: FileImage, bgClass: "bg-purple-50 ring-purple-100", textClass: "text-purple-600", label: "IMG" };
+  }
+  if (mime.startsWith("video/") || [".mp4", ".mov", ".mkv", ".webm"].includes(ext)) {
+    return {
+      Icon: FileVideo,
+      bgClass: "bg-indigo-50 ring-indigo-100",
+      textClass: "text-indigo-600",
+      label: "VIDEO",
+    };
+  }
+  if (
+    mime.startsWith("audio/") ||
+    [".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".amr", ".wma"].includes(ext)
+  ) {
+    return { Icon: FileAudio, bgClass: "bg-pink-50 ring-pink-100", textClass: "text-pink-600", label: "AUDIO" };
+  }
+  if (
+    mime.startsWith("text/") ||
+    [
+      ".txt",
+      ".text",
+      ".md",
+      ".markdown",
+      ".csv",
+      ".tsv",
+      ".json",
+      ".jsonl",
+      ".log",
+      ".xml",
+      ".html",
+      ".htm",
+      ".yaml",
+      ".yml",
+    ].includes(ext)
+  ) {
+    return { Icon: FileText, bgClass: "bg-slate-100 ring-slate-200", textClass: "text-slate-600", label: "TXT" };
+  }
+  return { Icon: File, bgClass: "bg-slate-100 ring-slate-200", textClass: "text-slate-500", label: "FILE" };
 }
 
 function permissionLabel(scope?: string | null) {

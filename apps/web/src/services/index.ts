@@ -8,12 +8,9 @@ export type {
   DocumentListResponse,
   DocumentQuery,
   DocumentUpdateData,
-  DocumentTag,
   Folder,
   CreateFolderData,
   UpdateFolderData,
-  Tag,
-  CreateTagData,
   GraphNode,
   GraphEdge,
   GraphData,
@@ -39,7 +36,6 @@ export type {
 export { default as authApi } from "./auth";
 export { default as documentsApi } from "./documents";
 export { default as foldersApi } from "./folders";
-export { default as tagsApi } from "./tags";
 export { default as graphApi } from "./graph";
 export { default as qaApi } from "./qa";
 export { default as searchApi } from "./search";

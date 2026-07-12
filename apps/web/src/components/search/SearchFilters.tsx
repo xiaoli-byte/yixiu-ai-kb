@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 export type SearchFiltersValue = Pick<
   SearchListQuery,
-  "fileType" | "categoryId" | "tagId" | "permissionScope" | "updateTimeRange"
+  "fileType" | "categoryId" | "permissionScope" | "updateTimeRange"
 >;
 
 interface SearchFiltersProps {
@@ -83,7 +83,7 @@ export function SearchFilters({
           label="文档分类"
           value={value.categoryId ?? ""}
           options={CATEGORIES}
-          onChange={(categoryId) => onChange({ categoryId: categoryId || undefined, tagId: undefined })}
+          onChange={(categoryId) => onChange({ categoryId: categoryId || undefined })}
         />
         <FilterSelect
           label="权限范围"

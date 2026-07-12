@@ -39,7 +39,6 @@ type ListOptions = {
   q?: string;
   status?: string;
   folderId?: string;
-  tags?: string[] | string;
   fileType?: string;
   permissionScope?: string;
   uploaderId?: string;
@@ -94,17 +93,6 @@ export class DocumentsService {
       filters.push(`d.folder_id = ${addValue(opts.folderId)}`);
     }
 
-    const tagIds = this.normalizeTagIds(opts.tags);
-    if (tagIds.length > 0) {
-      filters.push(
-        `EXISTS (
-          SELECT 1
-          FROM document_tags dt_filter
-          WHERE dt_filter.document_id = d.id
-            AND dt_filter.tag_id = ANY(${addValue(tagIds)}::text[])
-        )`,
-      );
-    }
     if (opts.fileType) filters.push(`d.mime ILIKE ${addValue(`%${opts.fileType}%`)}`);
     if (opts.permissionScope) filters.push(`d.permission_scope = ${addValue(opts.permissionScope)}`);
     if (opts.uploaderId) filters.push(`d.owner_id = ${addValue(opts.uploaderId)}`);
@@ -115,14 +103,15 @@ export class DocumentsService {
     if (opts.scope === "public") filters.push("d.permission_scope IN ('PUBLIC', 'COMPANY')");
     if (opts.scope === "department") filters.push("d.permission_scope = 'DEPARTMENTS'");
     if (opts.scope === "archive") {
-      filters.push("d.archived = TRUE");
+      filters.push("d.deleted_at IS NOT NULL");
     } else if (typeof opts.archived === "boolean") {
       filters.push(`d.archived = ${opts.archived ? "TRUE" : "FALSE"}`);
     } else {
       filters.push("d.archived = FALSE");
     }
 
-    const visibility = this.access.visibleDocumentWhereSql("d", actor, values.length + 1);
+    const includeDeleted = opts.scope === "archive";
+    const visibility = this.access.visibleDocumentWhereSql("d", actor, values.length + 1, includeDeleted);
     values.push(...visibility.values);
     const limitParam = addValue(opts.pageSize);
     const offsetParam = addValue((opts.page - 1) * opts.pageSize);
@@ -150,25 +139,17 @@ export class DocumentsService {
          d.deleted_at,
          d.created_at,
          d.updated_at,
-         COALESCE(
-           jsonb_agg(jsonb_build_object('id', t.id, 'name', t.name))
-             FILTER (WHERE t.id IS NOT NULL),
-           '[]'::jsonb
-         ) AS tags,
          COUNT(*) OVER()::int AS total_count
        FROM documents d
        LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
-       LEFT JOIN document_tags dt ON dt.document_id = d.id
-       LEFT JOIN tags t ON t.id = dt.tag_id
        WHERE ${whereSql}
-       GROUP BY d.id, u.name
        ORDER BY d.created_at DESC
        LIMIT ${limitParam} OFFSET ${offsetParam}`,
       values,
     );
 
     const ids = rows.map((row: any) => row.id);
-    const flags = await this.access.getAccessFlags(ids, actor);
+    const flags = await this.access.getAccessFlags(ids, actor, includeDeleted);
 
     return {
       items: rows.map((row: any) => this.mapDocumentRow(row, flags[row.id])),
@@ -185,7 +166,6 @@ export class DocumentsService {
       where: { id, tenantId: actor.tenantId, deletedAt: null } as any,
       include: {
         owner: { select: { id: true, name: true } },
-        tags: { include: { tag: true } },
       },
     });
     if (!doc) throw new NotFoundException("Document not found");
@@ -218,7 +198,6 @@ export class DocumentsService {
       aiReferenceEnabled: (doc as any).aiReferenceEnabled ?? true,
       archived: (doc as any).archived ?? false,
       deletedAt: this.toIso((doc as any).deletedAt),
-      tags: doc.tags.map((t: typeof doc.tags[number]) => ({ id: t.tag.id, name: t.tag.name })),
       createdAt: doc.createdAt.toISOString(),
       updatedAt: doc.updatedAt.toISOString(),
       errorMessage: doc.errorMessage,
@@ -622,7 +601,8 @@ export class DocumentsService {
       return;
     }
 
-    await this.access.assertDocumentAccess(documentId, this.batchAccessAction(parsed.action), actor);
+    const includeDeleted = parsed.action === "RESTORE";
+    await this.access.assertDocumentAccess(documentId, this.batchAccessAction(parsed.action), actor, includeDeleted);
     if (parsed.action === "ARCHIVE") {
       await this.prisma.document.update({
         where: { id: documentId },
@@ -633,7 +613,7 @@ export class DocumentsService {
     if (parsed.action === "RESTORE") {
       await this.prisma.document.update({
         where: { id: documentId },
-        data: { archived: false, updatedAt: new Date() } as any,
+        data: { deletedAt: null, archived: false, updatedAt: new Date() } as any,
       });
       return;
     }
@@ -776,12 +756,6 @@ export class DocumentsService {
     };
   }
 
-  private normalizeTagIds(tags?: string[] | string) {
-    if (!tags) return [];
-    if (Array.isArray(tags)) return tags.filter((tag) => tag.length > 0);
-    return tags.split(",").map((tag) => tag.trim()).filter((tag) => tag.length > 0);
-  }
-
   private mapDocumentRow(row: any, flags?: DocumentAccessFlags) {
     return {
       id: row.id,
@@ -807,7 +781,6 @@ export class DocumentsService {
       canEdit: flags?.canEdit ?? false,
       canDelete: flags?.canDelete ?? false,
       canManagePermission: flags?.canManagePermission ?? false,
-      tags: Array.isArray(row.tags) ? row.tags : [],
       createdAt: this.toIso(row.created_at ?? row.createdAt)!,
       updatedAt: this.toIso(row.updated_at ?? row.updatedAt)!,
     };

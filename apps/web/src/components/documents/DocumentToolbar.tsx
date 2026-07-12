@@ -1,6 +1,12 @@
-import { ChevronDown, FolderPlus, RefreshCw, Search, SlidersHorizontal, Upload, X } from "lucide-react";
+"use client";
+
+import { useMemo } from "react";
+import { ChevronDown, RefreshCw, Search, SlidersHorizontal, Upload, X } from "lucide-react";
 import type { DocumentPermissionScope, DocumentStatus } from "@/services/documents";
 import { cn } from "@/lib/utils";
+import { useUsers } from "@/hooks/useUsers";
+import { useDepartments } from "@/hooks/useDepartments";
+import { SearchableSelect } from "@/components/SearchableSelect";
 
 interface DocumentToolbarProps {
   query: string;
@@ -11,8 +17,6 @@ interface DocumentToolbarProps {
   departmentId: string;
   uploadedFrom: string;
   uploadedTo: string;
-  categoryId: string;
-  archivedFilter: "" | "active" | "archived";
   moreOpen: boolean;
   loading?: boolean;
   uploading?: boolean;
@@ -24,12 +28,9 @@ interface DocumentToolbarProps {
   onDepartmentIdChange: (departmentId: string) => void;
   onUploadedFromChange: (uploadedFrom: string) => void;
   onUploadedToChange: (uploadedTo: string) => void;
-  onCategoryIdChange: (categoryId: string) => void;
-  onArchivedFilterChange: (archivedFilter: "" | "active" | "archived") => void;
   onToggleMore: () => void;
   onClearFilters: () => void;
   onUploadClick: () => void;
-  onNewFolderClick: () => void;
   onRefresh: () => void;
 }
 
@@ -62,12 +63,6 @@ const PERMISSIONS: Array<{ value: DocumentPermissionScope | ""; label: string }>
   { value: "ADMIN", label: "管理员可见" },
 ];
 
-const ARCHIVED_OPTIONS: Array<{ value: "" | "active" | "archived"; label: string }> = [
-  { value: "", label: "全部归档状态" },
-  { value: "active", label: "未归档" },
-  { value: "archived", label: "已归档" },
-];
-
 export function DocumentToolbar({
   query,
   fileType,
@@ -77,8 +72,6 @@ export function DocumentToolbar({
   departmentId,
   uploadedFrom,
   uploadedTo,
-  categoryId,
-  archivedFilter,
   moreOpen,
   loading,
   uploading,
@@ -90,14 +83,27 @@ export function DocumentToolbar({
   onDepartmentIdChange,
   onUploadedFromChange,
   onUploadedToChange,
-  onCategoryIdChange,
-  onArchivedFilterChange,
   onToggleMore,
   onClearFilters,
   onUploadClick,
-  onNewFolderClick,
   onRefresh,
 }: DocumentToolbarProps) {
+  const { data: users, isLoading: usersLoading } = useUsers();
+  const { data: departments, isLoading: departmentsLoading } = useDepartments();
+
+  const userOptions = useMemo(
+    () =>
+      (users || []).map((u) => ({
+        value: u.id,
+        label: u.email ? `${u.name}（${u.email}）` : u.name,
+      })),
+    [users],
+  );
+  const departmentOptions = useMemo(
+    () => (departments || []).map((d) => ({ value: d.id, label: d.name })),
+    [departments],
+  );
+
   const hasFilters = Boolean(
     query ||
       fileType ||
@@ -106,9 +112,7 @@ export function DocumentToolbar({
       uploaderId ||
       departmentId ||
       uploadedFrom ||
-      uploadedTo ||
-      categoryId ||
-      archivedFilter,
+      uploadedTo,
   );
 
   return (
@@ -179,14 +183,6 @@ export function DocumentToolbar({
             批量上传
           </button>
           <button
-            className="inline-flex h-8 items-center gap-1.5 rounded border border-slate-200 bg-white px-3 text-[13px] font-medium text-slate-700 hover:bg-slate-50"
-            onClick={onNewFolderClick}
-            type="button"
-          >
-            <FolderPlus size={14} />
-            新建文件夹
-          </button>
-          <button
             className="grid h-8 w-8 place-items-center rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50"
             disabled={loading}
             onClick={onRefresh}
@@ -200,23 +196,19 @@ export function DocumentToolbar({
       {moreOpen && (
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded bg-slate-50 p-3 text-xs text-slate-500">
           <span className="font-medium text-slate-700">更多筛选</span>
-          <input
-            className="h-8 w-32 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
+          <SearchableSelect
             placeholder="上传人"
             value={uploaderId}
-            onChange={(event) => onUploaderIdChange(event.target.value)}
+            options={userOptions}
+            loading={usersLoading}
+            onChange={onUploaderIdChange}
           />
-          <input
-            className="h-8 w-32 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
+          <SearchableSelect
             placeholder="所属部门"
             value={departmentId}
-            onChange={(event) => onDepartmentIdChange(event.target.value)}
-          />
-          <input
-            className="h-8 w-32 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
-            placeholder="所属分类"
-            value={categoryId}
-            onChange={(event) => onCategoryIdChange(event.target.value)}
+            options={departmentOptions}
+            loading={departmentsLoading}
+            onChange={onDepartmentIdChange}
           />
           <label className="flex items-center gap-1">
             <span>上传时间</span>
@@ -234,12 +226,6 @@ export function DocumentToolbar({
               onChange={(event) => onUploadedToChange(event.target.value)}
             />
           </label>
-          <ToolbarSelect
-            label="是否归档"
-            value={archivedFilter}
-            options={ARCHIVED_OPTIONS}
-            onChange={(value) => onArchivedFilterChange(value as "" | "active" | "archived")}
-          />
         </div>
       )}
     </div>

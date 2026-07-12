@@ -13,6 +13,7 @@ import searchApi, {
   type SearchSortBy,
 } from "@/services/search";
 import type { DocumentPermissionScope } from "@/types/api";
+import { buildDocumentFileUrl } from "@/services/qa";
 import { SearchLanding, type RecommendedCategory } from "@/components/search/SearchLanding";
 import { SearchFilters, type SearchFiltersValue } from "@/components/search/SearchFilters";
 import { SearchResultsToolbar } from "@/components/search/SearchResultsToolbar";
@@ -26,7 +27,7 @@ const RECOMMENDED_CATEGORIES: RecommendedCategory[] = [
   { id: "training", label: "培训资料", target: "categoryId" },
   { id: "project", label: "项目文档", target: "categoryId" },
   { id: "technical", label: "技术方案", target: "categoryId" },
-  { id: "product", label: "产品文档", target: "tagId" },
+  { id: "product", label: "产品文档", target: "categoryId" },
 ];
 
 const REQUIRED_LABELS = [
@@ -114,7 +115,6 @@ export default function SearchPageClient() {
         params.set("updateTimeRange", updateTimeRange);
       }
       if (nextFilters.categoryId) params.set("categoryId", nextFilters.categoryId);
-      if (nextFilters.tagId) params.set("tagId", nextFilters.tagId);
       if (nextFilters.permissionScope) params.set("permissionScope", nextFilters.permissionScope);
       if (nextSort !== "relevance") params.set("sort", nextSort);
       if (nextViewMode !== "list") params.set("viewMode", nextViewMode);
@@ -164,7 +164,6 @@ export default function SearchPageClient() {
           ? nextFilters.updateTimeRange
           : undefined,
         categoryId: nextFilters.categoryId || undefined,
-        tagId: nextFilters.tagId || undefined,
         permissionScope: nextFilters.permissionScope as DocumentPermissionScope | undefined,
         sort: nextSort,
         viewMode: nextViewMode,
@@ -317,10 +316,7 @@ export default function SearchPageClient() {
 
   const handleCategorySelect = useCallback(
     (item: RecommendedCategory) => {
-      const nextFilters: SearchFiltersValue =
-        item.target === "categoryId"
-          ? { ...filters, categoryId: item.id, tagId: undefined }
-          : { ...filters, tagId: item.id, categoryId: undefined };
+      const nextFilters: SearchFiltersValue = { ...filters, categoryId: item.id };
       setInputValue(item.label);
       setKeyword(item.label);
       setFilters(nextFilters);
@@ -331,13 +327,13 @@ export default function SearchPageClient() {
 
   const openSearchHit = useCallback((hit: SearchHit) => {
     if (typeof window !== "undefined") {
-      window.open(`/api/qa/documents/${encodeURIComponent(hit.documentId)}/file`, "_blank", "noopener,noreferrer");
+      window.open(buildDocumentFileUrl(hit.documentId), "_blank", "noopener,noreferrer");
     }
   }, []);
 
   const downloadSearchHit = useCallback((hit: SearchHit) => {
     if (typeof window !== "undefined") {
-      window.open(`/api/qa/documents/${encodeURIComponent(hit.documentId)}/file`, "_blank", "noopener,noreferrer");
+      window.open(buildDocumentFileUrl(hit.documentId), "_blank", "noopener,noreferrer");
     }
   }, []);
 
@@ -349,7 +345,6 @@ export default function SearchPageClient() {
         historyItems={historyItems}
         recommendedCategories={RECOMMENDED_CATEGORIES}
         selectedCategoryId={filters.categoryId}
-        selectedTagId={filters.tagId}
         hotRange={hotRange}
         hotLoading={hotLoading}
         onInputChange={setInputValue}
@@ -480,7 +475,6 @@ function parseParams(params: Pick<URLSearchParams, "get">): ParsedSearchParams {
     fileType: params.get("fileType") || undefined,
     updateTimeRange: normalizeUpdateTimeRange(params.get("updateTimeRange")),
     categoryId: params.get("categoryId") || undefined,
-    tagId: params.get("tagId") || undefined,
     permissionScope: (params.get("permissionScope") as DocumentPermissionScope | null) || undefined,
   };
 

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Tag as TagIcon, Upload, X } from "lucide-react";
+import { FolderPlus, Loader2, Upload, X } from "lucide-react";
 import { ApiError } from "@/lib/api-client";
+import { buildDocumentFileUrl } from "@/services/qa";
 import documentsApi, {
   type DocumentBatchAction,
   type DocumentBatchUploadResult,
@@ -12,11 +13,9 @@ import documentsApi, {
   type DocumentPermissionScope,
   type DocumentPermissionUpdateRequest,
   type DocumentStatus,
-  type DocumentTag,
 } from "@/services/documents";
 import foldersApi from "@/services/folders";
-import tagsApi from "@/services/tags";
-import type { Folder, Tag } from "@/types/api";
+import type { Folder } from "@/types/api";
 import FolderTagManager from "@/components/FolderTagManager";
 import MarkdownPreviewModal from "@/components/MarkdownPreviewModal";
 import PdfViewerModal from "@/components/PdfViewerModal";
@@ -24,6 +23,7 @@ import { BatchActionBar } from "@/components/documents/BatchActionBar";
 import { DocumentScopeNav, type DocumentScope } from "@/components/documents/DocumentScopeNav";
 import { DocumentTable } from "@/components/documents/DocumentTable";
 import { DocumentToolbar } from "@/components/documents/DocumentToolbar";
+import { FolderTree } from "@/components/documents/FolderTree";
 import { PermissionModal, type PermissionModalTarget } from "@/components/documents/PermissionModal";
 import { formatBytes } from "@/lib/utils";
 import { mergeUploadFiles, uploadFileKey } from "./uploadSelection";
@@ -84,8 +84,6 @@ export default function DocumentsPage() {
   const [departmentId, setDepartmentId] = useState("");
   const [uploadedFrom, setUploadedFrom] = useState("");
   const [uploadedTo, setUploadedTo] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [archivedFilter, setArchivedFilter] = useState<"" | "active" | "archived">("");
   const [moreOpen, setMoreOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -95,7 +93,8 @@ export default function DocumentsPage() {
   const [permissionSaving, setPermissionSaving] = useState(false);
 
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
+  const [foldersLoading, setFoldersLoading] = useState(false);
+  const [folderId, setFolderId] = useState<string | null>(null);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [showManager, setShowManager] = useState(false);
@@ -110,29 +109,52 @@ export default function DocumentsPage() {
       mine: "我的文档",
       public: "公共文档",
       department: "部门文档",
-      archive: "文档归档",
+      archive: "回收站",
       all: "全部文档",
     };
     return map[scope] || "文档管理";
   }, [scope]);
 
   const fetchFolders = useCallback(async () => {
+    setFoldersLoading(true);
     try {
       const res = await foldersApi.tree();
       setFolders(res || []);
     } catch (error) {
       console.error(error);
+    } finally {
+      setFoldersLoading(false);
     }
   }, []);
 
-  const fetchTags = useCallback(async () => {
+  async function handleDeleteFolder(targetFolderId: string, folderName: string) {
+    if (!window.confirm(`确认删除文件夹「${folderName}」？文件夹下的文档将移至根目录。`)) return;
     try {
-      const res = await tagsApi.list();
-      setTags(res || []);
+      await foldersApi.remove(targetFolderId);
+      setFolderId((current) => (current === targetFolderId ? null : current));
+      await fetchFolders();
     } catch (error) {
-      console.error(error);
+      showApiError(error);
     }
-  }, []);
+  }
+
+  async function handleCreateSubfolder(parentId: string, name: string) {
+    try {
+      await foldersApi.create({ name, parentId });
+      await fetchFolders();
+    } catch (error) {
+      showApiError(error);
+    }
+  }
+
+  async function handleRenameFolder(folderId: string, newName: string) {
+    try {
+      await foldersApi.update(folderId, { name: newName });
+      await fetchFolders();
+    } catch (error) {
+      showApiError(error);
+    }
+  }
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -141,7 +163,7 @@ export default function DocumentsPage() {
         page,
         pageSize: PAGE_SIZE,
         scope,
-        archived: resolveArchivedQuery(scope, archivedFilter),
+        archived: resolveArchivedQuery(scope),
         q: query.trim() || undefined,
         fileType: fileType || undefined,
         status: status || undefined,
@@ -150,7 +172,7 @@ export default function DocumentsPage() {
         departmentId: departmentId.trim() || undefined,
         uploadedFrom: uploadedFrom || undefined,
         uploadedTo: uploadedTo || undefined,
-        tags: categoryId || undefined,
+        folderId: folderId || undefined,
       };
       const res = await documentsApi.list(listQuery);
       setDocs((res.items || []).map(normalizeDocument));
@@ -161,10 +183,9 @@ export default function DocumentsPage() {
       setLoading(false);
     }
   }, [
-    archivedFilter,
-    categoryId,
     departmentId,
     fileType,
+    folderId,
     page,
     permissionScope,
     query,
@@ -177,8 +198,7 @@ export default function DocumentsPage() {
 
   useEffect(() => {
     void fetchFolders();
-    void fetchTags();
-  }, [fetchFolders, fetchTags]);
+  }, [fetchFolders]);
 
   useEffect(() => {
     void fetchList();
@@ -257,7 +277,7 @@ export default function DocumentsPage() {
 
   function downloadDocument(doc: DocumentDto) {
     if (typeof window !== "undefined") {
-      window.open(`/api/qa/documents/${encodeURIComponent(doc.id)}/file`, "_blank", "noopener,noreferrer");
+      window.open(buildDocumentFileUrl(doc.id), "_blank", "noopener,noreferrer");
     }
   }
 
@@ -281,27 +301,21 @@ export default function DocumentsPage() {
     }
   }
 
-  async function handleEditDoc(id: string, data: { title?: string; folderId?: string | null }) {
+  async function restoreDoc(doc: DocumentDto) {
+    if (!window.confirm(`确认恢复“${doc.title}”？`)) return;
     try {
-      await documentsApi.update(id, data);
-      setEditDoc(null);
+      await documentsApi.batchDocuments({ action: "RESTORE", documentIds: [doc.id] });
       await fetchList();
     } catch (error) {
       showApiError(error);
     }
   }
 
-  async function handleAddTag(docId: string, tagId: string) {
+  async function handleEditDoc(id: string, data: { title?: string; folderId?: string | null }) {
     try {
-      await documentsApi.addTag(docId, tagId);
-    } catch (error) {
-      showApiError(error);
-    }
-  }
-
-  async function handleRemoveTag(docId: string, tagId: string) {
-    try {
-      await documentsApi.removeTag(docId, tagId);
+      await documentsApi.update(id, data);
+      setEditDoc(null);
+      await fetchList();
     } catch (error) {
       showApiError(error);
     }
@@ -359,7 +373,7 @@ export default function DocumentsPage() {
 
   async function runBatch(action: DocumentBatchAction) {
     if (selectedIds.length === 0) return;
-    if ((action === "DELETE" || action === "ARCHIVE") && !window.confirm(`确认对 ${selectedIds.length} 个文档执行该批量操作？`)) {
+    if ((action === "DELETE" || action === "ARCHIVE" || action === "RESTORE") && !window.confirm(`确认对 ${selectedIds.length} 个文档执行该批量操作？`)) {
       return;
     }
 
@@ -397,21 +411,49 @@ export default function DocumentsPage() {
       setDepartmentId("");
       setUploadedFrom("");
       setUploadedTo("");
-      setCategoryId("");
-      setArchivedFilter("");
     });
   }
 
   return (
     <div className="flex h-full min-h-0 bg-white">
-      <DocumentScopeNav
-        value={scope}
-        onChange={(nextScope) =>
-          resetToFirstPage(() => {
-            setScope(nextScope);
-          })
-        }
-      />
+      <aside className="flex w-56 shrink-0 flex-col border-r border-slate-200 bg-slate-50/80">
+        <DocumentScopeNav
+          value={scope}
+          onChange={(nextScope) =>
+            resetToFirstPage(() => {
+              setScope(nextScope);
+              setFolderId(null);
+            })
+          }
+        />
+        {scope !== "archive" && (
+          <div className="flex min-h-0 flex-1 flex-col border-t border-slate-200">
+            <div className="flex items-center justify-between px-3 pt-4 pb-2">
+              <div className="px-2 text-xs font-medium text-slate-500">文件夹</div>
+              <button
+                className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                onClick={() => setShowManager(true)}
+                title="新建文件夹"
+                type="button"
+              >
+                <FolderPlus size={14} />
+                新建文件夹
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-3 pb-4">
+              <FolderTree
+                folders={folders}
+                selectedFolderId={folderId}
+                loading={foldersLoading}
+                onSelect={(id) => resetToFirstPage(() => setFolderId(id))}
+                onDeleteFolder={handleDeleteFolder}
+                onCreateSubfolder={handleCreateSubfolder}
+                onRenameFolder={handleRenameFolder}
+              />
+            </div>
+          </div>
+        )}
+      </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex min-h-[68px] items-center justify-between border-b border-slate-200 bg-white px-6">
@@ -426,8 +468,6 @@ export default function DocumentsPage() {
 
         <DocumentToolbar
           fileType={fileType}
-          archivedFilter={archivedFilter}
-          categoryId={categoryId}
           departmentId={departmentId}
           loading={loading}
           moreOpen={moreOpen}
@@ -438,12 +478,9 @@ export default function DocumentsPage() {
           uploadedTo={uploadedTo}
           uploading={uploading}
           uploaderId={uploaderId}
-          onArchivedFilterChange={(nextArchivedFilter) => resetToFirstPage(() => setArchivedFilter(nextArchivedFilter))}
-          onCategoryIdChange={(nextCategoryId) => resetToFirstPage(() => setCategoryId(nextCategoryId))}
           onClearFilters={clearFilters}
           onDepartmentIdChange={(nextDepartmentId) => resetToFirstPage(() => setDepartmentId(nextDepartmentId))}
           onFileTypeChange={(nextFileType) => resetToFirstPage(() => setFileType(nextFileType))}
-          onNewFolderClick={() => setShowManager(true)}
           onPermissionScopeChange={(nextScope) => resetToFirstPage(() => setPermissionScope(nextScope))}
           onQueryChange={(nextQuery) => resetToFirstPage(() => setQuery(nextQuery))}
           onRefresh={() => void fetchList()}
@@ -457,12 +494,13 @@ export default function DocumentsPage() {
 
         <BatchActionBar
           selectedCount={selectedIds.length}
-          onArchive={() => void runBatch("ARCHIVE")}
+          onArchive={scope === "archive" ? undefined : () => void runBatch("ARCHIVE")}
           onClear={() => setSelectedIds([])}
           onDelete={() => void runBatch("DELETE")}
           onDownload={() => void runBatch("DOWNLOAD")}
-          onMove={() => void runBatch("MOVE")}
-          onPermissions={openBatchPermission}
+          onMove={scope === "archive" ? undefined : () => void runBatch("MOVE")}
+          onPermissions={scope === "archive" ? undefined : openBatchPermission}
+          onRestore={scope === "archive" ? () => void runBatch("RESTORE") : undefined}
         />
 
         <DocumentTable
@@ -478,9 +516,11 @@ export default function DocumentsPage() {
           onPageChange={setPage}
           onPermissions={openSinglePermission}
           onRetryParse={(doc) => void retryParse(doc)}
+          onRestore={scope === "archive" ? (doc) => void restoreDoc(doc) : undefined}
           onToggle={toggleSelected}
           onToggleAll={toggleAllVisible}
           onView={viewDocument}
+          isArchive={scope === "archive"}
         />
       </main>
 
@@ -498,10 +538,7 @@ export default function DocumentsPage() {
         <EditDocModal
           doc={editDoc}
           folders={folders}
-          tags={tags}
-          onAddTag={(tagId) => handleAddTag(editDoc.id, tagId)}
           onClose={() => setEditDoc(null)}
-          onRemoveTag={(tagId) => handleRemoveTag(editDoc.id, tagId)}
           onSave={(data) => handleEditDoc(editDoc.id, data)}
         />
       )}
@@ -518,7 +555,7 @@ export default function DocumentsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-6" onClick={() => setShowManager(false)}>
           <div className="flex max-h-[80vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-2xl" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-              <h3 className="font-semibold">管理文件夹和标签</h3>
+              <h3 className="font-semibold">管理文件夹</h3>
               <button className="grid h-7 w-7 place-items-center rounded text-slate-500 hover:bg-slate-100" onClick={() => setShowManager(false)} type="button">
                 <X size={16} />
               </button>
@@ -611,14 +648,11 @@ function normalizeDocument(doc: DocumentDto): DocumentDto {
     canEdit: raw.canEdit ?? true,
     canDelete: raw.canDelete ?? true,
     canManagePermission: raw.canManagePermission ?? true,
-    tags: raw.tags || [],
   };
 }
 
-function resolveArchivedQuery(scope: DocumentScope, archivedFilter: "" | "active" | "archived") {
+function resolveArchivedQuery(scope: DocumentScope) {
   if (scope === "archive") return true;
-  if (archivedFilter === "active") return false;
-  if (archivedFilter === "archived") return true;
   return undefined;
 }
 
@@ -799,27 +833,18 @@ function UploadModal({
 function EditDocModal({
   doc,
   folders,
-  tags,
   onClose,
   onSave,
-  onAddTag,
-  onRemoveTag,
 }: {
   doc: DocumentDto;
   folders: Folder[];
-  tags: Tag[];
   onClose: () => void;
   onSave: (data: { title?: string; folderId?: string | null }) => void;
-  onAddTag: (tagId: string) => void;
-  onRemoveTag: (tagId: string) => void;
 }) {
   const [title, setTitle] = useState(doc.title);
   const [folderId, setFolderId] = useState(doc.folderId || "");
-  const [docTags, setDocTags] = useState<DocumentTag[]>(doc.tags || []);
-  const [showTagPicker, setShowTagPicker] = useState(false);
   const [saving, setSaving] = useState(false);
   const flatFolders = flattenFolders(folders);
-  const availableTags = tags.filter((tag) => !docTags.some((docTag) => docTag.id === tag.id));
 
   async function handleSave() {
     setSaving(true);
@@ -828,18 +853,6 @@ function EditDocModal({
     } finally {
       setSaving(false);
     }
-  }
-
-  function handleAddTag(tagId: string) {
-    const tag = tags.find((item) => item.id === tagId);
-    if (!tag) return;
-    setDocTags((current) => [...current, { id: tag.id, name: tag.name }]);
-    onAddTag(tagId);
-  }
-
-  function handleRemoveTag(tagId: string) {
-    setDocTags((current) => current.filter((tag) => tag.id !== tagId));
-    onRemoveTag(tagId);
   }
 
   return (
@@ -867,48 +880,6 @@ function EditDocModal({
                 </option>
               ))}
             </select>
-          </div>
-          <div>
-            <div className="mb-1 flex items-center justify-between">
-              <label className="text-sm font-medium text-slate-700">标签</label>
-              <button className="text-xs text-brand-600 hover:underline" onClick={() => setShowTagPicker((open) => !open)} type="button">
-                {showTagPicker ? "收起" : "+ 添加标签"}
-              </button>
-            </div>
-            <div className="mb-2 flex flex-wrap gap-1">
-              {docTags.map((tag) => (
-                <span key={tag.id} className="inline-flex items-center gap-1 rounded-full bg-brand-100 px-2 py-0.5 text-xs text-brand-700">
-                  <TagIcon size={10} />
-                  {tag.name}
-                  <button className="hover:text-rose-600" onClick={() => handleRemoveTag(tag.id)} type="button">
-                    <X size={10} />
-                  </button>
-                </span>
-              ))}
-              {docTags.length === 0 && <span className="text-xs text-slate-400">暂无标签</span>}
-            </div>
-            {showTagPicker && (
-              <div className="max-h-32 overflow-y-auto rounded border border-slate-200 p-2">
-                {availableTags.length === 0 ? (
-                  <span className="text-xs text-slate-400">所有标签都已添加</span>
-                ) : (
-                  availableTags.map((tag) => (
-                    <button
-                      key={tag.id}
-                      className="w-full rounded px-2 py-1 text-left text-sm hover:bg-slate-50"
-                      onClick={() => {
-                        handleAddTag(tag.id);
-                        setShowTagPicker(false);
-                      }}
-                      type="button"
-                    >
-                      <TagIcon size={12} className="mr-1 inline text-slate-400" />
-                      {tag.name}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
           </div>
         </div>
         <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4">

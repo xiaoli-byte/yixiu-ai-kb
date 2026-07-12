@@ -81,13 +81,3 @@ export async function uploadDocument(formData: FormData): Promise<void> {
 export async function uploadDocuments(formData: FormData): Promise<DocumentBatchUploadResponse> {
   return apiClient.post<DocumentBatchUploadResponse>("/documents/batch/upload", formData);
 }
-
-// Add tag
-export async function addDocumentTag(docId: string, tagId: string): Promise<void> {
-  return apiClient.post(`/documents/${docId}/tags/${tagId}`);
-}
-
-// Remove tag
-export async function removeDocumentTag(docId: string, tagId: string): Promise<void> {
-  return apiClient.delete(`/documents/${docId}/tags/${tagId}`);
-}

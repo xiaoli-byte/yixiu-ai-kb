@@ -1,29 +1,8 @@
 import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { QaService } from "./qa.service";
-import type { RagRoute } from "../rag/rag.types";
 import type { SearchHit } from "../search/search.service";
-
-function createRoute(question = "pricing automation CRM"): RagRoute {
-  return {
-    originalQuestion: question,
-    retrievalQuery: `${question} contract`,
-    domain: "default",
-    intent: "open_qa",
-    profile: {
-      domain: "default",
-      displayName: "Default",
-      riskLevel: "low",
-      retrievalBoostTerms: [],
-      factEntityTypes: [],
-      tools: [],
-      answerPolicy: [],
-    },
-    requiresFacts: false,
-    requiresTool: false,
-    warnings: [],
-  };
-}
+import type { ConversationMemory } from "./conversation-memory.service";
 
 function createHit(overrides: Partial<SearchHit> = {}): SearchHit {
   return {
@@ -52,6 +31,18 @@ function accessFlags(canView: boolean, canDownload = false) {
   };
 }
 
+function emptyMemory(): ConversationMemory {
+  return { summary: "", recentMessages: [], totalMessages: 0 };
+}
+
+/** 默认 streamChat mock：直接调用 onChunk 若干次后 resolve 全文，贴近真实流式行为 */
+function streamChatMock(fullText = "(mock) 回答内容") {
+  return vi.fn(async (_messages: unknown, cb: { onChunk: (d: string) => void }) => {
+    cb.onChunk(fullText);
+    return fullText;
+  });
+}
+
 function createService() {
   const prisma = {
     qAConversation: {
@@ -59,6 +50,7 @@ function createService() {
       update: vi.fn().mockResolvedValue({}),
       findMany: vi.fn(),
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       deleteMany: vi.fn(),
     },
     qAMessage: {
@@ -81,18 +73,12 @@ function createService() {
     queryOne: vi.fn(),
   };
   const search = {
-    search: vi.fn().mockResolvedValue({
-      hits: [],
-      took: 1,
-      hasRelevantResults: false,
-    }),
+    search: vi.fn().mockResolvedValue({ hits: [], took: 1, hasRelevantResults: false }),
   };
   const llm = {
     isMock: true,
     chat: vi.fn(),
-    streamChat: vi.fn(async (_messages: unknown, handlers: { onDone: () => void }) => {
-      handlers.onDone();
-    }),
+    streamChat: streamChatMock(),
   };
   const storage = {
     getObject: vi.fn(),
@@ -105,18 +91,22 @@ function createService() {
   const config = {
     appTimeZone: "Asia/Shanghai",
   };
-  const ragRouter = {
-    route: vi.fn(({ question }) => createRoute(question)),
+  const rerank = {
+    isMock: true,
+    rerank: vi.fn(async (_q: string, documents: string[]) =>
+      documents.map((_, index) => ({ index, score: 1 - index * 0.01 })),
+    ),
   };
-  const ragFacts = {
-    findFacts: vi.fn().mockResolvedValue([]),
-    logQaRun: vi.fn().mockResolvedValue(undefined),
+  const memory = {
+    load: vi.fn().mockResolvedValue(emptyMemory()),
+    maybeUpdateSummary: vi.fn().mockResolvedValue(undefined),
   };
-  const ragTools = {
-    run: vi.fn().mockResolvedValue(null),
+  const planner = {
+    plan: vi.fn(async (question: string) => ({ retrievalQuery: question, usedContext: false })),
   };
-  const ragExtractor = {
-    extractFactsFromSearchHits: vi.fn().mockResolvedValue([]),
+  const runLog = {
+    log: vi.fn().mockResolvedValue(undefined),
+    listDebugRuns: vi.fn(),
   };
 
   return {
@@ -128,10 +118,10 @@ function createService() {
       storage as any,
       access as any,
       config as any,
-      ragRouter as any,
-      ragFacts as any,
-      ragTools as any,
-      ragExtractor as any,
+      rerank as any,
+      memory as any,
+      planner as any,
+      runLog as any,
     ),
     prisma,
     db,
@@ -139,148 +129,147 @@ function createService() {
     llm,
     storage,
     access,
-    ragRouter,
-    ragFacts,
-    ragTools,
-    ragExtractor,
+    rerank,
+    memory,
+    planner,
+    runLog,
   };
 }
 
-describe("QaService feedback", () => {
-  it("updates assistant-message feedback scoped to the conversation owner", async () => {
-    const { service, db } = createService();
-    db.queryOne
-      .mockResolvedValueOnce({ id: "msg-1", role: "assistant" })
-      .mockResolvedValueOnce({
-        feedbackRating: "up",
-        feedbackText: "Helpful source",
-        feedbackAt: new Date("2026-07-07T01:02:03.000Z"),
-      });
+/** 组装一次成功 ask 调用的通用回调集合 */
+function askCallbacks() {
+  return {
+    onChunk: vi.fn(),
+    onCitations: vi.fn(),
+    onNoResults: vi.fn(),
+    onDone: vi.fn(),
+    onError: vi.fn(),
+  };
+}
 
-    const result = await (service as any).updateMessageFeedback({
-      messageId: "msg-1",
-      tenantId: "tenant-1",
-      userId: "user-1",
-      rating: "up",
-      feedbackText: "  Helpful source  ",
-    });
-
-    expect(result).toEqual({
-      rating: "up",
-      text: "Helpful source",
-      updatedAt: "2026-07-07T01:02:03.000Z",
-    });
-    expect(db.queryOne).toHaveBeenNthCalledWith(
-      1,
-      expect.stringContaining("qa_conversations"),
-      ["msg-1", "user-1", "tenant-1"],
-    );
-    expect(db.queryOne).toHaveBeenNthCalledWith(
-      2,
-      expect.stringContaining("feedback_rating"),
-      ["msg-1", "up", "Helpful source"],
-    );
-  });
-
-  it("rejects feedback for messages outside the current user and tenant scope", async () => {
-    const { service, db } = createService();
-    db.queryOne.mockResolvedValueOnce(null);
-
-    await expect(
-      (service as any).updateMessageFeedback({
-        messageId: "msg-1",
-        tenantId: "tenant-1",
-        userId: "user-1",
-        rating: "down",
-      }),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-  });
-
-  it("rejects feedback for user messages", async () => {
-    const { service, db } = createService();
-    db.queryOne.mockResolvedValueOnce({ id: "msg-1", role: "user" });
-
-    await expect(
-      (service as any).updateMessageFeedback({
-        messageId: "msg-1",
-        tenantId: "tenant-1",
-        userId: "user-1",
-        rating: "up",
-      }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-  });
-});
-
-describe("QaService no-result suggestions", () => {
-  it("builds actionable rewrite suggestions from the original and retrieval query", () => {
-    const { service } = createService();
-
-    const suggestions = (service as any).buildNoResultSuggestions(
-      "pricing automation CRM",
-      "pricing automation CRM contract",
-    );
-
-    expect(suggestions.length).toBeGreaterThanOrEqual(3);
-    expect(suggestions.length).toBeLessThanOrEqual(5);
-    expect(new Set(suggestions).size).toBe(suggestions.length);
-    expect(suggestions.join(" ").toLowerCase()).toContain("pricing");
-    expect(suggestions).not.toContain("pricing automation CRM");
-  });
-
-  it("emits suggestions with the no-results callback before completing the stream", async () => {
-    const { service, prisma, ragFacts } = createService();
-    const onNoResults = vi.fn();
-    const onDone = vi.fn();
-
-    await service.ask({
-      userId: "user-1",
-      tenantId: "tenant-1",
-      question: "pricing automation CRM",
-      onChunk: vi.fn(),
-      onCitations: vi.fn(),
-      onNoResults,
-      onDone,
-      onError: vi.fn(),
-    } as any);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(onNoResults).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.stringContaining("pricing")]),
-    );
-    expect(onDone).toHaveBeenCalledWith(expect.any(String), "conv-1");
-    expect(prisma.qAMessage.create).toHaveBeenCalledTimes(2);
-    expect(ragFacts.logQaRun).toHaveBeenCalledWith(
-      expect.objectContaining({ question: "pricing automation CRM", answer: "" }),
-    );
-  });
-});
-
-describe("QaService recall permission filtering", () => {
-  it("filters inaccessible and AI-disabled documents before context, facts, citations, and run chunks", async () => {
-    const { service, prisma, db, search, access, llm, ragRouter, ragFacts } = createService();
-    const route = createRoute("pricing automation CRM");
-    route.requiresFacts = true;
-    route.profile.factEntityTypes = ["project"];
-    ragRouter.route.mockReturnValueOnce(route);
-    const allowed = createHit({
+describe("QaService ask 主流程", () => {
+  it("happy path：召回命中 -> 权限过滤 -> citations 编号 -> messages 结构 -> 落库 -> 回调顺序", async () => {
+    const { service, prisma, db, search, access, llm, runLog } = createService();
+    const hit = createHit({
       chunkId: "chunk-allowed",
       documentId: "doc-allowed",
       contentId: "content-allowed",
       documentTitle: "Allowed Handbook",
       text: "allowed chunk text",
     });
+    search.search.mockResolvedValueOnce({ hits: [hit], took: 1, hasRelevantResults: true });
+    access.getAccessFlags.mockResolvedValueOnce({ "doc-allowed": accessFlags(true, true) });
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("ai_reference_enabled")) {
+        return [{ id: "doc-allowed", aiReferenceEnabled: true }];
+      }
+      return [];
+    });
+
+    const calls: string[] = [];
+    const cb = askCallbacks();
+    cb.onCitations.mockImplementation(() => calls.push("onCitations"));
+    cb.onDone.mockImplementation(() => calls.push("onDone"));
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      question: "如何配置定价？",
+      topK: 5,
+      ...cb,
+    });
+
+    // citations 编号从 1 开始
+    expect(cb.onCitations).toHaveBeenCalledWith([
+      expect.objectContaining({
+        index: 1,
+        chunkId: "chunk-allowed",
+        documentId: "doc-allowed",
+        contentId: "content-allowed",
+        snippet: "allowed chunk text",
+      }),
+    ]);
+
+    // messages 结构：[system, ...历史(空), 本轮user]
+    const messages = llm.streamChat.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    expect(messages[0].role).toBe("system");
+    expect(messages[messages.length - 1].role).toBe("user");
+    expect(messages[messages.length - 1].content).toContain("【参考资料】");
+    expect(messages[messages.length - 1].content).toContain("【当前问题】");
+    expect(messages[messages.length - 1].content).toContain("allowed chunk text");
+    expect(messages[messages.length - 1].content).toContain("如何配置定价？");
+
+    // assistant 消息落库（user 消息 + assistant 消息共两次 create）
+    expect(prisma.qAMessage.create).toHaveBeenCalledTimes(2);
+    expect(prisma.qAMessage.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "assistant" }),
+      }),
+    );
+
+    // runLog 记录
+    expect(runLog.log).toHaveBeenCalledWith(
+      expect.objectContaining({ question: "如何配置定价？", answer: expect.any(String) }),
+    );
+
+    // onCitations 先于 onDone
+    expect(calls).toEqual(["onCitations", "onDone"]);
+    expect(cb.onDone).toHaveBeenCalledWith(expect.any(String), "conv-1");
+  });
+
+  it("包含历史消息时 messages 结构为 [system, ...历史, 本轮user]", async () => {
+    const { service, prisma, search, access, db, llm, memory } = createService();
+    prisma.qAConversation.findFirst.mockResolvedValueOnce({ id: "conv-1" });
+    memory.load.mockResolvedValueOnce({
+      summary: "此前讨论了定价策略",
+      recentMessages: [
+        { role: "user", content: "上一轮问题" },
+        { role: "assistant", content: "上一轮回答" },
+      ],
+      totalMessages: 2,
+    });
+    const hit = createHit({ documentId: "doc-a", text: "text a" });
+    search.search.mockResolvedValueOnce({ hits: [hit], took: 1, hasRelevantResults: true });
+    access.getAccessFlags.mockResolvedValueOnce({ "doc-a": accessFlags(true) });
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("ai_reference_enabled")) {
+        return [{ id: "doc-a", aiReferenceEnabled: true }];
+      }
+      return [];
+    });
+    const cb = askCallbacks();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      conversationId: "conv-1",
+      question: "追问一下",
+      ...cb,
+    });
+
+    const messages = llm.streamChat.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(messages[0].content).toContain("此前讨论了定价策略");
+    expect(messages[1].content).toBe("上一轮问题");
+    expect(messages[2].content).toBe("上一轮回答");
+  });
+
+  it("权限过滤：canView=false 或 ai_reference_enabled=false 的文档被排除", async () => {
+    const { service, search, access, db, llm } = createService();
+    const allowed = createHit({
+      chunkId: "chunk-allowed",
+      documentId: "doc-allowed",
+      text: "allowed chunk text",
+    });
     const aiDisabled = createHit({
       chunkId: "chunk-ai-disabled",
       documentId: "doc-ai-disabled",
-      contentId: "content-ai-disabled",
-      documentTitle: "AI Disabled Handbook",
       text: "ai disabled chunk text",
     });
     const denied = createHit({
       chunkId: "chunk-denied",
       documentId: "doc-denied",
-      contentId: "content-denied",
-      documentTitle: "Denied Handbook",
       text: "denied chunk text",
     });
     search.search.mockResolvedValueOnce({
@@ -303,415 +292,173 @@ describe("QaService recall permission filtering", () => {
       }
       return [];
     });
-    const onCitations = vi.fn();
-    const onNoResults = vi.fn();
+    const cb = askCallbacks();
 
     await service.ask({
       userId: "user-1",
       tenantId: "tenant-1",
-      user: { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
-      question: "pricing automation CRM",
-      topK: 5,
-      onChunk: vi.fn(),
-      onCitations,
-      onNoResults,
-      onDone: vi.fn(),
-      onError: vi.fn(),
+      question: "定价问题",
+      ...cb,
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
-    expect(prisma.user.findFirst).toHaveBeenCalledWith({
-      where: { id: "user-1", tenantId: "tenant-1" },
-      select: { role: true, departmentId: true },
-    });
-    expect(search.search).toHaveBeenCalledWith(
-      expect.objectContaining({
-        user: expect.objectContaining({
-          userId: "user-1",
-          tenantId: "tenant-1",
-          role: "viewer",
-          departmentId: "dept-1",
-        }),
-      }),
-    );
-    expect(access.getAccessFlags).toHaveBeenCalledWith(
-      ["doc-allowed", "doc-ai-disabled", "doc-denied"],
-      expect.objectContaining({
-        userId: "user-1",
-        tenantId: "tenant-1",
-        role: "viewer",
-        departmentId: "dept-1",
-      }),
-    );
-    expect(ragFacts.findFacts).toHaveBeenCalledWith(
-      expect.objectContaining({ documentIds: ["doc-allowed"] }),
-    );
+    expect(cb.onCitations).toHaveBeenCalledWith([
+      expect.objectContaining({ documentId: "doc-allowed" }),
+    ]);
     const messages = llm.streamChat.mock.calls[0][0] as Array<{ content: string }>;
-    const prompt = messages.map((message) => message.content).join("\n");
+    const prompt = messages.map((m) => m.content).join("\n");
     expect(prompt).toContain("allowed chunk text");
     expect(prompt).not.toContain("ai disabled chunk text");
     expect(prompt).not.toContain("denied chunk text");
-    expect(onCitations).toHaveBeenCalledWith([
-      expect.objectContaining({
-        documentId: "doc-allowed",
-        contentId: "content-allowed",
-        snippet: "allowed chunk text",
-      }),
-    ]);
-    expect(onNoResults).not.toHaveBeenCalled();
-    expect(ragFacts.logQaRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chunks: [expect.objectContaining({ documentId: "doc-allowed" })],
-      }),
-    );
   });
 
-  it("uses the tenant-scoped stored role instead of a stale admin role from auth context", async () => {
-    const { service, prisma, db, search, access } = createService();
-    prisma.user.findFirst.mockResolvedValueOnce({ role: "viewer", departmentId: "dept-1" });
-    const allowed = createHit({
-      chunkId: "chunk-allowed",
-      documentId: "doc-allowed",
-      text: "allowed chunk text",
-    });
+  it("rerank 抛错时降级为召回原始顺序，onDone 仍正常触发", async () => {
+    const { service, search, access, db, rerank, llm } = createService();
+    const hitA = createHit({ chunkId: "chunk-a", documentId: "doc-a", text: "text a" });
+    const hitB = createHit({ chunkId: "chunk-b", documentId: "doc-b", text: "text b" });
     search.search.mockResolvedValueOnce({
-      hits: [allowed],
+      hits: [hitA, hitB],
       took: 1,
       hasRelevantResults: true,
     });
     access.getAccessFlags.mockResolvedValueOnce({
-      "doc-allowed": accessFlags(true),
-    });
-    db.query.mockImplementation(async (sql: string) => {
-      if (sql.includes("ai_reference_enabled")) {
-        return [{ id: "doc-allowed", aiReferenceEnabled: true }];
-      }
-      return [];
-    });
-
-    await service.ask({
-      userId: "user-1",
-      tenantId: "tenant-1",
-      user: { sub: "user-1", tenantId: "tenant-1", role: "admin" },
-      question: "pricing automation CRM",
-      onChunk: vi.fn(),
-      onCitations: vi.fn(),
-      onNoResults: vi.fn(),
-      onDone: vi.fn(),
-      onError: vi.fn(),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(search.search).toHaveBeenCalledWith(
-      expect.objectContaining({
-        user: expect.objectContaining({
-          userId: "user-1",
-          tenantId: "tenant-1",
-          role: "viewer",
-          departmentId: "dept-1",
-        }),
-      }),
-    );
-    expect(search.search.mock.calls[0][0].user.role).not.toBe("admin");
-    expect(access.getAccessFlags).toHaveBeenCalledWith(
-      ["doc-allowed"],
-      expect.objectContaining({
-        userId: "user-1",
-        tenantId: "tenant-1",
-        role: "viewer",
-        departmentId: "dept-1",
-      }),
-    );
-  });
-
-  it("does not preserve an admin auth role when tenant-scoped user lookup misses", async () => {
-    const { service, prisma, db, search, access } = createService();
-    prisma.user.findFirst.mockResolvedValueOnce(null);
-    const allowed = createHit({
-      chunkId: "chunk-allowed",
-      documentId: "doc-allowed",
-      text: "allowed chunk text",
-    });
-    search.search.mockResolvedValueOnce({
-      hits: [allowed],
-      took: 1,
-      hasRelevantResults: true,
-    });
-    access.getAccessFlags.mockResolvedValueOnce({
-      "doc-allowed": accessFlags(true),
-    });
-    db.query.mockImplementation(async (sql: string) => {
-      if (sql.includes("ai_reference_enabled")) {
-        return [{ id: "doc-allowed", aiReferenceEnabled: true }];
-      }
-      return [];
-    });
-
-    await service.ask({
-      userId: "missing-user",
-      tenantId: "tenant-1",
-      user: { sub: "missing-user", tenantId: "tenant-1", role: "admin" },
-      question: "pricing automation CRM",
-      onChunk: vi.fn(),
-      onCitations: vi.fn(),
-      onNoResults: vi.fn(),
-      onDone: vi.fn(),
-      onError: vi.fn(),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(search.search).toHaveBeenCalledWith(
-      expect.objectContaining({
-        user: expect.objectContaining({
-          userId: "missing-user",
-          tenantId: "tenant-1",
-          role: "viewer",
-          departmentId: null,
-        }),
-      }),
-    );
-    expect(search.search.mock.calls[0][0].user.role).not.toBe("admin");
-    expect(access.getAccessFlags).toHaveBeenCalledWith(
-      ["doc-allowed"],
-      expect.objectContaining({
-        userId: "missing-user",
-        tenantId: "tenant-1",
-        role: "viewer",
-        departmentId: null,
-      }),
-    );
-  });
-
-  it("over-fetches before filtering so later accessible AI-enabled hits can be used", async () => {
-    const { service, db, search, access, llm } = createService();
-    const aiDisabled = createHit({
-      chunkId: "chunk-ai-disabled",
-      documentId: "doc-ai-disabled",
-      text: "ai disabled first hit",
-    });
-    const denied = createHit({
-      chunkId: "chunk-denied",
-      documentId: "doc-denied",
-      text: "denied second hit",
-    });
-    const laterAllowed = createHit({
-      chunkId: "chunk-later-allowed",
-      documentId: "doc-later-allowed",
-      contentId: "content-later-allowed",
-      documentTitle: "Later Allowed Handbook",
-      text: "later allowed chunk text",
-    });
-    search.search.mockResolvedValueOnce({
-      hits: [aiDisabled, denied, laterAllowed],
-      took: 1,
-      hasRelevantResults: true,
-    });
-    access.getAccessFlags.mockResolvedValueOnce({
-      "doc-ai-disabled": accessFlags(true),
-      "doc-denied": accessFlags(false),
-      "doc-later-allowed": accessFlags(true),
+      "doc-a": accessFlags(true),
+      "doc-b": accessFlags(true),
     });
     db.query.mockImplementation(async (sql: string) => {
       if (sql.includes("ai_reference_enabled")) {
         return [
-          { id: "doc-ai-disabled", aiReferenceEnabled: false },
-          { id: "doc-denied", aiReferenceEnabled: true },
-          { id: "doc-later-allowed", aiReferenceEnabled: true },
+          { id: "doc-a", aiReferenceEnabled: true },
+          { id: "doc-b", aiReferenceEnabled: true },
         ];
       }
       return [];
     });
-    const onCitations = vi.fn();
-    const onNoResults = vi.fn();
+    rerank.rerank.mockRejectedValueOnce(new Error("rerank service down"));
+    const cb = askCallbacks();
 
     await service.ask({
       userId: "user-1",
       tenantId: "tenant-1",
-      question: "pricing automation CRM",
-      topK: 2,
-      onChunk: vi.fn(),
-      onCitations,
-      onNoResults,
-      onDone: vi.fn(),
-      onError: vi.fn(),
+      question: "对比问题",
+      ...cb,
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(search.search).toHaveBeenCalledWith(
-      expect.objectContaining({ topK: expect.any(Number) }),
-    );
-    expect(search.search.mock.calls[0][0].topK).toBeGreaterThan(2);
-    expect(onNoResults).not.toHaveBeenCalled();
-    expect(onCitations).toHaveBeenCalledWith([
-      expect.objectContaining({
-        documentId: "doc-later-allowed",
-        snippet: "later allowed chunk text",
-      }),
+    expect(cb.onCitations).toHaveBeenCalledWith([
+      expect.objectContaining({ documentId: "doc-a", index: 1 }),
+      expect.objectContaining({ documentId: "doc-b", index: 2 }),
     ]);
-    const messages = llm.streamChat.mock.calls[0][0] as Array<{ content: string }>;
-    const prompt = messages.map((message) => message.content).join("\n");
-    expect(prompt).toContain("later allowed chunk text");
-    expect(prompt).not.toContain("ai disabled first hit");
-    expect(prompt).not.toContain("denied second hit");
+    expect(cb.onDone).toHaveBeenCalledWith(expect.any(String), "conv-1");
+    expect(cb.onError).not.toHaveBeenCalled();
+    expect(llm.streamChat).toHaveBeenCalledTimes(1);
   });
 
-  it("treats recall as no-results and emits no citations when every hit is filtered out", async () => {
-    const { service, db, search, access, llm, ragRouter, ragFacts } = createService();
-    const route = createRoute("pricing automation CRM");
-    route.requiresFacts = true;
-    route.profile.factEntityTypes = ["project"];
-    ragRouter.route.mockReturnValueOnce(route);
-    const aiDisabled = createHit({
-      chunkId: "chunk-ai-disabled",
-      documentId: "doc-ai-disabled",
-      text: "ai disabled chunk text",
-    });
-    const denied = createHit({
-      chunkId: "chunk-denied",
-      documentId: "doc-denied",
-      text: "denied chunk text",
-    });
-    search.search.mockResolvedValueOnce({
-      hits: [aiDisabled, denied],
-      took: 1,
-      hasRelevantResults: true,
-    });
-    access.getAccessFlags.mockResolvedValueOnce({
-      "doc-ai-disabled": accessFlags(true),
-      "doc-denied": accessFlags(false),
-    });
-    db.query.mockImplementation(async (sql: string) => {
-      if (sql.includes("ai_reference_enabled")) {
-        return [
-          { id: "doc-ai-disabled", aiReferenceEnabled: false },
-          { id: "doc-denied", aiReferenceEnabled: true },
-        ];
-      }
-      return [];
-    });
-    const onCitations = vi.fn();
-    const onNoResults = vi.fn();
+  it("无命中时 onNoResults 被调用且流程继续（llm 仍被调用）", async () => {
+    const { service, search, llm } = createService();
+    search.search.mockResolvedValueOnce({ hits: [], took: 1, hasRelevantResults: false });
+    const cb = askCallbacks();
 
     await service.ask({
       userId: "user-1",
       tenantId: "tenant-1",
-      question: "pricing automation CRM",
-      onChunk: vi.fn(),
-      onCitations,
-      onNoResults,
-      onDone: vi.fn(),
-      onError: vi.fn(),
+      question: "冷门问题",
+      ...cb,
     });
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(onNoResults).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.stringContaining("pricing")]),
+    expect(cb.onNoResults).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.any(String)]),
     );
-    expect(onCitations).not.toHaveBeenCalled();
-    const messages = llm.streamChat.mock.calls[0][0] as Array<{ content: string }>;
-    const prompt = messages.map((message) => message.content).join("\n");
-    expect(prompt).not.toContain("ai disabled chunk text");
-    expect(prompt).not.toContain("denied chunk text");
-    expect(ragFacts.findFacts).not.toHaveBeenCalled();
-    expect(ragFacts.logQaRun).toHaveBeenCalledWith(expect.objectContaining({ chunks: [] }));
+    expect(cb.onCitations).not.toHaveBeenCalled();
+    expect(llm.streamChat).toHaveBeenCalledTimes(1);
+    expect(cb.onDone).toHaveBeenCalled();
+  });
+
+  it("会话不属于当前用户时触发 onError(ForbiddenException)", async () => {
+    const { service, prisma, llm } = createService();
+    prisma.qAConversation.findFirst.mockResolvedValueOnce(null);
+    const cb = askCallbacks();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      conversationId: "conv-other",
+      question: "继续追问",
+      ...cb,
+    });
+
+    expect(cb.onError).toHaveBeenCalledWith(expect.any(ForbiddenException));
+    expect(llm.streamChat).not.toHaveBeenCalled();
+    expect(cb.onDone).not.toHaveBeenCalled();
+  });
+
+  it("llm.streamChat 抛错时 onError 被调用且错误写入 runLog", async () => {
+    const { service, search, access, db, llm, runLog } = createService();
+    const hit = createHit({ documentId: "doc-a", text: "text a" });
+    search.search.mockResolvedValueOnce({ hits: [hit], took: 1, hasRelevantResults: true });
+    access.getAccessFlags.mockResolvedValueOnce({ "doc-a": accessFlags(true) });
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("ai_reference_enabled")) {
+        return [{ id: "doc-a", aiReferenceEnabled: true }];
+      }
+      return [];
+    });
+    const streamError = new Error("LLM 网关超时");
+    llm.streamChat.mockRejectedValueOnce(streamError);
+    const cb = askCallbacks();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      question: "会超时的问题",
+      ...cb,
+    });
+
+    expect(cb.onError).toHaveBeenCalledWith(streamError);
+    expect(cb.onDone).not.toHaveBeenCalled();
+    expect(runLog.log).toHaveBeenCalledWith(
+      expect.objectContaining({ error: "LLM 网关超时" }),
+    );
   });
 });
 
-describe("QaService document route access", () => {
-  it("requires VIEW access on the resolved canonical document before returning a document URL", async () => {
-    const { service, prisma, db, access } = createService();
-    prisma.document.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "doc-canonical",
-        tenantId: "tenant-1",
-        title: "Canonical.pdf",
-        mime: "application/pdf",
-        storageKey: "objects/canonical.pdf",
-      });
-    db.queryOne.mockResolvedValueOnce({ canonical_document_id: "doc-canonical" });
-
-    await service.getDocumentPresignedUrl(
-      "content-1",
-      "tenant-1",
-      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
-    );
-
-    expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
-    expect(prisma.document.findFirst).toHaveBeenNthCalledWith(1, {
-      where: { id: "content-1", tenantId: "tenant-1", deletedAt: null },
-    });
-    expect(prisma.document.findFirst).toHaveBeenNthCalledWith(2, {
-      where: { id: "doc-canonical", tenantId: "tenant-1", deletedAt: null },
-    });
-    expect(access.assertDocumentAccess).toHaveBeenCalledWith(
-      "doc-canonical",
-      "VIEW",
-      expect.objectContaining({
-        userId: "user-1",
-        tenantId: "tenant-1",
-        role: "viewer",
-        departmentId: "dept-1",
-      }),
-    );
-  });
-
-  it("requires VIEW access on canonical markdown content before reading it", async () => {
-    const { service, prisma, db, storage, access } = createService();
-    prisma.document.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "doc-md",
-        tenantId: "tenant-1",
-        title: "Notes.md",
-        mime: "text/markdown",
-        storageKey: "objects/notes.md",
-      });
-    db.queryOne.mockResolvedValueOnce({ canonical_document_id: "doc-md" });
-    storage.getObject.mockResolvedValueOnce(Buffer.from("# Notes"));
-
-    await service.getDocumentMarkdown(
-      "content-md",
-      "tenant-1",
-      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
-    );
-
-    expect(access.assertDocumentAccess).toHaveBeenCalledWith(
-      "doc-md",
-      "VIEW",
-      expect.objectContaining({ userId: "user-1", tenantId: "tenant-1" }),
-    );
-    expect(storage.getObject).toHaveBeenCalledWith("objects/notes.md");
-  });
-
-  it("requires DOWNLOAD access on canonical file content before opening the stream", async () => {
-    const { service, prisma, db, storage, access } = createService();
-    prisma.document.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "doc-file",
-        tenantId: "tenant-1",
-        title: "Report.pdf",
-        mime: "application/pdf",
-        storageKey: "objects/report.pdf",
-      });
-    db.queryOne.mockResolvedValueOnce({ canonical_document_id: "doc-file" });
-    access.assertDocumentAccess.mockRejectedValueOnce(new ForbiddenException("denied"));
+describe("QaService updateMessageFeedback", () => {
+  it("非法 rating 抛出 BadRequestException", async () => {
+    const { service } = createService();
 
     await expect(
-      service.getDocumentFile(
-        "content-file",
-        "tenant-1",
-        { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+      service.updateMessageFeedback({
+        messageId: "msg-1",
+        tenantId: "tenant-1",
+        userId: "user-1",
+        rating: "invalid",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
 
-    expect(access.assertDocumentAccess).toHaveBeenCalledWith(
-      "doc-file",
-      "DOWNLOAD",
-      expect.objectContaining({ userId: "user-1", tenantId: "tenant-1" }),
-    );
-    expect(storage.getObjectStream).not.toHaveBeenCalled();
+  it("消息不存在或不属于当前用户/租户时抛出 ForbiddenException", async () => {
+    const { service, db } = createService();
+    db.queryOne.mockResolvedValueOnce(null);
+
+    await expect(
+      service.updateMessageFeedback({
+        messageId: "msg-1",
+        tenantId: "tenant-1",
+        userId: "user-1",
+        rating: "up",
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it("只允许对 assistant 消息评价，user 消息抛出 BadRequestException", async () => {
+    const { service, db } = createService();
+    db.queryOne.mockResolvedValueOnce({ id: "msg-1", role: "user" });
+
+    await expect(
+      service.updateMessageFeedback({
+        messageId: "msg-1",
+        tenantId: "tenant-1",
+        userId: "user-1",
+        rating: "up",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

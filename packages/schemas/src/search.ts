@@ -11,7 +11,6 @@ export const SearchQuery = z.object({
   mode: SearchMode.default("hybrid"),
   sortBy: SearchSortBy.default("relevance"),
   topK: z.coerce.number().int().positive().max(50).default(10),
-  tags: z.array(z.string()).optional(),
   // 服务间检索（ai-call → /search/retrieve）可按知识库过滤。ai-knowledge 以 folder 为
   // 知识库维度：knowledgeBaseId 映射到 documents.folder_id。留空则租户级全库检索。
   // 若该 id 在本租户不存在对应 folder，检索会优雅忽略此过滤（退回租户级），不返回空。
@@ -44,7 +43,6 @@ export const SearchListQuery = z.object({
   q: z.string().optional(),
   fileType: z.string().optional(),
   categoryId: z.string().optional(),
-  tagId: z.string().optional(),
   permissionScope: z.enum(["PRIVATE", "MEMBERS", "DEPARTMENTS", "COMPANY", "PUBLIC", "ADMIN"]).optional(),
   updateTimeRange: z.enum(["all", "today", "7d", "30d", "custom"]).default("all"),
   parseStatus: z.string().optional(),

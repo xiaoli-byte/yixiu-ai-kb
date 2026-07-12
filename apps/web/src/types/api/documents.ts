@@ -19,11 +19,6 @@ export type PermissionSubjectType = "USER" | "DEPARTMENT" | "ROLE";
 export type PermissionMode = "APPEND" | "OVERWRITE" | "DIRECT";
 export type DocumentBatchAction = "DOWNLOAD" | "DELETE" | "MOVE" | "ARCHIVE" | "RESTORE";
 
-export interface DocumentTag {
-  id: string;
-  name: string;
-}
-
 export interface DocumentPermissionEntry {
   subjectType: PermissionSubjectType;
   subjectId: string;
@@ -120,7 +115,6 @@ export interface DocumentDto {
   canEdit: boolean;
   canDelete: boolean;
   canManagePermission: boolean;
-  tags: DocumentTag[];
   createdAt: string;
   updatedAt: string;
 }
@@ -150,7 +144,6 @@ export interface DocumentListQuery {
   q?: string;
   status?: DocumentStatus;
   folderId?: string;
-  tags?: string;
   fileType?: string;
   permissionScope?: DocumentPermissionScope;
   uploaderId?: string;
