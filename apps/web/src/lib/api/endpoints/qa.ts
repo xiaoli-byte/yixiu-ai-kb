@@ -70,6 +70,21 @@ export function buildDocumentFileUrl(documentId: string): string {
   return `${apiBaseUrl}/qa/documents/${encodeURIComponent(documentId)}/file`;
 }
 
+// 文档原文件附件下载地址（与预览共用鉴权路由）
+export function buildDocumentDownloadUrl(documentId: string): string {
+  return `${buildDocumentFileUrl(documentId)}?download=1`;
+}
+
+export async function getDocumentFileBlob(
+  documentId: string,
+  options: { download?: boolean } = {},
+): Promise<Blob> {
+  return apiClient.getBlob(
+    `/qa/documents/${encodeURIComponent(documentId)}/file`,
+    { query: options.download ? { download: 1 } : undefined },
+  );
+}
+
 // 获取文档 Markdown 内容
 export async function getDocumentMarkdown(
   documentId: string

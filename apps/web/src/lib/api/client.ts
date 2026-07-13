@@ -162,6 +162,60 @@ async function clientFetch<T>(
   return handleResponse<T>(response);
 }
 
+// Binary document responses use the same authentication and refresh semantics
+// as JSON API calls. Opening a protected API URL directly in a new window would
+// lose a Bearer token stored by the SPA, so file consumers should use this path
+// and open the returned Blob URL instead.
+async function clientFetchBlob(
+  url: string,
+  config: Omit<RequestConfig, "body"> = {},
+): Promise<Blob> {
+  const { method = "GET", headers, signal } = config;
+  const finalHeaders: Record<string, string> = {
+    Accept: "*/*",
+    ...headers,
+  };
+
+  const token = getStoredToken(TOKEN_KEY);
+  if (token) finalHeaders.Authorization = `Bearer ${token}`;
+
+  let response = await fetch(url, {
+    method,
+    headers: finalHeaders,
+    credentials: "include",
+    signal,
+  });
+
+  if (response.status === 401) {
+    if (token) {
+      const newToken = await refreshAndRetry();
+      if (newToken) {
+        finalHeaders.Authorization = `Bearer ${newToken}`;
+        response = await fetch(url, {
+          method,
+          headers: finalHeaders,
+          credentials: "include",
+          signal,
+        });
+      } else {
+        clearAuth();
+        if (typeof window !== "undefined") window.location.href = `${WEB_BASE_PATH}/login`;
+        throw new TokenExpiredError();
+      }
+    } else if (useAuth.getState().accessToken === COOKIE_SESSION) {
+      useAuth.getState().logout();
+      redirectToFederatedLogin();
+      throw new TokenExpiredError();
+    }
+  }
+
+  if (!response.ok) {
+    await handleResponse<never>(response);
+    throw new ApiError(response.status, `请求失败 (${response.status})`);
+  }
+  return response.blob();
+}
+
 // 处理响应
 async function handleResponse<T>(response: Response): Promise<T> {
   // 429 Too Many Requests
@@ -262,6 +316,9 @@ export const apiClient = {
 
   delete: <T>(url: string, config?: Omit<RequestConfig, "method" | "body">) =>
     clientFetch<T>(buildUrl(url, config?.query), { ...config, method: "DELETE" }),
+
+  getBlob: (url: string, config?: Omit<RequestConfig, "method" | "body">) =>
+    clientFetchBlob(buildUrl(url, config?.query), { ...config, method: "GET" }),
 };
 
 // 兼容旧 API - 导出统一的 api 函数

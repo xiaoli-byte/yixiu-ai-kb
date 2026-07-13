@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   X,
   FileText,
@@ -16,18 +16,23 @@ import remarkGfm from "remark-gfm";
 interface MarkdownPreviewModalProps {
   documentId: string;
   title: string;
+  canDownload?: boolean;
   onClose: () => void;
 }
 
 export default function MarkdownPreviewModal({
   documentId,
   title,
+  canDownload = true,
   onClose,
 }: MarkdownPreviewModalProps) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const titleId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     qaApi.getDocumentMarkdown(documentId)
@@ -35,6 +40,32 @@ export default function MarkdownPreviewModal({
       .catch((e) => setError(e?.message || "获取文件失败"))
       .finally(() => setLoading(false));
   }, [documentId]);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "Tab" && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   const handleCopy = () => {
     if (content) {
@@ -58,20 +89,21 @@ export default function MarkdownPreviewModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex" onClick={onClose}>
+    <div aria-labelledby={titleId} aria-modal="true" className="fixed inset-0 z-[100] flex" onClick={onClose} role="dialog">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
         className="relative m-auto w-full max-w-4xl h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
+        ref={dialogRef}
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-3 border-b border-slate-200 shrink-0">
           <FileText size={18} className="text-blue-500 shrink-0" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold truncate">{title}</div>
+            <div className="text-sm font-semibold truncate" id={titleId}>{title}</div>
             <div className="text-xs text-slate-400">Markdown 文档</div>
           </div>
-          {content && (
+          {content && canDownload && (
             <>
               <button
                 onClick={handleCopy}
@@ -89,7 +121,7 @@ export default function MarkdownPreviewModal({
               </button>
             </>
           )}
-          <button className="btn-ghost p-1.5" onClick={onClose}>
+          <button aria-label="关闭 Markdown 预览" className="btn-ghost p-1.5" onClick={onClose} ref={closeButtonRef}>
             <X size={18} />
           </button>
         </div>

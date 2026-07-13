@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { apiClient } from "../client";
-import { buildMessageFeedbackPayload, updateMessageFeedback } from "./qa";
+import {
+  buildDocumentDownloadUrl,
+  buildDocumentFileUrl,
+  buildMessageFeedbackPayload,
+  getDocumentFileBlob,
+  updateMessageFeedback,
+} from "./qa";
 
 vi.mock("../client", () => ({
   apiBaseUrl: "/api",
   apiClient: {
     delete: vi.fn(),
     get: vi.fn(),
+    getBlob: vi.fn(),
     patch: vi.fn(),
   },
 }));
@@ -38,5 +45,33 @@ describe("QA feedback endpoint", () => {
         feedbackText: "no longer needed",
       }),
     ).toEqual({ rating: "none" });
+  });
+});
+
+describe("QA document file URLs", () => {
+  it("builds distinct preview and attachment download URLs", () => {
+    expect(buildDocumentFileUrl("文档/id")).toBe(
+      "/api/qa/documents/%E6%96%87%E6%A1%A3%2Fid/file",
+    );
+    expect(buildDocumentDownloadUrl("文档/id")).toBe(
+      "/api/qa/documents/%E6%96%87%E6%A1%A3%2Fid/file?download=1",
+    );
+  });
+
+  it("fetches protected preview and download files through the authenticated client", async () => {
+    const blob = new Blob(["pdf"]);
+    vi.mocked(apiClient.getBlob).mockResolvedValue(blob);
+
+    await expect(getDocumentFileBlob("文档/id")).resolves.toBe(blob);
+    expect(apiClient.getBlob).toHaveBeenLastCalledWith(
+      "/qa/documents/%E6%96%87%E6%A1%A3%2Fid/file",
+      { query: undefined },
+    );
+
+    await getDocumentFileBlob("文档/id", { download: true });
+    expect(apiClient.getBlob).toHaveBeenLastCalledWith(
+      "/qa/documents/%E6%96%87%E6%A1%A3%2Fid/file",
+      { query: { download: 1 } },
+    );
   });
 });

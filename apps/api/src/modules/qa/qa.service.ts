@@ -8,6 +8,7 @@ import { StorageService } from "../storage/storage.service";
 import { RerankService } from "../embeddings/rerank.service";
 import {
   DocumentAccessService,
+  type DocumentAction,
   type DocumentUserContext,
 } from "../documents/document-access.service";
 import { ConversationMemoryService, ConversationMemory } from "./conversation-memory.service";
@@ -212,12 +213,17 @@ export class QaService {
     };
   }
 
-  async getDocumentFile(docId: string, tenantId: string, user: QaUserInput) {
+  async getDocumentFile(
+    docId: string,
+    tenantId: string,
+    user: QaUserInput,
+    action: Extract<DocumentAction, "VIEW" | "DOWNLOAD"> = "VIEW",
+  ) {
     const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
     if (doc) {
       await this.access.assertDocumentAccess(
         doc.id,
-        "DOWNLOAD",
+        action,
         await this.buildDocumentUserContext(tenantId, user),
       );
     }

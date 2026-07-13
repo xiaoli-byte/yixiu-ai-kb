@@ -17,6 +17,17 @@ import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import type { Response } from "express";
 
+function buildContentDisposition(title: string, disposition: "inline" | "attachment") {
+  const fallbackTitle = title
+    .replace(/[^\x20-\x7e]/g, "_")
+    .replace(/["\\/]/g, "_") || "document";
+  const encodedTitle = encodeURIComponent(title).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+
+  return `${disposition}; filename="${fallbackTitle}"; filename*=UTF-8''${encodedTitle}`;
+}
+
 @UseGuards(AuthGuard("jwt"))
 @Controller("qa")
 export class QaController {
@@ -89,16 +100,22 @@ export class QaController {
   async getDocumentFile(
     @Param("id") id: string,
     @CurrentUser() user: any,
+    @Query("download") download: string | undefined,
     @Res() res: Response,
   ) {
     const tenantId = this.db.tenantId!;
-    const file = await this.qa.getDocumentFile(id, tenantId, user);
-    const encodedTitle = encodeURIComponent(file.title);
+    const disposition = download === "1" ? "attachment" : "inline";
+    const file = await this.qa.getDocumentFile(
+      id,
+      tenantId,
+      user,
+      disposition === "attachment" ? "DOWNLOAD" : "VIEW",
+    );
 
     res.setHeader("Content-Type", file.mime);
     res.setHeader(
       "Content-Disposition",
-      `inline; filename="${encodedTitle}"; filename*=UTF-8''${encodedTitle}`,
+      buildContentDisposition(file.title, disposition),
     );
     res.setHeader("Cache-Control", "private, no-store");
 

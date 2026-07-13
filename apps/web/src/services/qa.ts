@@ -8,6 +8,8 @@ import {
   getAskEndpoint as askEndpointApi,
   updateMessageFeedback as updateMessageFeedbackApi,
   buildDocumentFileUrl as buildDocumentFileUrlApi,
+  buildDocumentDownloadUrl as buildDocumentDownloadUrlApi,
+  getDocumentFileBlob as getDocumentFileBlobApi,
 } from "@/lib/api/endpoints/qa";
 
 // 类型
@@ -34,6 +36,8 @@ export const getDebugRuns = debugRunsApi;
 export const getAskEndpoint = askEndpointApi;
 export const updateMessageFeedback = updateMessageFeedbackApi;
 export const buildDocumentFileUrl = buildDocumentFileUrlApi;
+export const buildDocumentDownloadUrl = buildDocumentDownloadUrlApi;
+export const getDocumentFileBlob = getDocumentFileBlobApi;
 
 // 默认导出
 const qaApi = {
@@ -46,5 +50,7 @@ const qaApi = {
   getAskEndpoint,
   updateMessageFeedback,
   buildDocumentFileUrl,
+  buildDocumentDownloadUrl,
+  getDocumentFileBlob,
 };
 export default qaApi;
