@@ -224,7 +224,7 @@ export default function QaPage() {
           >
             <ChevronLeft size={16} className={cn("transition-transform", sidebarOpen ? "" : "rotate-180")} />
           </button>
-          <MessageSquare size={18} className="text-brand-600" />
+          <MessageSquare size={18} className="text-ai" />
           <span className="font-semibold">AI 知识问答</span>
           {activeId && (
             <span
@@ -250,22 +250,24 @@ export default function QaPage() {
           </div>
         </header>
 
-        {/* 消息区域 */}
-        <div ref={scrollerRef} className="flex-1 overflow-y-auto px-4 py-6 space-y-5 bg-slate-50">
+        {/* 消息 + 输入：同一滚动容器，输入框 sticky 贴底，滚动条贯穿全高 */}
+        <div ref={scrollerRef} className="flex-1 overflow-y-auto bg-white">
+          <div className="flex min-h-full flex-col">
+            <div className="flex-1 px-4 py-6 space-y-5">
           {messages.length === 0 && !streaming && (
             <div className="text-center py-24">
-              <div className="w-16 h-16 bg-brand-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                <MessageSquare size={28} className="text-brand-500" />
+              <div className="w-16 h-16 bg-ai-surface rounded-2xl flex items-center justify-center mx-auto mb-4">
+                <MessageSquare size={28} className="text-ai" />
               </div>
               <p className="text-base font-medium text-slate-700">向知识库提问</p>
-              <p className="text-sm text-slate-400 mt-1 max-w-sm mx-auto">
+              <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">
                 我会基于您上传的文档，用 RAG 检索 + 大模型生成的方式为您解答
               </p>
             </div>
           )}
 
           {error && (
-            <div className="max-w-2xl mx-auto bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600">
+            <div className="max-w-3xl mx-auto bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-600">
               {error}
             </div>
           )}
@@ -288,17 +290,19 @@ export default function QaPage() {
             />
           )}
 
-          <RewriteSuggestions suggestions={suggestions} disabled={streaming} onPick={(s) => void send(s)} />
-        </div>
+              <RewriteSuggestions suggestions={suggestions} disabled={streaming} onPick={(s) => void send(s)} />
+            </div>
 
-        <ChatInput
-          value={input}
-          onChange={setInput}
-          onSend={() => void send()}
-          onStop={stop}
-          streaming={streaming}
-          textareaRef={textareaRef}
-        />
+            <ChatInput
+              value={input}
+              onChange={setInput}
+              onSend={() => void send()}
+              onStop={stop}
+              streaming={streaming}
+              textareaRef={textareaRef}
+            />
+          </div>
+        </div>
 
         {/* PDF 预览弹窗 */}
         {pdfDoc && (
