@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useAuth, COOKIE_SESSION } from "@/lib/store";
 import { apiClient } from "@/lib/api/client";
+import { FeedbackHost } from "@/components/ui/feedback";
 import { Role, ROLE_LABELS } from "@/types/permissions";
 import { cn } from "@/lib/utils";
 
@@ -207,6 +208,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
       <main className="flex-1 min-w-0">{children}</main>
+      {/* 全局 Toast 与确认弹窗宿主 */}
+      <FeedbackHost />
     </div>
   );
 }

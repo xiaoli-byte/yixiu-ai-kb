@@ -1,7 +1,8 @@
-import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
+import { SlidersHorizontal, X } from "lucide-react";
 import type { DocumentPermissionScope } from "@/types/api";
 import type { SearchListQuery, SearchMode } from "@/services/search";
 import { cn } from "@/lib/utils";
+import { Select } from "@/components/ui/Select";
 
 export type SearchFiltersValue = Pick<SearchListQuery, "fileType" | "categoryId" | "permissionScope" | "updateTimeRange"> & {
   knowledgeBaseId?: string;
@@ -62,5 +63,5 @@ export function SearchFilters({ id, value, expanded, onChange, onClear, onToggle
 function isMeaningfulFilterValue(value: unknown) { return Boolean(value && value !== "all"); }
 
 function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: SearchFilterOption[]; onChange: (value: string) => void }) {
-  return <label className="relative inline-flex h-10 items-center"><span className="sr-only">{label}</span><select aria-label={label} className="h-10 max-w-[14rem] appearance-none rounded border border-slate-200 bg-white pl-3 pr-8 text-xs text-slate-800 outline-none transition hover:bg-slate-50 focus:border-brand-500 focus:ring-2 focus:ring-brand-100" value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}</select><ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2 text-slate-400" size={13} /></label>;
+  return <Select ariaLabel={label} size="md" value={value} options={options} onChange={onChange} triggerWidthClassName="max-w-[14rem]" />;
 }

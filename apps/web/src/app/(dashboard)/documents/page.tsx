@@ -26,6 +26,7 @@ import { DocumentToolbar } from "@/components/documents/DocumentToolbar";
 import { FolderTree } from "@/components/documents/FolderTree";
 import { PermissionModal, type PermissionModalTarget } from "@/components/documents/PermissionModal";
 import { formatBytes } from "@/lib/utils";
+import { toast, confirmDialog } from "@/components/ui/feedback";
 import { mergeUploadFiles, uploadFileKey } from "./uploadSelection";
 
 const SUPPORTED_UPLOAD_ACCEPT = [
@@ -131,7 +132,13 @@ export default function DocumentsPage() {
   }, []);
 
   async function handleDeleteFolder(targetFolderId: string, folderName: string) {
-    if (!window.confirm(`确认删除文件夹「${folderName}」？文件夹下的文档将移至根目录。`)) return;
+    const ok = await confirmDialog({
+      title: `删除文件夹「${folderName}」？`,
+      description: "文件夹下的文档将移至根目录。",
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await foldersApi.remove(targetFolderId);
       setFolderId((current) => (current === targetFolderId ? null : current));
@@ -285,7 +292,12 @@ export default function DocumentsPage() {
   }
 
   async function removeDoc(doc: DocumentDto) {
-    if (!window.confirm(`确认删除「${doc.title}」？`)) return;
+    const ok = await confirmDialog({
+      title: `删除「${doc.title}」？`,
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await documentsApi.remove(doc.id);
       setSelectedIds((ids) => ids.filter((id) => id !== doc.id));
@@ -305,7 +317,11 @@ export default function DocumentsPage() {
   }
 
   async function restoreDoc(doc: DocumentDto) {
-    if (!window.confirm(`确认恢复“${doc.title}”？`)) return;
+    const ok = await confirmDialog({
+      title: `恢复「${doc.title}」？`,
+      confirmText: "恢复",
+    });
+    if (!ok) return;
     try {
       await documentsApi.batchDocuments({ action: "RESTORE", documentIds: [doc.id] });
       await fetchList();
@@ -376,8 +392,14 @@ export default function DocumentsPage() {
 
   async function runBatch(action: DocumentBatchAction) {
     if (selectedIds.length === 0) return;
-    if ((action === "DELETE" || action === "ARCHIVE" || action === "RESTORE") && !window.confirm(`确认对 ${selectedIds.length} 个文档执行该批量操作？`)) {
-      return;
+    if (action === "DELETE" || action === "ARCHIVE" || action === "RESTORE") {
+      const actionLabel = action === "DELETE" ? "删除" : action === "ARCHIVE" ? "归档" : "恢复";
+      const ok = await confirmDialog({
+        title: `批量${actionLabel} ${selectedIds.length} 个文档？`,
+        confirmText: actionLabel,
+        danger: action === "DELETE",
+      });
+      if (!ok) return;
     }
 
     const payload: { action: DocumentBatchAction; documentIds: string[]; folderId?: string } = {
@@ -395,7 +417,9 @@ export default function DocumentsPage() {
       const result = await documentsApi.batchDocuments(payload);
       const failed = result.results.filter((item) => !item.ok);
       if (failed.length > 0) {
-        window.alert(`批量操作完成，${failed.length} 个文档失败`);
+        toast.error(`批量操作完成，${failed.length} 个文档失败`);
+      } else {
+        toast.success("批量操作完成");
       }
       setSelectedIds([]);
       await fetchList();
@@ -664,10 +688,10 @@ function resolveArchivedQuery(scope: DocumentScope) {
 
 function showApiError(error: unknown) {
   if (error instanceof ApiError) {
-    window.alert(error.message);
+    toast.error(error.message);
     return;
   }
-  window.alert("操作失败，请稍后重试");
+  toast.error("操作失败，请稍后重试");
 }
 
 function flattenFolders(folders: Folder[], depth = 0): Array<Folder & { depth: number }> {
