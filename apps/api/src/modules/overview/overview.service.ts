@@ -66,12 +66,14 @@ export class OverviewService {
         [tenantId],
       ),
       this.db.queryOne<{ active: number }>(
+        // 时间过滤下推各分支，union 只取 user_id，避免 timestamptz/timestamp 混用
         `SELECT COUNT(DISTINCT user_id)::int AS active FROM (
-           SELECT user_id, created_at FROM search_events WHERE tenant_id = $1 AND user_id IS NOT NULL
+           SELECT user_id FROM search_events
+             WHERE tenant_id = $1 AND user_id IS NOT NULL AND created_at >= now() - interval '7 days'
            UNION ALL
-           SELECT user_id, created_at FROM qa_run_logs WHERE tenant_id = $1 AND user_id IS NOT NULL
-         ) e
-         WHERE created_at >= now() - interval '7 days'`,
+           SELECT user_id FROM qa_run_logs
+             WHERE tenant_id = $1 AND user_id IS NOT NULL AND created_at >= now() - interval '7 days'
+         ) e`,
         [tenantId],
       ),
     ]);
