@@ -724,10 +724,7 @@ export class GraphService {
     }
     if (opts.categoryId) {
       params.push(opts.categoryId);
-      where.push(`EXISTS (
-        SELECT 1 FROM document_tags dt
-        WHERE dt.document_id = d.id AND dt.tag_id = $${params.length}
-      )`);
+      where.push(`d.folder_id = $${params.length}`);
     }
     const keyword = opts.keyword?.trim();
     if (keyword && (opts.nodeType === "all" || opts.nodeType === "Document")) {
@@ -736,18 +733,20 @@ export class GraphService {
         d.title ILIKE $${params.length}
         OR EXISTS (
           SELECT 1
-          FROM document_tags dt
-          JOIN tags t ON t.id = dt.tag_id
-          WHERE dt.document_id = d.id AND t.name ILIKE $${params.length}
+          FROM folders f
+          WHERE f.id = d.folder_id
+            AND f.tenant_id = d.tenant_id
+            AND f.name ILIKE $${params.length}
         )
       )`);
     } else if (keyword && opts.nodeType === "Tag") {
       params.push(`%${keyword}%`);
       where.push(`EXISTS (
         SELECT 1
-        FROM document_tags dt
-        JOIN tags t ON t.id = dt.tag_id
-        WHERE dt.document_id = d.id AND t.name ILIKE $${params.length}
+        FROM folders f
+        WHERE f.id = d.folder_id
+          AND f.tenant_id = d.tenant_id
+          AND f.name ILIKE $${params.length}
       )`);
     }
 
@@ -902,14 +901,13 @@ export class GraphService {
                 dc.created_at,
                 dc.updated_at,
                 COALESCE(
-                  jsonb_agg(DISTINCT jsonb_build_object('id', t.id, 'name', t.name))
-                    FILTER (WHERE t.id IS NOT NULL),
+                  jsonb_agg(DISTINCT jsonb_build_object('id', f.id, 'name', f.name))
+                    FILTER (WHERE f.id IS NOT NULL),
                   '[]'::jsonb
                 ) AS categories
          FROM document_contents dc
          LEFT JOIN documents d ON d.content_id = dc.id
-         LEFT JOIN document_tags dt ON dt.document_id = d.id
-         LEFT JOIN tags t ON t.id = dt.tag_id
+         LEFT JOIN folders f ON f.id = d.folder_id AND f.tenant_id = d.tenant_id
          WHERE dc.tenant_id = $1 AND dc.id = ANY($2::text[])
          GROUP BY dc.id
          UNION ALL
@@ -926,13 +924,12 @@ export class GraphService {
                 d.created_at,
                 d.updated_at,
                 COALESCE(
-                  jsonb_agg(DISTINCT jsonb_build_object('id', t.id, 'name', t.name))
-                    FILTER (WHERE t.id IS NOT NULL),
+                  jsonb_agg(DISTINCT jsonb_build_object('id', f.id, 'name', f.name))
+                    FILTER (WHERE f.id IS NOT NULL),
                   '[]'::jsonb
                 ) AS categories
          FROM documents d
-         LEFT JOIN document_tags dt ON dt.document_id = d.id
-         LEFT JOIN tags t ON t.id = dt.tag_id
+         LEFT JOIN folders f ON f.id = d.folder_id AND f.tenant_id = d.tenant_id
          WHERE d.tenant_id = $1
            AND d.content_id IS NULL
            AND d.id = ANY($2::text[])
@@ -990,20 +987,19 @@ export class GraphService {
     ];
     if (opts.categoryId) {
       params.push(opts.categoryId);
-      where.push(`t.id = $${params.length}`);
+      where.push(`f.id = $${params.length}`);
     }
     if (opts.keyword && opts.nodeType === "Tag") {
       params.push(`%${opts.keyword}%`);
-      where.push(`t.name ILIKE $${params.length}`);
+      where.push(`f.name ILIKE $${params.length}`);
     }
     const tagLinks = await this.db.query<any>(
       `SELECT DISTINCT COALESCE(d.content_id, d.id) AS content_id,
-              t.id AS tag_id,
-              t.name,
-              t.type
+              f.id AS tag_id,
+              f.name,
+              'FOLDER' AS type
        FROM documents d
-       JOIN document_tags dt ON dt.document_id = d.id
-       JOIN tags t ON t.id = dt.tag_id
+       JOIN folders f ON f.id = d.folder_id AND f.tenant_id = d.tenant_id
        WHERE ${where.join(" AND ")}`,
       params,
     );
@@ -1054,13 +1050,13 @@ export class GraphService {
       document_count: string | number;
     }>(
       `
-        SELECT t.id, t.name, t.type, COUNT(DISTINCT COALESCE(d.content_id, d.id)) AS document_count
-        FROM tags t
-        JOIN document_tags dt ON dt.tag_id = t.id
-        JOIN documents d ON d.id = dt.document_id
+        SELECT f.id, f.name, 'FOLDER' AS type,
+               COUNT(DISTINCT COALESCE(d.content_id, d.id)) AS document_count
+        FROM folders f
+        JOIN documents d ON d.folder_id = f.id
         WHERE d.tenant_id = $1
-        GROUP BY t.id, t.name, t.type
-        ORDER BY document_count DESC, t.name ASC
+        GROUP BY f.id, f.name
+        ORDER BY document_count DESC, f.name ASC
       `,
       [tenantId],
     );
@@ -1068,7 +1064,7 @@ export class GraphService {
     return rows.map((row) => ({
       id: row.id,
       name: row.name,
-      type: row.type,
+      type: row.type || "FOLDER",
       documentCount: Number(row.document_count) || 0,
     }));
   }
@@ -1081,13 +1077,12 @@ export class GraphService {
               dc.status,
               dc.updated_at,
               COALESCE(
-                array_agg(DISTINCT t.name) FILTER (WHERE t.name IS NOT NULL),
+                array_agg(DISTINCT f.name) FILTER (WHERE f.name IS NOT NULL),
                 ARRAY[]::text[]
               ) AS category_names
        FROM document_contents dc
        LEFT JOIN documents d ON d.content_id = dc.id
-       LEFT JOIN document_tags dt ON dt.document_id = d.id
-       LEFT JOIN tags t ON t.id = dt.tag_id
+       LEFT JOIN folders f ON f.id = d.folder_id AND f.tenant_id = d.tenant_id
        WHERE dc.tenant_id = $1
        GROUP BY dc.id
        ORDER BY dc.updated_at DESC
