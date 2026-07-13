@@ -71,11 +71,13 @@
 
 | 服务            | 说明        | 必填  |
 | ------------- | --------- | --- |
-| DashScope API | 通义千问 API  | 是   |
+| DashScope API | 通义千问 LLM / Embedding / gte-rerank 重排 | 是   |
 | PostgreSQL 16 | 主数据库 + 向量 | 是   |
 | Neo4j 5.x     | 图数据库      | 是   |
 | Redis 7       | 缓存和队列     | 是   |
 | MinIO         | S3 兼容存储   | 是   |
+| PaddleOCR 服务 | 图片/扫描 PDF OCR（`services/paddleocr-server`，`pnpm ocr:start` 启动，端口 10096） | 解析图片/扫描件时需要 |
+| FunASR 服务    | 音频/视频 ASR 转写（HTTP，端口 10095） | 解析音视频时需要 |
 
 
 ---
@@ -110,6 +112,22 @@ BOOTSTRAP_ADMIN_EMAIL=admin@yourcompany.com
 BOOTSTRAP_ADMIN_PASSWORD=CHANGE_ME_use_a_strong_unique_admin_password
 ```
 
+**前端 API 地址（构建期变量，必填、无回退值）：**
+
+`NEXT_PUBLIC_API_URL` 是 Next.js 构建期内联变量，前端代码在缺失时会直接抛错。两种运行形态取值不同：
+
+```env
+# 形态一：独立部署（8888 根路径直接访问）
+NEXT_PUBLIC_API_URL=/api
+
+# 形态二：作为 ai-call 微前端（Multi-Zones）内嵌运行 —— 当前开发环境的实际形态
+WEB_BASE_PATH=/knowledge
+NEXT_PUBLIC_API_URL=/knowledge/api
+API_INTERNAL_URL=http://127.0.0.1:9999/api
+```
+
+> zone 形态下所有页面与 `/_next` 资源挂在 `/knowledge` 前缀下，由 ai-call 网关将 `/knowledge/api/*` 分流到本项目 API。这三个都是构建期生效的变量，修改后必须重新构建/重启 Web（`next dev` 需重启，生产需重新 build）。前端代码中禁止硬编码 `/api` 前缀，统一从 `@/lib/api/client` 导出的 `apiBaseUrl` 取值，否则 zone 模式下必 404。详见 ai-call 仓 `docs/knowledge-base-microfrontend.md`。
+
 ### 2.3 启动基础设施
 
 ```bash
@@ -126,6 +144,15 @@ docker compose ps
 # ai-knowledge-neo4j-1    running
 # ai-knowledge-postgres-1  running
 ```
+
+开发环境宿主机端口从根目录 `.env` 插值，默认避开常见占用端口：
+
+| 服务 | 宿主机端口 | 说明 |
+| --- | --- | --- |
+| PostgreSQL | 56432 | 避开 5432 与部分 Windows 保留的 55432，`DATABASE_URL` 必须与其一致 |
+| Redis | 6399 | 避开 6379/6380 |
+| MinIO / Console | 9100 / 9101 | 避开 9000/9001 |
+| Neo4j HTTP / Bolt | 7474 / 7687 | 默认 |
 
 ### 2.4 初始化数据库
 
@@ -147,6 +174,11 @@ pnpm seed
 ```
 
 > 知识图谱治理能力依赖 PostgreSQL 迁移 `0005_graph_governance_views` 和 Neo4j 迁移 `0002_graph_governance`；检索历史和问答反馈依赖 PostgreSQL 迁移 `0006_search_qa_enhancements`。升级已有环境时，先执行 `pnpm --filter @ai-knowledge/api prisma:migrate:deploy`，再执行 `pnpm graph:migrate`，确保图谱治理、检索历史和问答反馈相关字段/索引已就绪。
+
+> **升级到含标签下线 / QA 重写版本的注意事项**：
+> - `0010_drop_tags` 会**永久删除** `tags` / `document_tags` 表及其数据（标签功能已整体下线，图谱分类改用文件夹）。若历史标签数据仍有价值，升级前先备份这两张表。
+> - `0011_qa_conversation_rolling_summary` 为 `qa_conversations` 增加滚动摘要字段（`summary`、`summary_message_count`），QA 长会话记忆依赖它。
+> - QA 检索重排使用 DashScope gte-rerank，默认模型 `gte-rerank-v2`（`DASHSCOPE_RERANK_MODEL` 可覆盖）；无法调用时自动降级为召回原序，不阻塞问答。联调无 Key 环境可设 `DASHSCOPE_LLM_MOCK` / `DASHSCOPE_EMBED_MOCK` / `DASHSCOPE_RERANK_MOCK=true`。
 
 > 数据库业务结构变更必须先更新 `apps/api/src/database/prisma/schema.prisma`，再通过 Prisma Migrate 生成/部署迁移。禁止使用散落 SQL 脚本、手动 `psql` 或 `prisma db push` 修改业务表结构；Prisma Migrate 生成的迁移 SQL 除外。
 > Neo4j 约束和索引通过 `apps/api/src/database/neo4j/migrations` 下的 Cypher migrations 管理；API/worker 启动时不负责图数据库 schema 变更。
@@ -225,9 +257,11 @@ pnpm --filter @ai-knowledge/api build
 pnpm --filter @ai-knowledge/web build
 ```
 
+> Web 构建必须提供 `NEXT_PUBLIC_API_URL`（构建期内联，缺失时前端运行时直接抛错）。Docker 部署时由 `docker-compose.prod.yml` 的 build args 固定为 `/api`（独立部署形态）；若生产也要以 ai-call 微前端形态运行，需把 build args 改为 `WEB_BASE_PATH=/knowledge`、`NEXT_PUBLIC_API_URL=/knowledge/api` 后重新构建镜像。
+
 ### 3.3 配置生产环境变量
 
-创建 `.env.production` 文件：
+创建 `.env.production` 文件（与当前实际生产配置结构一致；密钥请替换为真实强随机值）：
 
 ```env
 # ===== 应用基础配置 =====
@@ -235,6 +269,8 @@ NODE_ENV=production
 API_PORT=9999
 WEB_PORT=8888
 LOG_LEVEL=info
+# 注意：NEXT_PUBLIC_API_URL / WEB_BASE_PATH 不在此文件配置——
+# 它们是构建期变量，由 docker-compose.prod.yml 的 web build args 提供（默认 /api）
 
 # ===== PostgreSQL =====
 POSTGRES_USER=ai_knowledge
@@ -248,26 +284,26 @@ REDIS_PORT=6379
 # ===== MinIO =====
 MINIO_ROOT_USER=minio_admin
 MINIO_ROOT_PASSWORD=CHANGE_ME_use_a_strong_minio_root_password
-MINIO_ENDPOINT=minio
-MINIO_PUBLIC_URL=https://your-domain.com/minio
 MINIO_PORT=9000
 MINIO_CONSOLE_PORT=9001
+MINIO_PUBLIC_URL=http://localhost/minio
 S3_BUCKET=ai-knowledge-docs
 S3_REGION=us-east-1
 S3_ACCESS_KEY=minio_admin
 S3_SECRET_KEY=CHANGE_ME_use_a_strong_s3_secret_key
 
 # ===== Neo4j =====
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=CHANGE_ME_use_a_strong_neo4j_password
+# 当前生产约定：neo4j.conf 已关闭 auth，此处留空让驱动以无认证方式连接；
+# 不要写占位假密码（会触发 Neo4j 5.x 配置校验失败）。若开启 auth 则填真实密码。
+NEO4J_PASSWORD=
 
 # ===== 鉴权 =====
 JWT_ACCESS_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
 JWT_REFRESH_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
-BOOTSTRAP_ADMIN_EMAIL=admin@demo.com
+BOOTSTRAP_ADMIN_EMAIL=admin@yourcompany.com
 BOOTSTRAP_ADMIN_PASSWORD=CHANGE_ME_use_a_strong_unique_admin_password
 BOOTSTRAP_ADMIN_NAME=Super Admin
-BOOTSTRAP_TENANT_ID=tenant_demo
+BOOTSTRAP_TENANT_ID=tenant_yourcompany
 
 # ===== DashScope (必填) =====
 DASHSCOPE_API_KEY=CHANGE_ME_set_real_dashscope_api_key
@@ -277,6 +313,9 @@ DASHSCOPE_EMBED_MODEL=text-embedding-v4
 DASHSCOPE_EMBED_DIM=1024
 DASHSCOPE_LLM_MOCK=false
 DASHSCOPE_EMBED_MOCK=false
+# QA 检索重排（compose 显式注入且 env 校验要求非空，必须配置；MOCK=true 时保持召回原序）
+DASHSCOPE_RERANK_MODEL=gte-rerank-v2
+DASHSCOPE_RERANK_MOCK=false
 
 # ===== 检索参数 =====
 SEARCH_BM25_TOPK=50
@@ -286,7 +325,25 @@ SEARCH_RRF_FINAL_TOPK=10
 CHUNK_SIZE=500
 CHUNK_OVERLAP=50
 EMBED_BATCH_SIZE=10
+
+# ===== 多模态解析 =====
+PADDLEOCR_HTTP_URL=http://localhost:10096/ocr
+PADDLEOCR_PORT=10096
+PADDLEOCR_LANG=ch
+PADDLEOCR_UPLOAD_FIELD=image
+PADDLEOCR_LANG_FIELD=lang
+PADDLEOCR_TIMEOUT_MS=600000
+PADDLEOCR_USE_ANGLE_CLS=false
+OCR_PDF_RENDER_SCALE=2
+OCR_PDF_MAX_PAGES=0
+DOCUMENT_UPLOAD_MAX_MB=100
+# FunASR（音视频转写）：compose 会把该变量注入 API/worker 且 env 校验要求非空，
+# 即使暂未部署 FunASR 也保留占位地址，仅在实际解析音视频时才会真正调用
+FUNASR_HTTP_URL=http://localhost:10095
+FUNASR_TIMEOUT_MS=600000
 ```
+
+> **生产启动校验**：`NODE_ENV=production` 时 API 会拒绝使用占位/示例值启动，`DATABASE_URL`、`JWT_ACCESS_SECRET`、`JWT_REFRESH_SECRET`、`S3_SECRET_KEY`、`BOOTSTRAP_ADMIN_PASSWORD` 等必须是真实值，请务必替换所有 `CHANGE_ME_*`。
 
 ### 3.4 启动生产服务
 
@@ -378,57 +435,21 @@ ai-knowledge/
 cp .env.example .env.production
 ```
 
-**必须配置项：**
+必须配置项与 [3.3 配置生产环境变量](#33-配置生产环境变量) 完全一致，按该节模板填写（注意生产启动校验会拒绝 `CHANGE_ME_*` 占位值）。
 
-```env
-# ===== 应用基础配置 =====
-NODE_ENV=production
-API_PORT=9999
-WEB_PORT=8888
+**Web 镜像的构建期参数**（不走 `.env.production`）：
 
-# ===== PostgreSQL =====
-POSTGRES_USER=ai_knowledge
-POSTGRES_PASSWORD=CHANGE_ME_use_a_strong_postgres_password
-POSTGRES_DB=ai_knowledge
-POSTGRES_PORT=55432
+`docker-compose.prod.yml` 中 web 服务通过 build args 固定前端形态，默认为独立部署：
 
-# ===== Redis =====
-REDIS_PORT=6379
-
-# ===== MinIO =====
-MINIO_ROOT_USER=minio_admin
-MINIO_ROOT_PASSWORD=CHANGE_ME_use_a_strong_minio_root_password
-S3_BUCKET=ai-knowledge-docs
-S3_ACCESS_KEY=minio_admin
-S3_SECRET_KEY=CHANGE_ME_use_a_strong_s3_secret_key
-
-# ===== Neo4j =====
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=CHANGE_ME_use_a_strong_neo4j_password
-
-# ===== 鉴权 =====
-JWT_ACCESS_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
-JWT_REFRESH_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
-BOOTSTRAP_ADMIN_EMAIL=admin@demo.com
-BOOTSTRAP_ADMIN_PASSWORD=CHANGE_ME_use_a_strong_unique_admin_password
-BOOTSTRAP_ADMIN_NAME=Super Admin
-BOOTSTRAP_TENANT_ID=tenant_demo
-
-# ===== DashScope (必填) =====
-DASHSCOPE_API_KEY=CHANGE_ME_set_real_dashscope_api_key
-DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
-DASHSCOPE_LLM_MODEL=qwen-plus
-DASHSCOPE_EMBED_MODEL=text-embedding-v4
-DASHSCOPE_EMBED_DIM=1024
-
-# ===== 检索参数 =====
-SEARCH_BM25_TOPK=50
-SEARCH_VECTOR_TOPK=50
-SEARCH_RRF_K=60
-SEARCH_RRF_FINAL_TOPK=10
-CHUNK_SIZE=500
-CHUNK_OVERLAP=50
+```yaml
+  web:
+    build:
+      args:
+        NEXT_PUBLIC_API_URL: /api
+        API_INTERNAL_URL: http://api:9999/api
 ```
+
+若要以 ai-call 微前端（zone）形态部署，需把 `NEXT_PUBLIC_API_URL` 改为 `/knowledge/api`，并在 `apps/web/Dockerfile` 补充 `WEB_BASE_PATH` 的 `ARG`/`ENV` 透传（当前 Dockerfile 只声明了 `NEXT_PUBLIC_API_URL` / `API_INTERNAL_URL` 两个构建参数），再重新 `docker compose build web`——这些是构建期内联变量，改运行时环境变量不生效。
 
 ### 4.3 启动 Docker 部署
 
@@ -681,7 +702,13 @@ kubectl logs -f deployment/api -n ai-knowledge
 | `NODE_ENV` | 运行环境 | development | - |
 | `API_PORT` | API 端口 | 9999 | - |
 | `WEB_PORT` | 前端端口 | 8888 | - |
-| `LOG_LEVEL` | 日志级别 | info | - |
+| `WEB_ORIGIN` | Web 对外源（CORS 等） | http://localhost:8888 | 是 |
+| `LOG_LEVEL` | 日志级别 | info | 是 |
+| `APP_TIME_ZONE` | AI 问答"现在/今天"等时间计算时区 | Asia/Shanghai | 是 |
+| `NEXT_PUBLIC_API_URL` | 前端 API 前缀（**构建期内联，无回退值**；独立部署 `/api`，zone 形态 `/knowledge/api`） | - | 是 |
+| `WEB_BASE_PATH` | zone 形态页面/资源前缀（构建期），如 `/knowledge` | 空（独立部署） | - |
+| `API_INTERNAL_URL` | Web 服务端（SSR/rewrites）直连 API 的内网地址 | - | - |
+| `NEXT_PUBLIC_DEMO_MODE` | 登录页预填演示账号 | false | - |
 | `DATABASE_URL` | PostgreSQL 连接地址（API 使用） | - | 是 |
 | `POSTGRES_USER` | PostgreSQL 用户名 | ai_knowledge | - |
 | `POSTGRES_PASSWORD` | PostgreSQL 密码 | - | 是 |
@@ -713,6 +740,10 @@ kubectl logs -f deployment/api -n ai-knowledge
 | `DASHSCOPE_EMBED_DIM` | Embedding 维度 | 1024 | - |
 | `DASHSCOPE_LLM_MOCK` | 模拟 LLM 调用 | false | - |
 | `DASHSCOPE_EMBED_MOCK` | 模拟 Embedding 调用 | false | - |
+| `DASHSCOPE_RERANK_MODEL` | QA 检索重排模型 | gte-rerank-v2 | - |
+| `DASHSCOPE_RERANK_MOCK` | 模拟重排（保持召回原序） | false | - |
+| `SERVICE_API_TOKEN` | 服务间调用令牌（如 ai-call → `/search/retrieve`）；生产必配，开发缺省放行但仍强制租户隔离 | - | 生产是 |
+| `SERVICE_API_REQUIRE_SIGNATURE` | 服务间调用是否要求时间戳签名（防重放） | false | - |
 | `CHUNK_SIZE` | 切片大小 | 500 | - |
 | `CHUNK_OVERLAP` | 切片重叠 | 50 | - |
 | `SEARCH_BM25_TOPK` | BM25 召回数 | 50 | - |
@@ -720,6 +751,14 @@ kubectl logs -f deployment/api -n ai-knowledge
 | `SEARCH_RRF_K` | RRF K 值 | 60 | - |
 | `SEARCH_RRF_FINAL_TOPK` | 最终返回数 | 10 | - |
 | `EMBED_BATCH_SIZE` | Embedding 批处理大小 | 10 | - |
+| `FUNASR_HTTP_URL` | FunASR 音视频转写服务地址 | http://localhost:10095 | 是 |
+| `FUNASR_TIMEOUT_MS` | FunASR 超时（毫秒） | 600000 | - |
+| `PADDLEOCR_HTTP_URL` | PaddleOCR 服务地址 | http://localhost:10096/ocr | 是 |
+| `PADDLEOCR_LANG` | OCR 语言 | ch | - |
+| `PADDLEOCR_TIMEOUT_MS` | OCR 超时（毫秒） | 600000 | - |
+| `OCR_PDF_RENDER_SCALE` | 扫描 PDF 渲染倍率 | 2 | - |
+| `OCR_PDF_MAX_PAGES` | 扫描 PDF 最大 OCR 页数（0 不限） | 0 | - |
+| `DOCUMENT_UPLOAD_MAX_MB` | 上传大小上限（MB），Nginx `client_max_body_size` 需同步 | 100 | - |
 | `DOCUMENT_WORKER_ENABLED` | 是否启动文档队列消费者；生产 compose 由 api/worker 服务分别覆盖 | true | 是 |
 | `DOCUMENT_WORKER_CONCURRENCY` | 文档处理 worker 并发数 | 1 | 是 |
 
@@ -1236,6 +1275,14 @@ docker exec -it ai-knowledge-minio mc ls local/ai-knowledge-docs
 # 验证 MinIO Bucket 配置
 docker exec -it ai-knowledge-minio mc anonymous get local/ai-knowledge-docs
 ```
+
+### Q: zone 形态下前端请求 `/api/*` 返回 404？
+
+`NEXT_PUBLIC_API_URL` 是构建期内联变量。zone 形态（挂在 `/knowledge` 下）时它必须是 `/knowledge/api`，且改完必须重启 `next dev` / 重新构建生产包——改运行时环境变量不生效。前端代码不允许硬编码 `/api`，统一使用 `@/lib/api/client` 导出的 `apiBaseUrl` 拼接请求地址（包括 `window.open` 打开的文件预览/下载链接）。
+
+### Q: 联合登录（ai-call 内嵌）下接口返回 401？
+
+联合登录走的是 ai-call 的 httpOnly cookie 会话，此时前端 store 里的 `accessToken` 是哨兵值 `COOKIE_SESSION` 而非真实 JWT。手写 `fetch` / SSE / pdfjs 请求必须：仅在 token 为真实 JWT 时附加 `Authorization: Bearer`，并始终带 `credentials: "include"`（pdfjs 用 `withCredentials: true`）。统一走 `apiClient` / `apiClient.getBlob` 则默认满足。
 
 ### Q: 前端构建失败？
 
