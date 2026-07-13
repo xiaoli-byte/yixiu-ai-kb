@@ -6,9 +6,22 @@
   --background: 248 250 252;
   --foreground: 15 23 42;
   --border: 226 232 240;
-  --muted: 100 116 139;
-  --card: 255 255 255;
+  --muted: 100 116 139; /* 兼容别名，保留 */
+  --card: 255 255 255; /* 兼容别名，保留 */
   --primary: 29 89 245;
+
+  /* 中性面板层（Soft UI Evolution） */
+  --surface: 255 255 255; /* 卡片/表格 */
+  --surface-muted: 241 245 249; /* slate-100，次级面板/表头 */
+  --muted-foreground: 100 116 139; /* slate-500，辅助文字 */
+
+  /* 语义色 */
+  --ai: 77 107 254; /* 蓝紫（DeepSeek 系），AI 专属，仅点状强调（按钮/图标/脉冲），不做大面积底色 */
+  --ai-surface: 240 243 255; /* 极淡蓝紫，克制使用（hover 反馈/空态底） */
+  --success: 5 150 105; /* emerald-600 */
+  --warning: 217 119 6; /* amber-600 */
+  --destructive: 220 38 38; /* red-600 */
+  --ring: 29 89 245; /* 焦点环随品牌色 */
 }
 
 html,
@@ -25,7 +38,7 @@ body {
 
 @layer components {
   .card {
-    @apply bg-white rounded-2xl shadow-soft border border-slate-200/70;
+    @apply bg-white rounded-xl shadow-card border border-slate-200/70;
   }
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
@@ -37,6 +50,12 @@ body {
   .btn-ghost {
     @apply btn text-slate-700 hover:bg-slate-100;
   }
+  .btn-ai {
+    @apply btn bg-ai text-white hover:bg-ai/90 shadow-sm;
+  }
+  .btn-danger {
+    @apply btn text-red-600 hover:bg-red-50;
+  }
   .input {
     @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm
            placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500;
@@ -46,8 +65,26 @@ body {
   }
 }
 
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
 mark {
-  background: #fde68a;
+  background: rgb(var(--primary) / 0.12);
+  color: inherit;
+  font-weight: 600;
   padding: 0 2px;
   border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
