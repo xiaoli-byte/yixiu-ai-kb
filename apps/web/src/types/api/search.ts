@@ -24,6 +24,7 @@ export interface SearchHit {
   downloadCount?: number;
   updatedAt?: string | null;
   createdAt?: string | null;
+  interactionToken?: string;
 }
 
 export interface SearchResponse {
@@ -36,6 +37,8 @@ export interface SearchResponse {
   page?: number;
   pageSize?: number;
   hasRelevantResults?: boolean;
+  truncated?: boolean;
+  resultLimit?: number;
 }
 
 export interface SearchRequest {
@@ -58,6 +61,7 @@ export interface SearchHistoryItem {
 export interface SearchListQuery {
   keyword?: string;
   q?: string;
+  mode?: SearchMode;
   fileType?: string;
   categoryId?: string;
   permissionScope?: DocumentPermissionScope;
@@ -73,13 +77,23 @@ export interface SearchListQuery {
 
 export interface SearchListResponse {
   query: string;
+  mode: SearchMode;
   sortBy: SearchSortBy;
   total: number;
   hits: SearchHit[];
   took: number;
   page: number;
   pageSize: number;
+  hasMore: boolean;
+  /** True when total describes the bounded candidate set, not the full corpus. */
+  truncated?: boolean;
+  resultLimit?: number;
   hasRelevantResults?: boolean;
+}
+
+export interface SearchEventResponse {
+  recorded: boolean;
+  error?: string;
 }
 
 export interface HotSearchQuery {
@@ -118,4 +132,5 @@ export interface SearchEventRequest {
   documentId?: string | null;
   contentId?: string | null;
   chunkId?: string | null;
+  interactionToken?: string | null;
 }

@@ -35,7 +35,8 @@ export function SearchHistoryPanel({ id, items, onSelect, onDelete, onClear }: S
               className="inline-flex h-7 max-w-full items-center rounded border border-slate-200 bg-slate-50 text-xs text-slate-700"
             >
               <button
-                className="max-w-[150px] truncate px-3"
+                aria-label={`使用搜索历史：${item.query}`}
+                className="min-h-10 max-w-[150px] truncate px-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                 onClick={() => onSelect(item)}
                 title={item.query}
                 type="button"
@@ -43,9 +44,10 @@ export function SearchHistoryPanel({ id, items, onSelect, onDelete, onClear }: S
                 {item.query}
               </button>
               <button
-                className="grid h-7 w-7 place-items-center border-l border-slate-200 text-slate-400 hover:text-rose-600"
                 onClick={() => onDelete(item.id)}
+                aria-label={`删除搜索历史：${item.query}`}
                 title="删除历史"
+                className="grid h-10 w-10 place-items-center border-l border-slate-200 text-slate-400 hover:text-rose-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                 type="button"
               >
                 <X size={12} />

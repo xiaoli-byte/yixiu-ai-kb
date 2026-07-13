@@ -28,9 +28,9 @@ export class SearchRetrieveController {
     }
     const { q, mode, sortBy, topK, knowledgeBaseId } = parsed.data;
 
-    // knowledgeBaseId（ai-call 的知识库 id）映射到 folder 维度做按库过滤；未提供或该库不存在
-    // 时 search() 会退回租户级全库检索（见 search.service 的 resolveKnowledgeBaseFilter）。
-    const { hits, took, hasRelevantResults } = await this.search.search({
+    // knowledgeBaseId（ai-call 的知识库 id）映射到 folder 维度做按库过滤；无效或跨租户 id
+    // 返回空结果，绝不扩大为租户级全库检索。
+    const { hits, took, hasRelevantResults, truncated = false } = await this.search.search({
       q,
       mode,
       sortBy,
@@ -40,6 +40,16 @@ export class SearchRetrieveController {
     });
 
     // 服务调用不记录搜索历史，避免污染用户的搜索历史
-    return { query: q, mode, sortBy, total: hits.length, hits, took, hasRelevantResults };
+    return {
+      query: q,
+      mode,
+      sortBy,
+      total: hits.length,
+      hits,
+      took,
+      hasRelevantResults,
+      truncated,
+      resultLimit: topK,
+    };
   }
 }

@@ -1,76 +1,65 @@
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const searchDir = join(process.cwd(), "apps/web/src/app/(dashboard)/search");
-const pageSource = readFileSync(join(searchDir, "page.tsx"), "utf8");
-const clientPath = join(searchDir, "SearchPageClient.tsx");
-const clientSource = existsSync(clientPath) ? readFileSync(clientPath, "utf8") : "";
-const componentsDir = join(process.cwd(), "apps/web/src/components/search");
-const toolbarSource = readFileSync(join(componentsDir, "SearchResultsToolbar.tsx"), "utf8");
-const listSource = readFileSync(join(componentsDir, "SearchResultList.tsx"), "utf8");
-const gridSource = readFileSync(join(componentsDir, "SearchResultGrid.tsx"), "utf8");
-const filtersSource = readFileSync(join(componentsDir, "SearchFilters.tsx"), "utf8");
-const source = `${pageSource}\n${clientSource}`;
+const clientSource = readFileSync(
+  join(process.cwd(), "apps/web/src/app/(dashboard)/search/SearchPageClient.tsx"),
+  "utf8",
+);
 
-describe("Search page source composition", () => {
-  it("uses the dedicated search page components and required Chinese labels", () => {
-    [
-      "SearchSectionNav",
-      "SearchLanding",
-      "SearchFilters",
-      "SearchResultsToolbar",
-      "SearchResultList",
-      "SearchResultGrid",
-      "HotSearchPanel",
-      "SearchHistoryPanel",
-      "热门搜索",
-      "搜索历史",
-      "搜索筛选",
-      "推荐分类",
-      "高级搜索",
-      "清空筛选",
-      "权限范围",
-      "相关度排序",
-      "搜索页面区块导航",
-      "部分内容因权限限制未展示",
-    ].forEach((text) => {
-      expect(source).toContain(text);
-    });
+describe("Search page state orchestration", () => {
+  it("has only URL-driven landing and results states without the fixed section navigation", () => {
+    expect(clientSource).toContain('data-search-state="landing"');
+    expect(clientSource).toContain('data-search-state="results"');
+    expect(clientSource).toContain("const isResultsState = keyword.trim().length > 0 || hasActiveFilter");
+    expect(clientSource).not.toContain("SearchSectionNav");
+    expect(clientSource).toContain("SearchLanding");
+    expect(clientSource).toContain("SearchPagination");
+    expect(clientSource).toContain("SearchSelectedFilters");
   });
 
-  it("guards filter-only state, URL changes, request races, and permission notices", () => {
-    expect(clientSource).toContain("isMeaningfulFilterValue");
-    expect(clientSource).toContain("keyword.trim().length > 0 || hasActiveFilter || advancedOpen");
-    expect(clientSource).toContain("const shouldFetchResults = keyword.trim().length > 0 || hasActiveFilter");
-    expect(clientSource).toContain("if (!trimmedKeyword && !hasAnySearchFilter(nextFilters))");
-    expect(clientSource).toContain("if (trimmedKeyword) query.keyword = trimmedKeyword");
-    expect(clientSource).toContain("if (trimmedKeyword) query.q = trimmedKeyword");
-    expect(clientSource).toContain("showResults && shouldFetchResults");
-    expect(clientSource).toContain("请先输入关键词，筛选会与关键词组合生效");
-    expect(clientSource).not.toContain('applyFilters({ updateTimeRange: "all" })');
-    expect(clientSource).toContain("keyword: item.label");
-    expect(clientSource).toContain("const paramsKey = searchParams.toString()");
-    expect(clientSource).toContain("setResult(null)");
-    expect(clientSource).toContain("setHits([])");
+  it("round-trips the supported URL state and resets page for a new query scope", () => {
+    ["keyword", "mode", "fileType", "updateTimeRange", "categoryId", "sort", "page", "viewMode"].forEach((key) => {
+      expect(clientSource).toContain(`params.set("${key}"`);
+      expect(clientSource).toContain(`params.get("${key}")`);
+    });
+    expect(clientSource).toContain("replaceUrl({ keyword: nextKeyword, page: 1 })");
+    expect(clientSource).toContain("replaceUrl({ filters: nextFilters, page: 1 })");
+    expect(clientSource).toContain("replaceUrl({ mode: nextMode, page: 1 })");
+    expect(clientSource).toContain("replaceUrl({ page: nextPage })");
+    expect(clientSource).toContain("<SearchPagination");
+  });
+
+  it("uses real landing sources, independently degrades them, and preserves request race protection", () => {
+    expect(clientSource).toContain("foldersApi.tree()");
+    expect(clientSource).toContain("documentsApi.list({ page: 1, pageSize: 12 })");
+    expect(clientSource).toContain("Promise.allSettled");
+    expect(clientSource).toContain("flattenFolders");
+    expect(clientSource).not.toContain('id: "policy"');
     expect(clientSource).toContain("requestSeq");
     expect(clientSource).toContain("requestId !== requestSeq.current");
-    expect(clientSource).toContain("permissionNotice={hits.some((hit) => hit.canDownload === false)}");
-    expect(clientSource).toMatch(/setSort\("relevance"\)/);
-    expect(clientSource).toContain("onView={openSearchHit}");
-    expect(clientSource).toContain("onDownload={downloadSearchHit}");
+    expect(clientSource).toContain("Keep the prior page visible during a failed refresh or page change.");
+    expect(clientSource).toContain("lastSuccessfulPage");
   });
 
-  it("does not treat updateTimeRange all as an active filter in filter controls", () => {
-    expect(filtersSource).toContain("isMeaningfulFilterValue");
-    expect(filtersSource).toContain('value !== "all"');
-    expect(filtersSource).not.toContain("value.fileType || value.updateTimeRange || value.categoryId");
+  it("records result interactions but never sends a duplicate SEARCH event from the client", () => {
+    expect(clientSource).toContain("recordSearchEvent");
+    expect(clientSource).toContain('recordHitEvent(hit, "DOCUMENT_VIEW")');
+    expect(clientSource).not.toContain('recordHitEvent(hit, "RESULT_CLICK")');
+    expect(clientSource).toContain("interactionToken: hit.interactionToken");
+    expect(clientSource).not.toContain('eventType: "SEARCH"');
+    expect(clientSource).toContain("getDocumentFileBlob");
+    expect(clientSource).toContain("openDocumentBlob(hit.documentId, hit.documentTitle, true)");
+    expect(clientSource).toContain('recordHitEvent(hit, "DOCUMENT_DOWNLOAD")');
+    expect(clientSource).toContain("openOriginalSearchHit");
+    expect(clientSource).toContain("previewSearchHit");
+    // The QA page has no document-context deep-link contract yet, so the optional action stays hidden.
+    expect(clientSource).not.toContain("onAskAI=");
   });
 
-  it("renders raw fallback snippets as text and keeps sort options compatible", () => {
-    expect(`${listSource}\n${gridSource}`).toContain("HighlightedSnippet");
-    expect(`${listSource}\n${gridSource}`).not.toContain("hit.highlight || hit.text");
-    expect(toolbarSource).toContain('{ value: "time", label: "时间排序" }');
-    expect(toolbarSource).toContain('{ value: "name", label: "名称排序" }');
+  it("keeps view preferences client-side and only accepts UI-supported sorts and time ranges", () => {
+    expect(clientSource).not.toMatch(/pageSize: DEFAULT_PAGE_SIZE,\s+viewMode:/);
+    expect(clientSource).toContain('const SEARCH_SORTS: SearchSortBy[] = ["relevance", "time", "name"]');
+    expect(clientSource).not.toContain('value === "custom"');
   });
 });

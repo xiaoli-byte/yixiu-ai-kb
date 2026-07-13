@@ -2,10 +2,10 @@ import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from "@n
 import { AuthGuard } from "@nestjs/passport";
 import { SearchEventRequest, SearchQuery } from "@ai-knowledge/schemas";
 import { SearchService } from "./search.service";
-import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
+import { RateLimit, RateLimitGuard, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 
-@UseGuards(AuthGuard("jwt"))
+@UseGuards(AuthGuard("jwt"), RateLimitGuard)
 @Controller("search")
 export class SearchController {
   constructor(private readonly search: SearchService) {}
@@ -48,23 +48,17 @@ export class SearchController {
   }
 
   @Post("events")
+  @RateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    keyPrefix: "search-events",
+    message: "Search event requests are too frequent, please try again later",
+  })
   async recordEvent(@Body() raw: unknown, @CurrentUser() user: any) {
     const parsed = SearchEventRequest.safeParse(raw ?? {});
     if (!parsed.success) return { recorded: false, error: "invalid_event" };
-    const event = parsed.data;
-    const userId = user?.sub ?? user?.userId ?? user?.id;
-    await this.search.recordSearchEvent({
-      keyword: event.keyword ?? event.q,
-      eventType: event.eventType,
-      resultCount: event.resultCount,
-      categoryId: event.categoryId ?? null,
-      documentId: event.documentId ?? null,
-      contentId: event.contentId ?? null,
-      chunkId: event.chunkId ?? null,
-      tenantId: user?.tenantId,
-      userId,
-    });
-    return { recorded: true };
+    const recorded = await this.search.recordResultInteraction(parsed.data, user);
+    return recorded ? { recorded: true } : { recorded: false, error: "invalid_event_target" };
   }
 
   @Post()
@@ -75,7 +69,7 @@ export class SearchController {
       return { query: "", mode: "hybrid", sortBy: "relevance", total: 0, hits: [], took: 0, error: "invalid_query" };
     }
     const { q, mode, sortBy, topK } = parsed.data;
-    const { hits, took, hasRelevantResults } = await this.search.search({ q, mode, sortBy, topK, user });
+    const { hits, took, hasRelevantResults, truncated = false } = await this.search.search({ q, mode, sortBy, topK, user });
     const userId = user?.sub ?? user?.userId ?? user?.id;
     await this.search.recordHistory({
       q,
@@ -93,6 +87,16 @@ export class SearchController {
       tenantId: user?.tenantId,
       userId,
     });
-    return { query: q, mode, sortBy, total: hits.length, hits, took, hasRelevantResults };
+    return {
+      query: q,
+      mode,
+      sortBy,
+      total: hits.length,
+      hits,
+      took,
+      hasRelevantResults,
+      truncated,
+      resultLimit: topK,
+    };
   }
 }

@@ -9,10 +9,12 @@ import {
   HotSearchQuery,
   SearchListQuery,
   SearchQuery,
+  SearchResponse,
 } from "@ai-knowledge/schemas";
 import { SearchService, type SearchHit } from "./search.service";
 import { SearchController } from "./search.controller";
 import { SearchRetrieveController } from "./search-retrieve.controller";
+import { RateLimitGuard } from "../../common/rate-limit/rate-limit.guard";
 
 function createService() {
   const db = {
@@ -30,13 +32,35 @@ function createService() {
     }),
     getAccessFlags: vi.fn().mockResolvedValue({}),
   };
-  const service = new SearchService(db as any, embeddings as any, access as any);
+  const config = { jwt: { accessSecret: "search-interaction-test-secret" } };
+  const service = new SearchService(db as any, embeddings as any, access as any, config as any);
   return {
     service,
     db,
     embeddings,
     access,
   };
+}
+
+function interactionToken(
+  service: SearchService,
+  overrides: Partial<{
+    tenantId: string;
+    userId: string;
+    keyword: string;
+    documentId: string;
+    exp: number;
+  }> = {},
+) {
+  return (service as any).createInteractionToken({
+    v: 1,
+    tenantId: "tenant-1",
+    userId: "user-2",
+    keyword: "risk",
+    documentId: "doc-1",
+    exp: Math.floor(Date.now() / 1000) + 60,
+    ...overrides,
+  });
 }
 
 function hit(overrides: Partial<SearchHit>): SearchHit {
@@ -60,6 +84,21 @@ describe("Search schema", () => {
     expect(SearchQuery.parse({ q: "risk" }).sortBy).toBe("relevance");
     expect(SearchQuery.parse({ q: "risk", sortBy: "time" }).sortBy).toBe("time");
     expect(SearchQuery.parse({ q: "risk", sortBy: "name" }).sortBy).toBe("name");
+  });
+
+  it("expresses bounded totals with explicit truncation metadata", () => {
+    expect(
+      SearchResponse.parse({
+        query: "risk",
+        mode: "hybrid",
+        sortBy: "relevance",
+        total: 500,
+        hits: [],
+        took: 10,
+        truncated: true,
+        resultLimit: 500,
+      }),
+    ).toMatchObject({ truncated: true, resultLimit: 500 });
   });
 });
 
@@ -90,7 +129,11 @@ describe("Document/search PRD schemas", () => {
 
   it("accepts search filters and hot search ranges", () => {
     expect(DocumentPermissionScope.parse("DEPARTMENTS")).toBe("DEPARTMENTS");
-    expect(SearchListQuery.parse({ keyword: "制度", fileType: "PDF", sort: "updatedAt" }).sort).toBe("updatedAt");
+    expect(SearchListQuery.parse({ keyword: "制度", fileType: "PDF", sort: "updatedAt" })).toMatchObject({
+      mode: "hybrid",
+      sort: "updatedAt",
+    });
+    expect(SearchListQuery.parse({ keyword: "制度", mode: "semantic" }).mode).toBe("semantic");
     expect(HotSearchQuery.parse({ range: "week", limit: "20" }).limit).toBe(20);
   });
 
@@ -106,6 +149,30 @@ describe("Document/search PRD schemas", () => {
 });
 
 describe("SearchService result helpers", () => {
+  it("issues result-bound interaction tokens that verify only for the same actor, keyword, and document", () => {
+    const { service } = createService();
+    const actor = { tenantId: "tenant-1", userId: "user-2", role: "viewer" };
+    const [signed] = (service as any).attachInteractionTokens(
+      [hit({ documentId: "doc-1" })],
+      actor,
+      "  Risk  ",
+    );
+
+    expect(signed.interactionToken).toBeTruthy();
+    expect((service as any).verifyInteractionToken(
+      signed.interactionToken,
+      actor,
+      "risk",
+      "doc-1",
+    )).toBe(true);
+    expect((service as any).verifyInteractionToken(
+      signed.interactionToken,
+      actor,
+      "other",
+      "doc-1",
+    )).toBe(false);
+  });
+
   it("generates safe highlights for plain vector or fallback snippets", () => {
     const { service } = createService();
 
@@ -180,7 +247,7 @@ describe("SearchService result helpers", () => {
 });
 
 describe("SearchService permission-aware search", () => {
-  it("keeps enough candidates for the second SearchList page", async () => {
+  it("uses the bounded candidate set for stable second-page total and hasMore", async () => {
     const { service, db, embeddings, access } = createService();
     embeddings.embedOne.mockRejectedValueOnce(new Error("vector unavailable"));
 
@@ -227,7 +294,116 @@ describe("SearchService permission-aware search", () => {
     expect(result.hits).toHaveLength(50);
     expect(result.hits[0].chunkId).toBe("chunk-51");
     expect(result.hits[49].chunkId).toBe("chunk-100");
-    expect(db.query.mock.calls[0][1]).toContain(100);
+    expect(result).toMatchObject({
+      mode: "hybrid",
+      page: 2,
+      pageSize: 50,
+      total: 100,
+      hasMore: false,
+    });
+    expect(db.query.mock.calls[0][1]).toContain(500);
+    expect(db.query.mock.calls.some((call) => String(call[0]).includes("INSERT INTO search_histories"))).toBe(false);
+    expect(db.query.mock.calls.some((call) => String(call[0]).includes("INSERT INTO search_events"))).toBe(false);
+  });
+
+  it("passes SearchList mode to the search algorithm and records one explicit search", async () => {
+    const { service } = createService();
+    const search = vi.spyOn(service, "search").mockResolvedValue({
+      hits: Array.from({ length: 25 }, (_, index) =>
+        hit({ chunkId: `chunk-${index + 1}`, documentId: `doc-${index + 1}` }),
+      ),
+      took: 7,
+      hasRelevantResults: true,
+      truncated: false,
+    });
+    const recordHistory = vi.spyOn(service, "recordHistory").mockResolvedValue(undefined);
+    const recordSearchEvent = vi.spyOn(service, "recordSearchEvent").mockResolvedValue(undefined);
+
+    const result = await service.searchList(
+      { keyword: "risk", mode: "semantic", page: "1", pageSize: "10" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({
+      q: "risk",
+      mode: "semantic",
+      topK: 500,
+      candidateLimit: 500,
+    }));
+    expect(result).toMatchObject({
+      mode: "semantic",
+      page: 1,
+      pageSize: 10,
+      total: 25,
+      hasMore: true,
+    });
+    expect(result.hits).toHaveLength(10);
+    expect(recordHistory).toHaveBeenCalledTimes(1);
+    expect(recordSearchEvent).toHaveBeenCalledTimes(1);
+    expect(recordHistory).toHaveBeenCalledWith(expect.objectContaining({ mode: "semantic", resultCount: 25 }));
+    expect(recordSearchEvent).toHaveBeenCalledWith(expect.objectContaining({ eventType: "SEARCH", resultCount: 25 }));
+  });
+
+  it("marks a saturated 500-result window as truncated instead of an exact global total", async () => {
+    const { service } = createService();
+    vi.spyOn(service, "search").mockResolvedValue({
+      hits: Array.from({ length: 500 }, (_, index) =>
+        hit({ chunkId: `chunk-${index + 1}`, documentId: `doc-${index + 1}` }),
+      ),
+      took: 12,
+      hasRelevantResults: true,
+      truncated: true,
+    });
+    vi.spyOn(service, "recordHistory").mockResolvedValue(undefined);
+    vi.spyOn(service, "recordSearchEvent").mockResolvedValue(undefined);
+
+    const result = await service.searchList(
+      { keyword: "risk", page: "1", pageSize: "20" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    expect(result).toMatchObject({
+      total: 500,
+      truncated: true,
+      resultLimit: 500,
+      hasMore: true,
+    });
+  });
+
+  it("computes keyword total after permission filtering", async () => {
+    const { service, db, access } = createService();
+    db.query.mockResolvedValueOnce([
+      ...[1, 2, 3].map((position) => ({
+        chunkId: `chunk-${position}`,
+        documentId: `doc-${position}`,
+        contentId: `content-${position}`,
+        documentTitle: `Doc ${position}`,
+        mime: "text/plain",
+        permissionScope: "COMPANY",
+        idx: 0,
+        text: `risk ${position}`,
+        highlight: `risk ${position}`,
+        rank: 4 - position,
+        page: null,
+      })),
+    ]);
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-1": { canView: true, canDownload: false },
+      "doc-2": { canView: false, canDownload: false },
+      "doc-3": { canView: true, canDownload: true },
+    });
+
+    const result = await service.searchList(
+      { keyword: "risk", mode: "keyword", page: "1", pageSize: "1" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    expect(result).toMatchObject({ total: 2, hasMore: true });
+    expect(result.hits.map((item) => item.documentId)).toEqual(["doc-1"]);
+    const sql = db.query.mock.calls[0][0] as string;
+    expect(sql).toContain("VISIBILITY_SQL");
+    expect(sql).toContain("d.searchable = TRUE");
+    expect(sql).toContain("d.archived = FALSE");
   });
 
   it("maps SearchList categoryId to document folder filtering in search SQL", async () => {
@@ -373,11 +549,11 @@ describe("SearchService permission-aware search", () => {
     expect(searchCall![1]).toContain("folder-1");
   });
 
-  it("ignores knowledgeBaseId and stays tenant-wide when no matching folder (CALL-10 #1 graceful fallback)", async () => {
+  it("returns empty without tenant-wide retrieval when knowledgeBaseId is invalid or cross-tenant", async () => {
     const { service, db } = createService();
-    db.query.mockResolvedValue([]); // folder 不存在，检索也返回空
+    db.query.mockResolvedValueOnce([]);
 
-    await service.search({
+    const result = await service.search({
       q: "risk",
       mode: "keyword",
       topK: 10,
@@ -385,11 +561,10 @@ describe("SearchService permission-aware search", () => {
       filters: { knowledgeBaseId: "kb-unaligned" },
     } as any);
 
-    const searchCall = db.query.mock.calls.find((c: any[]) => String(c[0]).includes("VISIBILITY_SQL"));
-    expect(searchCall).toBeTruthy();
-    // 未对齐 → 不按 folder 过滤（无 d.folder_id 条件），也不会把 kb id 塞进检索参数
-    expect(String(searchCall![0])).not.toContain("d.folder_id =");
-    expect(searchCall![1]).not.toContain("kb-unaligned");
+    expect(result).toMatchObject({ hits: [], hasRelevantResults: false, truncated: false });
+    expect(db.query).toHaveBeenCalledTimes(1);
+    expect(String(db.query.mock.calls[0][0])).toContain("FROM folders");
+    expect(db.query.mock.calls.some((call) => String(call[0]).includes("VISIBILITY_SQL"))).toBe(false);
   });
 
   it("returns permission-filtered documents when filters are present without a keyword", async () => {
@@ -437,9 +612,11 @@ describe("SearchService permission-aware search", () => {
 
     expect(result).toMatchObject({
       query: "",
+      mode: "hybrid",
       total: 1,
       page: 1,
       pageSize: 20,
+      hasMore: false,
     });
     expect(result.hits[0]).toMatchObject({
       documentId: "doc-1",
@@ -456,11 +633,87 @@ describe("SearchService permission-aware search", () => {
     expect(sql).not.toContain("plainto_tsquery");
     expect(values).toContain("%pdf%");
     expect(values).toContain("COMPANY");
-    expect(db.query.mock.calls.some((call) => String(call[0]).includes("search_histories"))).toBe(false);
+    expect(db.query.mock.calls.some((call) => String(call[0]).includes("INSERT INTO search_histories"))).toBe(false);
+    expect(db.query.mock.calls.some((call) => String(call[0]).includes("INSERT INTO search_events"))).toBe(false);
+  });
+
+  it("uses the same total and hasMore semantics for filter-only pagination", async () => {
+    const { service, db, access } = createService();
+    db.query.mockResolvedValueOnce([{
+      chunkId: "chunk-21",
+      documentId: "doc-21",
+      contentId: "content-21",
+      documentTitle: "制度 21",
+      mime: "application/pdf",
+      permissionScope: "COMPANY",
+      idx: 0,
+      text: "制度摘要",
+      page: null,
+      totalCount: 45,
+    }]);
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-21": { canView: true, canDownload: false },
+    });
+
+    const result = await service.searchList(
+      { fileType: "pdf", page: "2", pageSize: "20" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    expect(result).toMatchObject({ page: 2, pageSize: 20, total: 45, hasMore: true });
+    expect((db.query.mock.calls[0][1] as unknown[]).slice(-2)).toEqual([20, 20]);
+  });
+
+  it("keeps the exact filter-only total when the requested page has no rows", async () => {
+    const { service, db } = createService();
+    db.query
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ totalCount: 45 }]);
+
+    const result = await service.searchList(
+      { fileType: "pdf", page: "4", pageSize: "20" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    );
+
+    expect(result).toMatchObject({
+      page: 4,
+      pageSize: 20,
+      total: 45,
+      hits: [],
+      hasMore: false,
+      truncated: false,
+    });
+    expect(db.query).toHaveBeenCalledTimes(2);
+    expect(String(db.query.mock.calls[1][0])).toContain('COUNT(*)::int AS "totalCount"');
+    expect(db.query.mock.calls[1][1]).not.toContain(20);
+  });
+
+  it("returns an empty paginated response without search history or events for an empty query", async () => {
+    const { service, db, embeddings } = createService();
+
+    await expect(service.searchList(
+      { keyword: "   ", mode: "keyword", page: "2", pageSize: "10" },
+      { sub: "user-1", tenantId: "tenant-1", role: "viewer" },
+    )).resolves.toMatchObject({
+      query: "",
+      mode: "keyword",
+      page: 2,
+      pageSize: 10,
+      total: 0,
+      hasMore: false,
+      hits: [],
+    });
+    expect(embeddings.embedOne).not.toHaveBeenCalled();
+    expect(db.query).not.toHaveBeenCalled();
   });
 });
 
 describe("SearchController PRD routes", () => {
+  it("activates the rate-limit guard for decorated search routes", () => {
+    const guards = Reflect.getMetadata(GUARDS_METADATA, SearchController) ?? [];
+    expect(guards).toContain(RateLimitGuard);
+  });
+
   it("exposes POST /search/history/clear for clearing user search history", async () => {
     const clearHistory = vi.fn().mockResolvedValue({ deleted: 2 });
     const controller = new SearchController({ clearHistory } as any);
@@ -474,8 +727,8 @@ describe("SearchController PRD routes", () => {
   });
 
   it("exposes POST /search/events for recording result interaction metrics", async () => {
-    const recordSearchEvent = vi.fn().mockResolvedValue(undefined);
-    const controller = new SearchController({ recordSearchEvent } as any);
+    const recordResultInteraction = vi.fn().mockResolvedValue(true);
+    const controller = new SearchController({ recordResultInteraction } as any);
     const method = (controller as any).recordEvent;
 
     expect(method).toBeTypeOf("function");
@@ -484,21 +737,34 @@ describe("SearchController PRD routes", () => {
     await expect(
       method.call(
         controller,
-        { q: "知识库", eventType: "CLICK", resultCount: "3", documentId: "doc-1" },
+        { q: "知识库", eventType: "VIEW", resultCount: "3", documentId: "doc-1", interactionToken: "signed-token" },
         { sub: "user-1", tenantId: "tenant-1" },
       ),
     ).resolves.toEqual({ recorded: true });
-    expect(recordSearchEvent).toHaveBeenCalledWith({
-      keyword: "知识库",
-      eventType: "CLICK",
+    expect(recordResultInteraction).toHaveBeenCalledWith({
+      q: "知识库",
+      eventType: "VIEW",
       resultCount: 3,
-      categoryId: null,
       documentId: "doc-1",
-      contentId: null,
-      chunkId: null,
-      tenantId: "tenant-1",
-      userId: "user-1",
+      interactionToken: "signed-token",
+    }, { sub: "user-1", tenantId: "tenant-1" });
+    expect(Reflect.getMetadata("rate_limit", method)).toMatchObject({
+      windowMs: 60_000,
+      max: 20,
+      keyPrefix: "search-events",
     });
+  });
+
+  it("does not claim an unverified event was recorded", async () => {
+    const recordResultInteraction = vi.fn().mockResolvedValue(false);
+    const controller = new SearchController({ recordResultInteraction } as any);
+
+    await expect(
+      (controller as any).recordEvent(
+        { q: "risk", eventType: "VIEW", contentId: "foreign-content" },
+        { sub: "user-1", tenantId: "tenant-1" },
+      ),
+    ).resolves.toEqual({ recorded: false, error: "invalid_event_target" });
   });
 });
 
@@ -547,6 +813,152 @@ describe("Document/search database PRD shape", () => {
 });
 
 describe("SearchService history helpers", () => {
+  it("records only the verified document id for an authorized result interaction", async () => {
+    const { service, db, access } = createService();
+    db.query
+      .mockResolvedValueOnce([{ documentId: "doc-1", categoryId: "folder-1" }])
+      .mockResolvedValueOnce([{ id: "event-1" }]);
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-1": { canView: true, canDownload: false },
+    });
+
+    await expect(service.recordResultInteraction({
+      keyword: "  Risk  ",
+      eventType: "VIEW",
+      resultCount: 999,
+      categoryId: "spoofed-folder",
+      documentId: "doc-1",
+      contentId: "content-1",
+      chunkId: "chunk-1",
+      interactionToken: interactionToken(service),
+    }, {
+      sub: "user-2",
+      tenantId: "tenant-1",
+      role: "viewer",
+    })).resolves.toBe(true);
+
+    expect(db.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('d.id AS "documentId"'),
+      ["tenant-1", "doc-1"],
+    );
+    const insertValues = db.query.mock.calls[1][1] as unknown[];
+    expect(insertValues.slice(1)).toEqual([
+      "tenant-1",
+      "user-2",
+      "risk",
+      "folder-1",
+      "doc-1",
+      "DOCUMENT_VIEW",
+    ]);
+    expect(String(db.query.mock.calls[1][0])).toContain("ON CONFLICT (id) DO NOTHING");
+    expect(String((db.query.mock.calls[1][1] as unknown[])[0])).toMatch(/^search_interaction_[a-f0-9]{64}$/);
+  });
+
+  it("rejects forged keywords and cross-user, cross-tenant, or expired tokens before database access", async () => {
+    const { service, db, access } = createService();
+    const actor = { sub: "user-2", tenantId: "tenant-1", role: "viewer" };
+    const attempts = [
+      { keyword: "forged", token: interactionToken(service) },
+      { keyword: "risk", token: interactionToken(service, { userId: "other-user" }) },
+      { keyword: "risk", token: interactionToken(service, { tenantId: "other-tenant" }) },
+      { keyword: "risk", token: interactionToken(service, { exp: Math.floor(Date.now() / 1000) - 1 }) },
+      { keyword: "risk", token: `${interactionToken(service)}tampered` },
+    ];
+    for (const attempt of attempts) {
+      await expect(service.recordResultInteraction({
+        keyword: attempt.keyword,
+        eventType: "VIEW",
+        documentId: "doc-1",
+        interactionToken: attempt.token,
+      }, actor)).resolves.toBe(false);
+    }
+
+    expect(access.getAccessFlags).not.toHaveBeenCalled();
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  it("rejects invisible targets and requires download permission for download events", async () => {
+    const invisible = createService();
+    invisible.db.query.mockResolvedValueOnce([{ documentId: "doc-1", categoryId: null }]);
+    invisible.access.getAccessFlags.mockResolvedValueOnce({
+      "doc-1": { canView: false, canDownload: false },
+    });
+    await expect(invisible.service.recordResultInteraction({
+      keyword: "risk",
+      eventType: "VIEW",
+      documentId: "doc-1",
+      interactionToken: interactionToken(invisible.service),
+    }, { sub: "user-2", tenantId: "tenant-1", role: "viewer" })).resolves.toBe(false);
+    expect(invisible.db.query).toHaveBeenCalledTimes(1);
+
+    const noDownload = createService();
+    noDownload.db.query.mockResolvedValueOnce([{ documentId: "doc-1", categoryId: null }]);
+    noDownload.access.getAccessFlags.mockResolvedValueOnce({
+      "doc-1": { canView: true, canDownload: false },
+    });
+    await expect(noDownload.service.recordResultInteraction({
+      keyword: "risk",
+      eventType: "DOWNLOAD",
+      documentId: "doc-1",
+      interactionToken: interactionToken(noDownload.service),
+    }, { sub: "user-2", tenantId: "tenant-1", role: "viewer" })).resolves.toBe(false);
+    expect(noDownload.db.query).toHaveBeenCalledTimes(1);
+  });
+
+  it("atomically de-duplicates repeated interactions in a short window", async () => {
+    const { service, db, access } = createService();
+    db.query
+      .mockResolvedValueOnce([{ documentId: "doc-1", categoryId: null }])
+      .mockResolvedValueOnce([{ id: "event-1" }])
+      .mockResolvedValueOnce([{ documentId: "doc-1", categoryId: null }])
+      .mockResolvedValueOnce([]);
+    access.getAccessFlags.mockResolvedValue({
+      "doc-1": { canView: true, canDownload: false },
+    });
+
+    const event = {
+      keyword: "risk",
+      eventType: "VIEW",
+      documentId: "doc-1",
+      interactionToken: interactionToken(service),
+    };
+    const actor = { sub: "user-2", tenantId: "tenant-1", role: "viewer" };
+    await expect(service.recordResultInteraction(event, actor)).resolves.toBe(true);
+    await expect(service.recordResultInteraction(event, actor)).resolves.toBe(false);
+
+    expect(String(db.query.mock.calls[1][0])).toContain("ON CONFLICT (id) DO NOTHING");
+    expect((db.query.mock.calls[1][1] as unknown[])[0]).toBe(
+      (db.query.mock.calls[3][1] as unknown[])[0],
+    );
+  });
+
+  it("rejects client-generated SEARCH and redundant CLICK events while internal SEARCH recording remains available", async () => {
+    const { service, db } = createService();
+
+    await expect(service.recordResultInteraction({
+      keyword: "risk",
+      eventType: "SEARCH",
+      resultCount: 500,
+    }, { sub: "user-2", tenantId: "tenant-1", role: "viewer" })).resolves.toBe(false);
+    await expect(service.recordResultInteraction({
+      keyword: "risk",
+      eventType: "CLICK",
+      documentId: "doc-1",
+      interactionToken: interactionToken(service),
+    }, { sub: "user-2", tenantId: "tenant-1", role: "viewer" })).resolves.toBe(false);
+    expect(db.query).not.toHaveBeenCalled();
+
+    await service.recordSearchEvent({
+      keyword: "risk",
+      eventType: "SEARCH",
+      resultCount: 3,
+      tenantId: "tenant-1",
+      userId: "user-2",
+    });
+    expect(String(db.query.mock.calls[0][0])).toContain("INSERT INTO search_events");
+  });
+
   it("de-duplicates normalized query for a user before inserting the latest history item", async () => {
     const { service, db } = createService();
 

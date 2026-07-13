@@ -1,134 +1,41 @@
-import { Search } from "lucide-react";
+import { ArrowRight, BookOpen, Clock3, FileText, Search, Sparkles } from "lucide-react";
 import type { HotSearchItem, HotSearchQuery, SearchHistoryItem } from "@/services/search";
 import { HotSearchPanel } from "./HotSearchPanel";
 import { SearchHistoryPanel } from "./SearchHistoryPanel";
-import { SearchSectionNav } from "./SearchSectionNav";
 import { cn } from "@/lib/utils";
+import type { ReactNode } from "react";
 
-export interface RecommendedCategory {
-  id: string;
-  label: string;
-  target: "categoryId";
-}
+export interface RecommendedCategory { id: string; label: string; target: "categoryId"; }
+export interface SearchKnowledgeBase { id: string; name: string; description?: string; documentCount?: number; folderCount?: number; href?: string; }
+export interface RecentSearchDocument { id: string; title: string; path?: string; fileType?: string; updatedAt?: string; href?: string; }
 
 interface SearchLandingProps {
-  inputValue: string;
-  hotItems: HotSearchItem[];
-  historyItems: SearchHistoryItem[];
-  recommendedCategories: RecommendedCategory[];
-  selectedCategoryId?: string;
-  hotRange: NonNullable<HotSearchQuery["range"]>;
-  hotLoading?: boolean;
-  onInputChange: (value: string) => void;
-  onSubmit: () => void;
-  onAdvancedSearch: () => void;
-  onHotRangeChange: (range: NonNullable<HotSearchQuery["range"]>) => void;
-  onHotSelect: (keyword: string) => void;
-  onHistorySelect: (item: SearchHistoryItem) => void;
-  onHistoryDelete: (id: string) => void;
-  onHistoryClear: () => void;
-  onCategorySelect: (item: RecommendedCategory) => void;
+  inputValue: string; hotItems: HotSearchItem[]; historyItems: SearchHistoryItem[]; recommendedCategories?: RecommendedCategory[]; selectedCategoryId?: string; hotRange: NonNullable<HotSearchQuery["range"]>; hotLoading?: boolean;
+  knowledgeBases?: SearchKnowledgeBase[]; recentDocuments?: RecentSearchDocument[]; knowledgeBasesLoading?: boolean; recentDocumentsLoading?: boolean;
+  knowledgeBasesError?: string; recentDocumentsError?: string; filtersContent?: ReactNode;
+  advancedOpen?: boolean;
+  onInputChange: (value: string) => void; onSubmit: () => void; onAdvancedSearch?: () => void; onHotRangeChange: (range: NonNullable<HotSearchQuery["range"]>) => void; onHotSelect: (keyword: string) => void; onHistorySelect: (item: SearchHistoryItem) => void; onHistoryDelete: (id: string) => void; onHistoryClear: () => void; onCategorySelect?: (item: RecommendedCategory) => void; onKnowledgeBaseSelect?: (item: SearchKnowledgeBase) => void; onRecentDocumentSelect?: (item: RecentSearchDocument) => void;
 }
 
-export function SearchLanding({
-  inputValue,
-  hotItems,
-  historyItems,
-  recommendedCategories,
-  selectedCategoryId,
-  hotRange,
-  hotLoading = false,
-  onInputChange,
-  onSubmit,
-  onAdvancedSearch,
-  onHotRangeChange,
-  onHotSelect,
-  onHistorySelect,
-  onHistoryDelete,
-  onHistoryClear,
-  onCategorySelect,
-}: SearchLandingProps) {
-  return (
-    <div className="flex min-h-full bg-white">
-      <SearchSectionNav onFilterClick={onAdvancedSearch} />
-      <div className="min-w-0 flex-1 px-8 py-8">
-        <div className="flex flex-col items-center pb-10 pt-8">
-          <div className="flex w-full max-w-[720px] items-center gap-2">
-            <div className="relative h-10 flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                className="h-10 w-full rounded border border-slate-300 bg-white pl-10 pr-3 text-[13px] outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                placeholder="请输入文档标题、内容关键词"
-                value={inputValue}
-                onChange={(event) => onInputChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") onSubmit();
-                }}
-              />
-            </div>
-            <button
-              className="inline-flex h-10 items-center gap-1.5 rounded bg-brand-600 px-5 text-[13px] font-medium text-white transition hover:bg-brand-700"
-              onClick={onSubmit}
-              type="button"
-            >
-              <Search size={14} />
-              搜索
-            </button>
-          </div>
-          <button
-            className="mt-2 h-7 rounded px-2 text-xs text-brand-700 hover:bg-brand-50"
-            onClick={onAdvancedSearch}
-            type="button"
-          >
-            高级搜索
-          </button>
+export function SearchLanding({ inputValue, hotItems, historyItems, recommendedCategories = [], selectedCategoryId, hotRange, hotLoading = false, knowledgeBases = [], recentDocuments = [], knowledgeBasesLoading = false, recentDocumentsLoading = false, knowledgeBasesError, recentDocumentsError, filtersContent, advancedOpen = false, onInputChange, onSubmit, onAdvancedSearch, onHotRangeChange, onHotSelect, onHistorySelect, onHistoryDelete, onHistoryClear, onCategorySelect, onKnowledgeBaseSelect, onRecentDocumentSelect }: SearchLandingProps) {
+  return <main className="min-h-full bg-slate-50 px-4 py-6 sm:px-8 sm:py-8">
+    <div className="mx-auto max-w-[1280px]">
+      <section className="rounded-lg border border-slate-200 bg-white px-5 py-8 shadow-sm sm:px-10 sm:py-10">
+        <div className="mx-auto max-w-3xl"><p className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-brand-700"><Sparkles size={14} />知识库搜索</p><h1 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">从可访问的知识中找到答案</h1><p className="mt-2 text-sm leading-6 text-slate-600">搜索文档标题和正文，快速定位制度、手册、项目资料与最新更新。</p>
+          <div className="mt-6 flex flex-col gap-2 sm:flex-row"><div className="relative min-w-0 flex-1"><Search aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} /><label className="sr-only" htmlFor="search-landing-input">搜索关键词</label><input autoComplete="off" className="h-12 w-full rounded border border-slate-300 bg-white pl-10 pr-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100" id="search-landing-input" placeholder="输入文档标题或内容关键词" value={inputValue} onChange={(event) => onInputChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") onSubmit(); }} /></div><button className="inline-flex h-12 items-center justify-center gap-2 rounded bg-brand-600 px-6 text-sm font-medium text-white transition hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2" onClick={onSubmit} type="button"><Search size={16} />搜索</button></div>
+          {onAdvancedSearch && <button aria-expanded={advancedOpen} className="mt-3 inline-flex min-h-10 items-center gap-1 text-xs font-medium text-brand-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={onAdvancedSearch} type="button">{advancedOpen ? "收起筛选与检索模式" : "打开筛选与检索模式"}<ArrowRight className={advancedOpen ? "rotate-90" : ""} size={13} /></button>}
         </div>
-
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(280px,2fr)]">
-          <HotSearchPanel
-            id="hot-search"
-            items={hotItems}
-            activeRange={hotRange}
-            loading={hotLoading}
-            onRangeChange={onHotRangeChange}
-            onSelect={onHotSelect}
-          />
-          <div className="space-y-6">
-            <SearchHistoryPanel
-              id="search-history"
-              items={historyItems}
-              onSelect={onHistorySelect}
-              onDelete={onHistoryDelete}
-              onClear={onHistoryClear}
-            />
-            <section>
-              <div className="border-b border-slate-200 pb-3">
-                <h2 className="text-sm font-medium text-slate-900">推荐分类</h2>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-4">
-                {recommendedCategories.map((item) => {
-                  const active = item.target === "categoryId" && selectedCategoryId === item.id;
-                  return (
-                    <button
-                      key={`${item.target}-${item.id}`}
-                      className={cn(
-                        "h-7 rounded border px-3 text-xs transition",
-                        active
-                          ? "border-brand-200 bg-brand-50 text-brand-700"
-                          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100",
-                      )}
-                      onClick={() => onCategorySelect(item)}
-                      type="button"
-                    >
-                      {item.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          </div>
-        </div>
+      </section>
+      {filtersContent}
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <section aria-labelledby="knowledge-base-title" className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6"><div className="flex items-center justify-between border-b border-slate-200 pb-3"><div><h2 className="text-sm font-semibold text-slate-900" id="knowledge-base-title">常用知识库</h2><p className="mt-1 text-xs text-slate-500">来自当前账号可访问范围</p></div><BookOpen className="text-brand-600" size={18} /></div>{knowledgeBasesLoading ? <LoadingRows /> : knowledgeBasesError ? <EmptyInline text={knowledgeBasesError} /> : knowledgeBases.length === 0 ? <EmptyInline text="暂无可用知识库" /> : <div className="grid gap-3 pt-4 sm:grid-cols-2">{knowledgeBases.map((item) => <button className="group rounded border border-slate-200 p-4 text-left transition hover:border-brand-300 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" key={item.id} onClick={() => onKnowledgeBaseSelect?.(item)} type="button"><div className="flex items-start justify-between gap-3"><span className="truncate text-sm font-medium text-slate-900">{item.name}</span><ArrowRight className="shrink-0 text-slate-400 transition group-hover:text-brand-600" size={15} /></div>{item.description && <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{item.description}</p>}{typeof item.documentCount === "number" && <p className="mt-3 text-xs text-slate-500">{item.documentCount} 个文档{typeof item.folderCount === "number" && ` · ${item.folderCount} 个文件夹`}</p>}</button>)}</div>}</section>
+        <div className="space-y-6"><section className="rounded-lg border border-slate-200 bg-white p-5"><SearchHistoryPanel id="search-history" items={historyItems} onSelect={onHistorySelect} onDelete={onHistoryDelete} onClear={onHistoryClear} /></section>{recommendedCategories.length > 0 && <section className="rounded-lg border border-slate-200 bg-white p-5"><h2 className="text-sm font-semibold text-slate-900">推荐入口</h2><div className="mt-3 flex flex-wrap gap-2">{recommendedCategories.map((item) => <button className={cn("min-h-10 rounded border px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500", selectedCategoryId === item.id ? "border-brand-200 bg-brand-50 text-brand-700" : "border-slate-200 text-slate-700 hover:bg-slate-50")} key={`${item.target}-${item.id}`} onClick={() => onCategorySelect?.(item)} type="button">{item.label}</button>)}</div></section>}</div>
       </div>
+      <div className="mt-6 grid gap-6 lg:grid-cols-2"><section className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6"><HotSearchPanel id="hot-search" items={hotItems} activeRange={hotRange} loading={hotLoading} onRangeChange={onHotRangeChange} onSelect={onHotSelect} /></section><section aria-labelledby="recent-documents-title" className="rounded-lg border border-slate-200 bg-white p-5 sm:p-6"><div className="flex items-center justify-between border-b border-slate-200 pb-3"><div><h2 className="text-sm font-semibold text-slate-900" id="recent-documents-title">最近更新</h2><p className="mt-1 text-xs text-slate-500">来自真实文档数据</p></div><Clock3 className="text-brand-600" size={18} /></div>{recentDocumentsLoading ? <LoadingRows /> : recentDocumentsError ? <EmptyInline text={recentDocumentsError} /> : recentDocuments.length === 0 ? <EmptyInline text="暂无最近更新" /> : <div className="divide-y divide-slate-100">{recentDocuments.map((item) => <button className="flex min-h-16 w-full items-center gap-3 py-3 text-left hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" key={item.id} onClick={() => onRecentDocumentSelect?.(item)} type="button"><FileText className="shrink-0 text-brand-600" size={17} /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium text-slate-800">{item.title}</span><span className="mt-1 block truncate text-xs text-slate-500">{item.path || "未设置路径"}{item.fileType && ` · ${item.fileType}`}</span></span><span className="shrink-0 text-xs text-slate-500">{formatDate(item.updatedAt)}</span></button>)}</div>}</section></div>
     </div>
-  );
+  </main>;
 }
+
+function LoadingRows() { return <div aria-busy="true" className="space-y-3 pt-4">{[1, 2, 3].map((item) => <div className="flex animate-pulse gap-3 motion-reduce:animate-none" key={item}><div className="h-10 w-10 rounded bg-slate-200" /><div className="flex-1 space-y-2"><div className="h-3 w-3/5 rounded bg-slate-200" /><div className="h-3 w-4/5 rounded bg-slate-100" /></div></div>)}</div>; }
+function EmptyInline({ text }: { text: string }) { return <div className="flex min-h-28 items-center justify-center text-xs text-slate-500">{text}</div>; }
+function formatDate(value?: string) { return value ? new Date(value).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" }) : "—"; }

@@ -34,8 +34,9 @@ export function HotSearchPanel({
           {RANGE_TABS.map((tab) => (
             <button
               key={tab.value}
+              aria-pressed={activeRange === tab.value}
               className={cn(
-                "h-9 border-b-2 text-[13px] transition",
+                "min-h-10 border-b-2 text-[13px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
                 activeRange === tab.value
                   ? "border-brand-600 text-brand-700"
                   : "border-transparent text-slate-600 hover:text-brand-700",
@@ -58,7 +59,7 @@ export function HotSearchPanel({
             {items.map((item, index) => (
               <button
                 key={`${item.keyword}-${index}`}
-                className="flex h-10 w-full items-center gap-3 text-left hover:bg-slate-50"
+                className="flex min-h-11 w-full items-center gap-3 text-left hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                 onClick={() => onSelect(item.keyword)}
                 type="button"
               >

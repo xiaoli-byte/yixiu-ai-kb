@@ -2,66 +2,47 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertCircle, Loader2, Search, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import searchApi, {
   type HotSearchItem,
   type HotSearchQuery,
+  type SearchEventType,
   type SearchHistoryItem,
   type SearchHit,
   type SearchListQuery,
   type SearchListResponse,
+  type SearchMode,
   type SearchSortBy,
 } from "@/services/search";
-import type { DocumentPermissionScope } from "@/types/api";
-import { buildDocumentFileUrl } from "@/services/qa";
-import { SearchLanding, type RecommendedCategory } from "@/components/search/SearchLanding";
+import foldersApi, { type Folder } from "@/services/folders";
+import documentsApi, { type DocumentDto } from "@/services/documents";
+import { getDocumentFileBlob } from "@/services/qa";
 import { SearchFilters, type SearchFiltersValue } from "@/components/search/SearchFilters";
+import { SearchLanding, type RecentSearchDocument, type SearchKnowledgeBase } from "@/components/search/SearchLanding";
 import { SearchResultsToolbar } from "@/components/search/SearchResultsToolbar";
 import { SearchResultList } from "@/components/search/SearchResultList";
 import { SearchResultGrid } from "@/components/search/SearchResultGrid";
-import { SearchSectionNav } from "@/components/search/SearchSectionNav";
-
-const RECOMMENDED_CATEGORIES: RecommendedCategory[] = [
-  { id: "policy", label: "制度规范", target: "categoryId" },
-  { id: "manual", label: "操作手册", target: "categoryId" },
-  { id: "training", label: "培训资料", target: "categoryId" },
-  { id: "project", label: "项目文档", target: "categoryId" },
-  { id: "technical", label: "技术方案", target: "categoryId" },
-  { id: "product", label: "产品文档", target: "categoryId" },
-];
-
-const REQUIRED_LABELS = [
-  "热门搜索",
-  "搜索历史",
-  "搜索筛选",
-  "推荐分类",
-  "高级搜索",
-  "清空筛选",
-  "权限范围",
-  "相关度排序",
-  "搜索页面区块导航",
-  "部分内容因权限限制未展示",
-];
-
-const REQUIRED_COMPONENTS = [
-  "SearchSectionNav",
-  "SearchLanding",
-  "SearchFilters",
-  "SearchResultsToolbar",
-  "SearchResultList",
-  "SearchResultGrid",
-  "HotSearchPanel",
-  "SearchHistoryPanel",
-];
+import { SearchPagination } from "@/components/search/SearchPagination";
+import { SearchSelectedFilters, type SelectedSearchFilter } from "@/components/search/SearchSelectedFilters";
+import { SearchEmptyState, SearchErrorState, SearchLoadingSkeleton } from "@/components/search/SearchStatePanels";
+import MarkdownPreviewModal from "@/components/MarkdownPreviewModal";
+import PdfViewerModal from "@/components/PdfViewerModal";
 
 const DEFAULT_PAGE_SIZE = 10;
-const SEARCH_SORTS: SearchSortBy[] = ["relevance", "time", "name", "updatedAt", "hot", "views", "downloads"];
+const SEARCH_SORTS: SearchSortBy[] = ["relevance", "time", "name"];
 
 interface ParsedSearchParams {
   keyword: string;
+  mode: SearchMode;
   sort: SearchSortBy;
+  page: number;
   viewMode: "list" | "grid";
   filters: SearchFiltersValue;
+}
+
+interface LandingErrors {
+  categories?: string;
+  recentDocuments?: string;
 }
 
 export default function SearchPageClient() {
@@ -69,66 +50,108 @@ export default function SearchPageClient() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const initial = useMemo(() => parseParams(searchParams), [searchParams]);
-  const compositionForSourceAssertion = [...REQUIRED_COMPONENTS, ...REQUIRED_LABELS].join("|");
+  const paramsKey = searchParams.toString();
 
   const [inputValue, setInputValue] = useState(initial.keyword);
   const [keyword, setKeyword] = useState(initial.keyword);
+  const [mode, setMode] = useState<SearchMode>(initial.mode);
   const [filters, setFilters] = useState<SearchFiltersValue>(initial.filters);
   const [sort, setSort] = useState<SearchSortBy>(initial.sort);
+  const [page, setPage] = useState(initial.page);
   const [viewMode, setViewMode] = useState<"list" | "grid">(initial.viewMode);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [result, setResult] = useState<SearchListResponse | null>(null);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [hotRange, setHotRange] = useState<NonNullable<HotSearchQuery["range"]>>("today");
   const [hotItems, setHotItems] = useState<HotSearchItem[]>([]);
   const [hotLoading, setHotLoading] = useState(false);
   const [historyItems, setHistoryItems] = useState<SearchHistoryItem[]>([]);
+  const [categories, setCategories] = useState<Folder[]>([]);
+  const [recentDocuments, setRecentDocuments] = useState<DocumentDto[]>([]);
+  const [landingLoading, setLandingLoading] = useState(true);
+  const [landingErrors, setLandingErrors] = useState<LandingErrors>({});
+  const [pdfPreview, setPdfPreview] = useState<{ id: string; title: string; page?: number; canDownload?: boolean } | null>(null);
+  const [markdownPreview, setMarkdownPreview] = useState<{ id: string; title: string; canDownload?: boolean } | null>(null);
   const lastQueryKey = useRef("");
+  const lastSuccessfulPage = useRef(1);
+  const hasSuccessfulResult = useRef(false);
   const requestSeq = useRef(0);
-  const paramsKey = searchParams.toString();
 
-  const hasActiveFilter = useMemo(() => {
-    return Object.values(filters).some(isMeaningfulFilterValue);
-  }, [filters]);
-  const shouldFetchResults = keyword.trim().length > 0 || hasActiveFilter;
-  const showResults = keyword.trim().length > 0 || hasActiveFilter || advancedOpen;
+  const hasActiveFilter = useMemo(() => hasAnySearchFilter(filters), [filters]);
+  const isResultsState = keyword.trim().length > 0 || hasActiveFilter;
+  const displayedPage = result?.page ?? page;
+  const hasMore = result?.hasMore ?? (result ? displayedPage * result.pageSize < result.total : false);
+  const knowledgeBaseOptions = useMemo(
+    () => categories.map((category) => ({ value: category.id, label: category.name })),
+    [categories],
+  );
+  const landingKnowledgeBases = useMemo<SearchKnowledgeBase[]>(
+    () => categories.map((category) => ({ id: category.id, name: category.name })),
+    [categories],
+  );
+  const landingRecentDocuments = useMemo<RecentSearchDocument[]>(
+    () => recentDocuments.map((document) => ({
+      id: document.id,
+      title: document.title,
+      path: categories.find((category) => category.id === document.folderId)?.name || "未设置路径",
+      fileType: fileTypeOfDocument(document),
+      updatedAt: document.updatedAt,
+    })),
+    [categories, recentDocuments],
+  );
+  const selectedFilterItems = useMemo<SelectedSearchFilter[]>(() => {
+    const items: SelectedSearchFilter[] = [];
+    if (filters.categoryId) {
+      items.push({ key: "categoryId", label: "知识库", value: categories.find((item) => item.id === filters.categoryId)?.name || "已选知识库" });
+    }
+    if (filters.fileType) items.push({ key: "fileType", label: "文件类型", value: filters.fileType.toUpperCase() });
+    if (isMeaningfulFilterValue(filters.updateTimeRange)) {
+      const timeLabels: Record<string, string> = { today: "今天", "7d": "近 7 天", "30d": "近 30 天" };
+      items.push({ key: "updateTimeRange", label: "更新时间", value: timeLabels[filters.updateTimeRange!] || filters.updateTimeRange! });
+    }
+    return items;
+  }, [categories, filters]);
 
   const replaceUrl = useCallback(
     (next: {
       keyword?: string;
+      mode?: SearchMode;
       filters?: SearchFiltersValue;
       sort?: SearchSortBy;
+      page?: number;
       viewMode?: "list" | "grid";
     }) => {
       const params = new URLSearchParams();
       const nextKeyword = next.keyword ?? keyword;
+      const nextMode = next.mode ?? mode;
       const nextFilters = next.filters ?? filters;
       const nextSort = next.sort ?? sort;
+      const nextPage = next.page ?? page;
       const nextViewMode = next.viewMode ?? viewMode;
 
       if (nextKeyword.trim()) params.set("keyword", nextKeyword.trim());
+      if (nextMode !== "hybrid") params.set("mode", nextMode);
       if (nextFilters.fileType) params.set("fileType", nextFilters.fileType);
-      const updateTimeRange = nextFilters.updateTimeRange;
-      if (updateTimeRange && isMeaningfulFilterValue(updateTimeRange)) {
-        params.set("updateTimeRange", updateTimeRange);
+      if (isMeaningfulFilterValue(nextFilters.updateTimeRange)) {
+        params.set("updateTimeRange", nextFilters.updateTimeRange!);
       }
       if (nextFilters.categoryId) params.set("categoryId", nextFilters.categoryId);
-      if (nextFilters.permissionScope) params.set("permissionScope", nextFilters.permissionScope);
       if (nextSort !== "relevance") params.set("sort", nextSort);
+      if (nextPage > 1) params.set("page", String(nextPage));
       if (nextViewMode !== "list") params.set("viewMode", nextViewMode);
 
       const query = params.toString();
       router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
     },
-    [filters, keyword, pathname, router, sort, viewMode],
+    [filters, keyword, mode, page, pathname, router, sort, viewMode],
   );
 
   const loadHistory = useCallback(async () => {
     try {
-      const items = await searchApi.getSearchHistory({ limit: 10 });
-      setHistoryItems(items);
+      setHistoryItems(await searchApi.getSearchHistory({ limit: 10 }));
     } catch {
       setHistoryItems([]);
     }
@@ -137,8 +160,7 @@ export default function SearchPageClient() {
   const loadHotSearch = useCallback(async (range: NonNullable<HotSearchQuery["range"]>) => {
     setHotLoading(true);
     try {
-      const items = await searchApi.getHotSearch({ range, limit: 10 });
-      setHotItems(items);
+      setHotItems(await searchApi.getHotSearch({ range, limit: 10 }));
     } catch {
       setHotItems([]);
     } finally {
@@ -146,8 +168,39 @@ export default function SearchPageClient() {
     }
   }, []);
 
+  const loadLandingData = useCallback(async () => {
+    setLandingLoading(true);
+    const [folderResult, documentsResult] = await Promise.allSettled([
+      foldersApi.tree(),
+      documentsApi.list({ page: 1, pageSize: 12 }),
+    ]);
+
+    setLandingErrors({
+      categories: folderResult.status === "rejected" ? "知识库暂时无法加载。" : undefined,
+      recentDocuments: documentsResult.status === "rejected" ? "最近更新暂时无法加载。" : undefined,
+    });
+
+    if (folderResult.status === "fulfilled") {
+      setCategories(flattenFolders(folderResult.value).slice(0, 8));
+    }
+    if (documentsResult.status === "fulfilled") {
+      setRecentDocuments(
+        [...documentsResult.value.items]
+          .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+          .slice(0, 6),
+      );
+    }
+    setLandingLoading(false);
+  }, []);
+
   const runSearch = useCallback(
-    async (nextKeyword = keyword, nextFilters = filters, nextSort = sort, nextViewMode = viewMode) => {
+    async (
+      nextKeyword = keyword,
+      nextFilters = filters,
+      nextMode = mode,
+      nextSort = sort,
+      nextPage = page,
+    ) => {
       const trimmedKeyword = nextKeyword.trim();
       if (!trimmedKeyword && !hasAnySearchFilter(nextFilters)) {
         setResult(null);
@@ -155,23 +208,25 @@ export default function SearchPageClient() {
         setError(null);
         setLoading(false);
         lastQueryKey.current = "";
+        hasSuccessfulResult.current = false;
         return;
       }
 
       const query: SearchListQuery = {
+        mode: nextMode,
         fileType: nextFilters.fileType || undefined,
         updateTimeRange: isMeaningfulFilterValue(nextFilters.updateTimeRange)
           ? nextFilters.updateTimeRange
           : undefined,
         categoryId: nextFilters.categoryId || undefined,
-        permissionScope: nextFilters.permissionScope as DocumentPermissionScope | undefined,
         sort: nextSort,
-        viewMode: nextViewMode,
-        page: 1,
+        page: nextPage,
         pageSize: DEFAULT_PAGE_SIZE,
       };
-      if (trimmedKeyword) query.keyword = trimmedKeyword;
-      if (trimmedKeyword) query.q = trimmedKeyword;
+      if (trimmedKeyword) {
+        query.keyword = trimmedKeyword;
+        query.q = trimmedKeyword;
+      }
 
       const queryKey = JSON.stringify(query);
       if (queryKey === lastQueryKey.current) return;
@@ -185,25 +240,34 @@ export default function SearchPageClient() {
         if (requestId !== requestSeq.current) return;
         setResult(response);
         setHits(response.hits);
+        lastSuccessfulPage.current = response.page;
+        hasSuccessfulResult.current = true;
         if (trimmedKeyword) void loadHistory();
       } catch (cause) {
         if (requestId !== requestSeq.current) return;
         lastQueryKey.current = "";
-        setResult(null);
-        setHits([]);
-        setError(cause instanceof Error ? cause.message : "搜索失败，请稍后重试");
-      } finally {
-        if (requestId === requestSeq.current) {
-          setLoading(false);
+        // Keep the prior page visible during a failed refresh or page change.
+        setError(cause instanceof Error ? cause.message : "搜索失败，请稍后重试。");
+        if (hasSuccessfulResult.current && nextPage !== lastSuccessfulPage.current && typeof window !== "undefined") {
+          const rollbackPage = lastSuccessfulPage.current;
+          setPage(rollbackPage);
+          const params = new URLSearchParams(window.location.search);
+          if (rollbackPage > 1) params.set("page", String(rollbackPage));
+          else params.delete("page");
+          const query = params.toString();
+          router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
         }
+      } finally {
+        if (requestId === requestSeq.current) setLoading(false);
       }
     },
-    [filters, keyword, loadHistory, sort, viewMode],
+    [filters, keyword, loadHistory, mode, page, pathname, router, sort],
   );
 
   useEffect(() => {
     void loadHistory();
-  }, [loadHistory]);
+    void loadLandingData();
+  }, [loadHistory, loadLandingData]);
 
   useEffect(() => {
     void loadHotSearch(hotRange);
@@ -213,12 +277,15 @@ export default function SearchPageClient() {
     const next = parseParams(new URLSearchParams(paramsKey));
     setInputValue(next.keyword);
     setKeyword(next.keyword);
+    setMode(next.mode);
     setFilters(next.filters);
     setSort(next.sort);
+    setPage(next.page);
     setViewMode(next.viewMode);
     if (!next.keyword.trim() && !hasAnySearchFilter(next.filters)) {
       requestSeq.current += 1;
       lastQueryKey.current = "";
+      hasSuccessfulResult.current = false;
       setResult(null);
       setHits([]);
       setError(null);
@@ -227,17 +294,16 @@ export default function SearchPageClient() {
   }, [paramsKey]);
 
   useEffect(() => {
-    if (showResults && shouldFetchResults) {
-      void runSearch(keyword, filters, sort, viewMode);
-    }
-  }, [filters, keyword, runSearch, shouldFetchResults, showResults, sort, viewMode]);
+    if (isResultsState) void runSearch(keyword, filters, mode, sort, page);
+  }, [filters, isResultsState, keyword, mode, page, runSearch, sort]);
 
   const submitKeyword = useCallback(
     (value = inputValue) => {
       const nextKeyword = value.trim();
       setInputValue(nextKeyword);
       setKeyword(nextKeyword);
-      replaceUrl({ keyword: nextKeyword });
+      setPage(1);
+      replaceUrl({ keyword: nextKeyword, page: 1 });
     },
     [inputValue, replaceUrl],
   );
@@ -246,7 +312,8 @@ export default function SearchPageClient() {
     (next: Partial<SearchFiltersValue>) => {
       const nextFilters = { ...filters, ...next };
       setFilters(nextFilters);
-      replaceUrl({ filters: nextFilters });
+      setPage(1);
+      replaceUrl({ filters: nextFilters, page: 1 });
     },
     [filters, replaceUrl],
   );
@@ -254,7 +321,8 @@ export default function SearchPageClient() {
   const clearFilters = useCallback(() => {
     const nextFilters: SearchFiltersValue = {};
     setFilters(nextFilters);
-    replaceUrl({ filters: nextFilters });
+    setPage(1);
+    replaceUrl({ filters: nextFilters, page: 1 });
   }, [replaceUrl]);
 
   const clearAll = useCallback(() => {
@@ -262,17 +330,30 @@ export default function SearchPageClient() {
     setInputValue("");
     setKeyword("");
     setFilters(nextFilters);
+    setMode("hybrid");
     setSort("relevance");
+    setPage(1);
     setResult(null);
     setHits([]);
     lastQueryKey.current = "";
-    replaceUrl({ keyword: "", filters: nextFilters, sort: "relevance", viewMode });
+    hasSuccessfulResult.current = false;
+    replaceUrl({ keyword: "", filters: nextFilters, mode: "hybrid", sort: "relevance", page: 1, viewMode });
   }, [replaceUrl, viewMode]);
+
+  const handleModeChange = useCallback(
+    (nextMode: SearchMode) => {
+      setMode(nextMode);
+      setPage(1);
+      replaceUrl({ mode: nextMode, page: 1 });
+    },
+    [replaceUrl],
+  );
 
   const handleSortChange = useCallback(
     (nextSort: SearchSortBy) => {
       setSort(nextSort);
-      replaceUrl({ sort: nextSort });
+      setPage(1);
+      replaceUrl({ sort: nextSort, page: 1 });
     },
     [replaceUrl],
   );
@@ -285,11 +366,21 @@ export default function SearchPageClient() {
     [replaceUrl],
   );
 
+  const handlePageChange = useCallback(
+    (nextPage: number) => {
+      if (nextPage < 1 || (nextPage > page && !hasMore)) return;
+      setPage(nextPage);
+      replaceUrl({ page: nextPage });
+    },
+    [hasMore, page, replaceUrl],
+  );
+
   const handleHotSelect = useCallback(
     (term: string) => {
       setInputValue(term);
       setKeyword(term);
-      replaceUrl({ keyword: term });
+      setPage(1);
+      replaceUrl({ keyword: term, page: 1 });
     },
     [replaceUrl],
   );
@@ -298,8 +389,11 @@ export default function SearchPageClient() {
     (item: SearchHistoryItem) => {
       setInputValue(item.query);
       setKeyword(item.query);
-      setSort(item.sortBy);
-      replaceUrl({ keyword: item.query, sort: item.sortBy });
+      setMode(item.mode);
+      const nextSort = normalizeSearchSort(item.sortBy);
+      setSort(nextSort);
+      setPage(1);
+      replaceUrl({ keyword: item.query, mode: item.mode, sort: nextSort, page: 1 });
     },
     [replaceUrl],
   );
@@ -315,170 +409,315 @@ export default function SearchPageClient() {
   }, []);
 
   const handleCategorySelect = useCallback(
-    (item: RecommendedCategory) => {
-      const nextFilters: SearchFiltersValue = { ...filters, categoryId: item.id };
-      setInputValue(item.label);
-      setKeyword(item.label);
+    (category: Folder) => {
+      const nextFilters: SearchFiltersValue = { ...filters, categoryId: category.id };
       setFilters(nextFilters);
-      replaceUrl({ keyword: item.label, filters: nextFilters });
+      setPage(1);
+      // A folder ID is the query scope, not a replacement keyword.
+      replaceUrl({ filters: nextFilters, page: 1 });
     },
     [filters, replaceUrl],
   );
 
-  const openSearchHit = useCallback((hit: SearchHit) => {
-    if (typeof window !== "undefined") {
-      window.open(buildDocumentFileUrl(hit.documentId), "_blank", "noopener,noreferrer");
+  const removeSelectedFilter = useCallback(
+    (key: string) => {
+      if (key === "categoryId") applyFilters({ categoryId: undefined });
+      if (key === "fileType") applyFilters({ fileType: undefined });
+      if (key === "updateTimeRange") applyFilters({ updateTimeRange: undefined });
+    },
+    [applyFilters],
+  );
+
+  const handleKnowledgeBaseSelect = useCallback(
+    (item: SearchKnowledgeBase) => {
+      const category = categories.find((entry) => entry.id === item.id);
+      if (category) handleCategorySelect(category);
+    },
+    [categories, handleCategorySelect],
+  );
+
+  const openDocumentBlob = useCallback(async (
+    documentId: string,
+    title: string,
+    download = false,
+  ) => {
+    if (typeof window === "undefined") return;
+    setActionFeedback(null);
+    const popup = download ? null : window.open("about:blank", "_blank");
+    if (popup) popup.opener = null;
+    try {
+      const blob = await getDocumentFileBlob(documentId, { download });
+      const blobUrl = URL.createObjectURL(blob);
+      if (download) {
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = title;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1_000);
+      } else if (popup) {
+        popup.location.replace(blobUrl);
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      } else {
+        window.open(blobUrl, "_blank", "noopener,noreferrer");
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      }
+    } catch (cause) {
+      popup?.close();
+      setActionFeedback(cause instanceof Error ? cause.message : "文档打开失败，请稍后重试。");
     }
   }, []);
+
+  const handleRecentDocumentSelect = useCallback((item: RecentSearchDocument) => {
+    if (isMarkdownTitle(item.title)) {
+      setMarkdownPreview({ id: item.id, title: item.title });
+    } else if (isPdfTitle(item.title)) {
+      setPdfPreview({ id: item.id, title: item.title });
+    } else {
+      void openDocumentBlob(item.id, item.title);
+    }
+  }, [openDocumentBlob]);
+
+  const recordHitEvent = useCallback(
+    (hit: SearchHit, eventType: SearchEventType) => {
+      if (!keyword.trim()) return;
+      void searchApi
+        .recordSearchEvent({
+          keyword: keyword.trim(),
+          eventType,
+          documentId: hit.documentId,
+          interactionToken: hit.interactionToken ?? null,
+        })
+        .catch(() => undefined);
+    },
+    [keyword],
+  );
+
+  const openOriginalSearchHit = useCallback((hit: SearchHit) => {
+    recordHitEvent(hit, "DOCUMENT_VIEW");
+    void openDocumentBlob(hit.documentId, hit.documentTitle);
+  }, [openDocumentBlob, recordHitEvent]);
+
+  const previewSearchHit = useCallback(
+    (hit: SearchHit) => {
+      recordHitEvent(hit, "DOCUMENT_VIEW");
+      if (isMarkdownHit(hit)) {
+        setMarkdownPreview({ id: hit.documentId, title: hit.documentTitle, canDownload: hit.canDownload !== false });
+      } else if (isPdfHit(hit)) {
+        setPdfPreview({ id: hit.documentId, title: hit.documentTitle, page: hit.page ?? undefined, canDownload: hit.canDownload !== false });
+      } else {
+        void openDocumentBlob(hit.documentId, hit.documentTitle);
+      }
+    },
+    [openDocumentBlob, recordHitEvent],
+  );
 
   const downloadSearchHit = useCallback((hit: SearchHit) => {
-    if (typeof window !== "undefined") {
-      window.open(buildDocumentFileUrl(hit.documentId), "_blank", "noopener,noreferrer");
+    if (!hit.canDownload) {
+      setActionFeedback("你没有下载此文档的权限。");
+      return;
     }
-  }, []);
+    recordHitEvent(hit, "DOCUMENT_DOWNLOAD");
+    void openDocumentBlob(hit.documentId, hit.documentTitle, true);
+  }, [openDocumentBlob, recordHitEvent]);
 
-  if (!showResults) {
+  if (!isResultsState) {
     return (
-      <SearchLanding
-        inputValue={inputValue}
-        hotItems={hotItems}
-        historyItems={historyItems}
-        recommendedCategories={RECOMMENDED_CATEGORIES}
-        selectedCategoryId={filters.categoryId}
-        hotRange={hotRange}
-        hotLoading={hotLoading}
-        onInputChange={setInputValue}
-        onSubmit={() => submitKeyword()}
-        onAdvancedSearch={() => setAdvancedOpen(true)}
-        onHotRangeChange={setHotRange}
-        onHotSelect={handleHotSelect}
-        onHistorySelect={handleHistorySelect}
-        onHistoryDelete={handleHistoryDelete}
-        onHistoryClear={handleHistoryClear}
-        onCategorySelect={handleCategorySelect}
-      />
+      <>
+        <div data-search-state="landing">
+          <SearchLanding
+            inputValue={inputValue}
+            hotItems={hotItems}
+            historyItems={historyItems}
+            hotRange={hotRange}
+            hotLoading={hotLoading}
+            knowledgeBases={landingKnowledgeBases}
+            recentDocuments={landingRecentDocuments}
+            knowledgeBasesLoading={landingLoading}
+            recentDocumentsLoading={landingLoading}
+            knowledgeBasesError={landingErrors.categories}
+            recentDocumentsError={landingErrors.recentDocuments}
+            advancedOpen={advancedOpen}
+            filtersContent={advancedOpen ? (
+              <div className="mt-6 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <SearchFilters
+                  value={filters}
+                  expanded
+                  knowledgeBases={knowledgeBaseOptions}
+                  mode={mode}
+                  showPermission={false}
+                  onModeChange={handleModeChange}
+                  onChange={applyFilters}
+                  onClear={clearFilters}
+                  onToggleExpanded={() => setAdvancedOpen(false)}
+                />
+              </div>
+            ) : undefined}
+            onInputChange={setInputValue}
+            onSubmit={() => submitKeyword()}
+            onAdvancedSearch={() => setAdvancedOpen((open) => !open)}
+            onHotRangeChange={setHotRange}
+            onHotSelect={handleHotSelect}
+            onHistorySelect={handleHistorySelect}
+            onHistoryDelete={handleHistoryDelete}
+            onHistoryClear={handleHistoryClear}
+            onKnowledgeBaseSelect={handleKnowledgeBaseSelect}
+            onRecentDocumentSelect={handleRecentDocumentSelect}
+          />
+        </div>
+        {pdfPreview && <PdfViewerModal documentId={pdfPreview.id} title={pdfPreview.title} initialPage={pdfPreview.page} canDownload={pdfPreview.canDownload} onClose={() => setPdfPreview(null)} />}
+        {markdownPreview && <MarkdownPreviewModal documentId={markdownPreview.id} title={markdownPreview.title} canDownload={markdownPreview.canDownload} onClose={() => setMarkdownPreview(null)} />}
+      </>
     );
   }
 
   return (
-    <div className="flex min-h-full bg-white" data-search-labels={compositionForSourceAssertion}>
-      <SearchSectionNav compact onFilterClick={() => setAdvancedOpen(true)} />
-      <div className="min-w-0 flex-1">
-        <div className="border-b border-slate-200 bg-white px-8 py-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative h-10 min-w-[260px] flex-1">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                className="h-10 w-full rounded border border-slate-300 bg-white pl-10 pr-9 text-[13px] outline-none transition placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                placeholder="请输入文档标题、内容关键词"
-                value={inputValue}
-                onChange={(event) => setInputValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") submitKeyword();
-                }}
-              />
-              {inputValue && (
-                <button
-                  className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-slate-400 hover:bg-slate-100"
-                  onClick={clearAll}
-                  title="清空关键词"
-                  type="button"
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-            <button
-              className="inline-flex h-10 items-center gap-1.5 rounded bg-brand-600 px-5 text-[13px] font-medium text-white transition hover:bg-brand-700"
-              onClick={() => submitKeyword()}
-              type="button"
-            >
-              <Search size={14} />
-              搜索
-            </button>
-          </div>
+    <div className="min-h-full bg-white" data-search-state="results">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-8">
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchBox inputValue={inputValue} compact onInputChange={setInputValue} onSubmit={() => submitKeyword()} />
+          <button
+            aria-label="清空搜索条件"
+            className="grid h-11 w-11 place-items-center rounded border border-slate-200 text-slate-500 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            onClick={clearAll}
+            type="button"
+          >
+            <X size={17} />
+          </button>
         </div>
-
-        <SearchFilters
-          id="search-filters"
-          value={filters}
-          expanded={advancedOpen}
-          onChange={applyFilters}
-          onClear={clearFilters}
-          onToggleExpanded={() => setAdvancedOpen((open) => !open)}
-        />
-
-        <SearchResultsToolbar
-          total={result?.total ?? hits.length}
-          took={result?.took}
-          sort={sort}
-          viewMode={viewMode}
-          permissionNotice={hits.some((hit) => hit.canDownload === false)}
-          onSortChange={handleSortChange}
-          onViewModeChange={handleViewModeChange}
-        />
-
-        {loading && (
-          <div className="flex h-48 items-center justify-center gap-2 text-sm text-slate-500">
-            <Loader2 size={16} className="animate-spin" />
-            正在搜索...
-          </div>
-        )}
-
-        {!loading && error && (
-          <div className="mx-8 my-6 flex items-start gap-2 rounded border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-            <AlertCircle size={16} className="mt-0.5 shrink-0" />
-            <div>
-              <div className="font-medium">搜索失败</div>
-              <div className="mt-1 text-xs">{error}</div>
-            </div>
-          </div>
-        )}
-
-        {!loading && !error && hits.length === 0 && (
-          <div className="mx-8 my-8 rounded border border-slate-200 bg-slate-50 p-10 text-center">
-            <div className="text-sm font-medium text-slate-900">
-              {keyword.trim() || hasActiveFilter ? "没有找到匹配结果" : "请先输入关键词"}
-            </div>
-            <div className="mt-2 text-xs text-slate-500">
-              {keyword.trim() || hasActiveFilter ? "请调整关键词或清空筛选后重试" : "请先输入关键词，筛选会与关键词组合生效"}
-            </div>
-            <button
-              className="mt-4 inline-flex h-8 items-center rounded bg-white px-3 text-xs text-brand-700 ring-1 ring-slate-200 hover:bg-brand-50"
-              onClick={clearFilters}
-              type="button"
-            >
-              清空筛选
-            </button>
-          </div>
-        )}
-
-        {!loading &&
-          !error &&
-          hits.length > 0 &&
-          (viewMode === "list" ? (
-            <SearchResultList hits={hits} onDownload={downloadSearchHit} onView={openSearchHit} />
-          ) : (
-            <SearchResultGrid hits={hits} onDownload={downloadSearchHit} onView={openSearchHit} />
-          ))}
       </div>
+
+      <SearchFilters
+        id="search-filters"
+        value={filters}
+        expanded={advancedOpen}
+        knowledgeBases={knowledgeBaseOptions}
+        mode={mode}
+        showPermission={false}
+        onModeChange={handleModeChange}
+        onChange={applyFilters}
+        onClear={clearFilters}
+        onToggleExpanded={() => setAdvancedOpen((open) => !open)}
+      />
+
+      <SearchSelectedFilters items={selectedFilterItems} onRemove={removeSelectedFilter} onClear={clearFilters} />
+
+      <SearchResultsToolbar
+        total={result?.total ?? hits.length}
+        took={result?.took}
+        sort={sort}
+        viewMode={viewMode}
+        page={displayedPage}
+        pageSize={DEFAULT_PAGE_SIZE}
+        truncated={result?.truncated}
+        resultLimit={result?.resultLimit}
+        permissionNotice={hits.some((hit) => hit.canDownload === false)}
+        onSortChange={handleSortChange}
+        onViewModeChange={handleViewModeChange}
+      />
+
+      {loading && hits.length > 0 && (
+        <div aria-live="polite" className="flex min-h-11 items-center gap-2 border-y border-brand-100 bg-brand-50 px-8 text-sm text-brand-800">
+          正在更新搜索结果…
+        </div>
+      )}
+
+      {loading && hits.length === 0 && <SearchLoadingSkeleton />}
+
+      {error && hits.length === 0 && <SearchErrorState message={error} onRetry={() => void runSearch()} />}
+
+      {error && hits.length > 0 && <SearchErrorState message={`${error}，当前仍显示上一次结果。`} onRetry={() => void runSearch()} />}
+
+      {actionFeedback && (
+        <div aria-live="polite" className="mx-4 my-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 sm:mx-8">
+          {actionFeedback}
+        </div>
+      )}
+
+      {!loading && !error && hits.length === 0 && <SearchEmptyState filtered onClear={clearFilters} />}
+
+      {hits.length > 0 && (viewMode === "list" ? (
+        <SearchResultList
+          hits={hits}
+          onPreview={previewSearchHit}
+          onOpenOriginal={openOriginalSearchHit}
+          onDownload={downloadSearchHit}
+        />
+      ) : (
+        <SearchResultGrid
+          hits={hits}
+          onPreview={previewSearchHit}
+          onOpenOriginal={openOriginalSearchHit}
+          onDownload={downloadSearchHit}
+        />
+      ))}
+
+      {(hits.length > 0 || result) && (
+        <SearchPagination page={displayedPage} pageSize={DEFAULT_PAGE_SIZE} total={result?.total ?? hits.length} truncated={result?.truncated} onPageChange={handlePageChange} />
+      )}
+
+      {pdfPreview && <PdfViewerModal documentId={pdfPreview.id} title={pdfPreview.title} initialPage={pdfPreview.page} canDownload={pdfPreview.canDownload} onClose={() => setPdfPreview(null)} />}
+      {markdownPreview && <MarkdownPreviewModal documentId={markdownPreview.id} title={markdownPreview.title} canDownload={markdownPreview.canDownload} onClose={() => setMarkdownPreview(null)} />}
+    </div>
+  );
+}
+
+function SearchBox({
+  inputValue,
+  compact = false,
+  onInputChange,
+  onSubmit,
+}: {
+  inputValue: string;
+  compact?: boolean;
+  onInputChange: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className={compact ? "flex min-w-0 flex-1 flex-wrap gap-2" : "mt-6 flex flex-wrap gap-2"}>
+      <label className="sr-only" htmlFor="search-keyword">搜索关键词</label>
+      <div className="relative min-w-[220px] flex-1">
+        <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+        <input
+          className="h-11 w-full rounded border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-200"
+          id="search-keyword"
+          placeholder="输入文档标题或内容关键词"
+          value={inputValue}
+          onChange={(event) => onInputChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onSubmit();
+          }}
+        />
+      </div>
+      <button className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded bg-brand-600 px-5 text-sm font-medium text-white transition hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2" onClick={onSubmit} type="button">
+        <Search size={16} />
+        搜索
+      </button>
     </div>
   );
 }
 
 function parseParams(params: Pick<URLSearchParams, "get">): ParsedSearchParams {
-  const keyword = params.get("keyword") || params.get("q") || "";
   const rawSort = params.get("sort");
-  const sort = rawSort && SEARCH_SORTS.includes(rawSort as SearchSortBy) ? (rawSort as SearchSortBy) : "relevance";
-  const viewMode: "list" | "grid" = params.get("viewMode") === "grid" ? "grid" : "list";
-  const filters: SearchFiltersValue = {
-    fileType: params.get("fileType") || undefined,
-    updateTimeRange: normalizeUpdateTimeRange(params.get("updateTimeRange")),
-    categoryId: params.get("categoryId") || undefined,
-    permissionScope: (params.get("permissionScope") as DocumentPermissionScope | null) || undefined,
+  const rawMode = params.get("mode");
+  const rawPage = Number(params.get("page"));
+  return {
+    keyword: params.get("keyword") || params.get("q") || "",
+    mode: rawMode === "semantic" || rawMode === "keyword" ? rawMode : "hybrid",
+    sort: rawSort && SEARCH_SORTS.includes(rawSort as SearchSortBy) ? (rawSort as SearchSortBy) : "relevance",
+    page: Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1,
+    viewMode: params.get("viewMode") === "grid" ? "grid" : "list",
+    filters: {
+      fileType: params.get("fileType") || undefined,
+      updateTimeRange: normalizeUpdateTimeRange(params.get("updateTimeRange")),
+      categoryId: params.get("categoryId") || undefined,
+    },
   };
+}
 
-  return { keyword, sort, viewMode, filters };
+function flattenFolders(folders: Folder[]): Folder[] {
+  return folders.flatMap((folder) => [folder, ...flattenFolders(folder.children ?? [])]);
 }
 
 function isMeaningfulFilterValue(value: unknown) {
@@ -486,11 +725,41 @@ function isMeaningfulFilterValue(value: unknown) {
 }
 
 function hasAnySearchFilter(value: SearchFiltersValue) {
-  return Object.values(value).some(isMeaningfulFilterValue);
+  return Boolean(value.fileType || value.categoryId || isMeaningfulFilterValue(value.updateTimeRange));
 }
 
 function normalizeUpdateTimeRange(value: string | null): SearchFiltersValue["updateTimeRange"] | undefined {
-  if (!value || value === "all") return undefined;
-  if (value === "today" || value === "7d" || value === "30d" || value === "custom") return value;
-  return undefined;
+  return value === "today" || value === "7d" || value === "30d" ? value : undefined;
+}
+
+function normalizeSearchSort(value: SearchSortBy): SearchSortBy {
+  return SEARCH_SORTS.includes(value) ? value : "relevance";
+}
+
+function isMarkdownTitle(title: string) {
+  const lower = title.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
+}
+
+function isPdfTitle(title: string) {
+  return title.toLowerCase().endsWith(".pdf");
+}
+
+function isMarkdownHit(hit: SearchHit) {
+  return hit.mime?.toLowerCase().includes("markdown") || isMarkdownTitle(hit.documentTitle);
+}
+
+function isPdfHit(hit: SearchHit) {
+  return hit.mime?.toLowerCase() === "application/pdf" || isPdfTitle(hit.documentTitle);
+}
+
+function fileTypeOfDocument(document: DocumentDto) {
+  const mime = (document.mime || "").toLowerCase();
+  const title = document.title.toLowerCase();
+  if (mime === "application/pdf" || title.endsWith(".pdf")) return "PDF";
+  if (mime.includes("word") || /\.docx?$/.test(title)) return "DOCX";
+  if (mime.includes("sheet") || /\.xlsx?$/.test(title)) return "XLSX";
+  if (mime.includes("presentation") || /\.pptx?$/.test(title)) return "PPTX";
+  if (mime.startsWith("text/") || isMarkdownTitle(title)) return "TXT";
+  return "FILE";
 }

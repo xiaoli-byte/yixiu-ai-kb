@@ -3,11 +3,13 @@ import type {
   HotSearchItem,
   HotSearchQuery,
   SearchHistoryItem,
+  SearchEventRequest,
+  SearchEventResponse,
   SearchListQuery,
   SearchListResponse,
   SearchRequest,
   SearchResponse,
-} from "@/types/api";
+} from "@/types/api/search";
 
 // 搜索
 export async function search(params: SearchRequest): Promise<SearchResponse> {
@@ -16,6 +18,10 @@ export async function search(params: SearchRequest): Promise<SearchResponse> {
 
 export async function searchList(query: SearchListQuery = {}): Promise<SearchListResponse> {
   return apiClient.get<SearchListResponse>("/search", { query: query as Record<string, unknown> });
+}
+
+export async function recordSearchEvent(event: SearchEventRequest): Promise<SearchEventResponse> {
+  return apiClient.post<SearchEventResponse>("/search/events", event);
 }
 
 export async function getHotSearch(query: HotSearchQuery = {}): Promise<HotSearchItem[]> {

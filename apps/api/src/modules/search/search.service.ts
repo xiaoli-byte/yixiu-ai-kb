@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { randomUUID } from "crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { HotSearchQuery, SearchListQuery } from "@ai-knowledge/schemas";
 import type { SearchSortBy } from "@ai-knowledge/schemas";
 import { DatabaseService } from "../../database/database.service";
@@ -9,6 +9,7 @@ import {
   type DocumentAccessFlags,
   type DocumentUserContext,
 } from "../documents/document-access.service";
+import { AppConfigService } from "../../config/app-config.service";
 
 export interface SearchHit {
   chunkId: string;
@@ -30,6 +31,7 @@ export interface SearchHit {
   page: number | null;  // PDF 页码（1-based）
   updatedAt?: string | null;
   createdAt?: string | null;
+  interactionToken?: string;
 }
 
 export interface SearchHistoryItem {
@@ -66,8 +68,8 @@ type SearchFilters = {
   departmentId?: string;
   archived?: boolean;
   includeArchived?: boolean;
-  // 知识库维度（ai-call → retrieve）：映射到 documents.folder_id。仅当该 id 在本租户对应
-  // 一个真实 folder 时才生效（见 resolveKnowledgeBaseFilter），否则被丢弃退回租户级检索。
+  // 知识库维度（ai-call → retrieve）：映射到 documents.folder_id。无效或跨租户 id
+  // 会使本次检索返回空结果，绝不退化为租户级全库检索。
   knowledgeBaseId?: string;
 };
 
@@ -93,6 +95,16 @@ type SearchEventInput = {
   documentId?: string | null;
   contentId?: string | null;
   chunkId?: string | null;
+  interactionToken?: string | null;
+};
+
+type SearchInteractionTokenPayload = {
+  v: 1;
+  tenantId: string;
+  userId: string;
+  keyword: string;
+  documentId: string;
+  exp: number;
 };
 
 @Injectable()
@@ -106,6 +118,8 @@ export class SearchService {
   private readonly MAX_CHUNKS_PER_DOC = 2;
 
   private readonly SEARCH_LIST_MAX_CANDIDATES = 500;
+
+  private readonly INTERACTION_TOKEN_TTL_SECONDS = 10 * 60;
 
   /** RRF 融合参数 */
   private readonly RRF_K = 60;
@@ -193,9 +207,15 @@ export class SearchService {
     private readonly db: DatabaseService,
     private readonly embeddings: EmbeddingsService,
     private readonly access: DocumentAccessService,
+    private readonly config: AppConfigService,
   ) {}
 
-  async search(opts: SearchOptions): Promise<{ hits: SearchHit[]; took: number; hasRelevantResults: boolean }> {
+  async search(opts: SearchOptions): Promise<{
+    hits: SearchHit[];
+    took: number;
+    hasRelevantResults: boolean;
+    truncated: boolean;
+  }> {
     const t0 = Date.now();
     const actor = this.toDocumentUserContext(opts.user);
     const q = opts.q.trim();
@@ -204,26 +224,46 @@ export class SearchService {
     const candidateLimit = this.clampLimit(opts.candidateLimit ?? Math.max(k, 50), k, maxResults);
     const sortBy = opts.sortBy ?? "relevance";
     const filters = this.normalizeSearchFilters(opts);
-    await this.resolveKnowledgeBaseFilter(filters, actor);
+    const knowledgeBaseAllowed = await this.resolveKnowledgeBaseFilter(filters, actor);
+
+    // A requested knowledge base is a security boundary. Never turn an invalid or
+    // cross-tenant id into a broader tenant-wide search.
+    if (!knowledgeBaseAllowed) {
+      return { hits: [], took: Date.now() - t0, hasRelevantResults: false, truncated: false };
+    }
 
     if (!q) {
-      return { hits: [], took: Date.now() - t0, hasRelevantResults: false };
+      return { hits: [], took: Date.now() - t0, hasRelevantResults: false, truncated: false };
     }
 
     if (opts.mode === "keyword") {
       const hits = await this.bm25(actor, q, candidateLimit, filters);
       const deduped = this.deduplicateByDoc(hits, this.MAX_CHUNKS_PER_DOC);
       const accessible = await this.attachAccessFlags(deduped, actor);
-      const sorted = this.sortHits(accessible, sortBy).slice(0, k);
-      return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
+      const ranked = this.sortHits(accessible, sortBy);
+      const sorted = ranked.slice(0, k);
+      const signed = this.attachInteractionTokens(sorted, actor, q);
+      return {
+        hits: signed,
+        took: Date.now() - t0,
+        hasRelevantResults: sorted.length > 0,
+        truncated: hits.length >= candidateLimit || ranked.length > k,
+      };
     }
     if (opts.mode === "semantic") {
       const hits = await this.safeVector(actor, q, candidateLimit, filters);
       const filtered = hits.filter((h) => h.score >= this.VECTOR_THRESHOLD);
       const deduped = this.deduplicateByDoc(filtered, this.MAX_CHUNKS_PER_DOC);
       const accessible = await this.attachAccessFlags(deduped, actor);
-      const sorted = this.sortHits(accessible, sortBy).slice(0, k);
-      return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
+      const ranked = this.sortHits(accessible, sortBy);
+      const sorted = ranked.slice(0, k);
+      const signed = this.attachInteractionTokens(sorted, actor, q);
+      return {
+        hits: signed,
+        took: Date.now() - t0,
+        hasRelevantResults: sorted.length > 0,
+        truncated: hits.length >= candidateLimit || ranked.length > k,
+      };
     }
 
     // hybrid - 多策略检索：BM25 精确 + 向量 + trigram 兜底
@@ -237,11 +277,14 @@ export class SearchService {
 
     // 两路 RRF 融合
     let rrf = this.rrfFuse(bm25Hits, filteredVec, this.RRF_K, candidateLimit);
+    let candidateWindowTruncated =
+      bm25Hits.length >= candidateLimit || vecHits.length >= candidateLimit || rrf.length >= candidateLimit;
 
     // 如果 RRF 结果为空，使用 trigram 模糊搜索作为兜底
     if (rrf.length === 0) {
       this.logger.debug("RRF 无结果，触发 trigram 兜底检索");
       const trgmHits = await this.trgmSearch(actor, q, candidateLimit, filters);
+      candidateWindowTruncated ||= trgmHits.length >= candidateLimit;
       if (trgmHits.length > 0) {
         rrf = this.rrfFuseTrgm(trgmHits, this.RRF_K, candidateLimit);
       }
@@ -249,13 +292,20 @@ export class SearchService {
 
     const deduped = this.deduplicateByDoc(rrf, this.MAX_CHUNKS_PER_DOC);
     const accessible = await this.attachAccessFlags(deduped, actor);
-    const sorted = this.sortHits(accessible, sortBy).slice(0, k);
+    const ranked = this.sortHits(accessible, sortBy);
+    const sorted = ranked.slice(0, k);
+    const signed = this.attachInteractionTokens(sorted, actor, q);
 
     this.logger.debug(
       `search: bm25=${bm25Hits.length} vec=${filteredVec.length} -> rrf=${rrf.length} deduped=${deduped.length} sorted=${sorted.length}`,
     );
 
-    return { hits: sorted, took: Date.now() - t0, hasRelevantResults: sorted.length > 0 };
+    return {
+      hits: signed,
+      took: Date.now() - t0,
+      hasRelevantResults: sorted.length > 0,
+      truncated: candidateWindowTruncated || ranked.length > k,
+    };
   }
 
   /**
@@ -966,7 +1016,19 @@ export class SearchService {
   async searchList(rawQuery: unknown, user?: any) {
     const parsed = SearchListQuery.safeParse(rawQuery ?? {});
     if (!parsed.success) {
-      return { query: "", sortBy: "relevance", total: 0, hits: [], took: 0, page: 1, pageSize: 20, error: "invalid_query" };
+      return {
+        query: "",
+        mode: "hybrid" as const,
+        sortBy: "relevance" as const,
+        total: 0,
+        hits: [],
+        took: 0,
+        page: 1,
+        pageSize: 20,
+        hasMore: false,
+        truncated: false,
+        error: "invalid_query",
+      };
     }
 
     const query = parsed.data;
@@ -975,51 +1037,72 @@ export class SearchService {
       if (this.hasActiveSearchListFilter(query)) {
         return this.searchListByFilters(query, user);
       }
-      return { query: "", sortBy: query.sort, total: 0, hits: [], took: 0, page: query.page, pageSize: query.pageSize };
+      return {
+        query: "",
+        mode: query.mode,
+        sortBy: query.sort,
+        total: 0,
+        hits: [],
+        took: 0,
+        page: query.page,
+        pageSize: query.pageSize,
+        hasMore: false,
+        truncated: false,
+      };
     }
 
     const actor = this.toDocumentUserContext(user);
-    const topK = Math.min(query.page * query.pageSize, this.SEARCH_LIST_MAX_CANDIDATES);
     const result = await this.search({
       q: keyword,
-      mode: "hybrid",
+      mode: query.mode,
       sortBy: query.sort,
-      topK,
+      // SearchList needs the complete bounded result window so total/hasMore are not
+      // confused with the current page. The cap keeps vector/BM25 work predictable.
+      topK: this.SEARCH_LIST_MAX_CANDIDATES,
       maxResults: this.SEARCH_LIST_MAX_CANDIDATES,
-      candidateLimit: topK,
+      candidateLimit: this.SEARCH_LIST_MAX_CANDIDATES,
       filters: query,
       user,
     });
     const offset = (query.page - 1) * query.pageSize;
     const hits = result.hits.slice(offset, offset + query.pageSize);
+    const total = result.hits.length;
 
-    await this.recordHistory({
-      q: keyword,
-      mode: "hybrid",
-      sortBy: query.sort,
-      topK,
-      resultCount: result.hits.length,
-      tenantId: actor.tenantId,
-      userId: actor.userId,
-    });
-    await this.recordSearchEvent({
-      keyword,
-      eventType: "SEARCH",
-      resultCount: result.hits.length,
-      tenantId: actor.tenantId,
-      userId: actor.userId,
-      categoryId: query.categoryId ?? null,
-    });
+    // Pagination is browsing an existing result set, not another explicit search.
+    // Record the initial keyword request exactly once; filter-only browsing never reaches here.
+    if (query.page === 1) {
+      await this.recordHistory({
+        q: keyword,
+        mode: query.mode,
+        sortBy: query.sort,
+        topK: query.pageSize,
+        resultCount: total,
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+      });
+      await this.recordSearchEvent({
+        keyword,
+        eventType: "SEARCH",
+        resultCount: total,
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+        categoryId: query.categoryId ?? null,
+      });
+    }
 
     return {
       query: keyword,
+      mode: query.mode,
       sortBy: query.sort,
-      total: result.hits.length,
+      total,
       hits,
       took: result.took,
       page: query.page,
       pageSize: query.pageSize,
+      hasMore: offset + hits.length < total,
       hasRelevantResults: result.hasRelevantResults,
+      truncated: result.truncated || total >= this.SEARCH_LIST_MAX_CANDIDATES,
+      resultLimit: this.SEARCH_LIST_MAX_CANDIDATES,
     };
   }
 
@@ -1086,6 +1169,19 @@ export class SearchService {
       values,
     );
 
+    let total = rows[0]?.totalCount ? Number(rows[0].totalCount) : 0;
+    if (rows.length === 0 && query.page > 1) {
+      const countRows = await this.db.query<{ totalCount: number | string }>(
+        `SELECT COUNT(*)::int AS "totalCount"
+         FROM documents d
+         LEFT JOIN document_contents dc ON dc.id = d.content_id
+         LEFT JOIN users u ON u.id = d.owner_id AND u.tenant_id = d.tenant_id
+         WHERE ${queryParts.whereSql}`,
+        queryParts.values.slice(0, -1),
+      );
+      total = Number(countRows[0]?.totalCount ?? 0);
+    }
+
     const hits = await this.attachAccessFlags(
       rows.map((row) => this.mapFilterDocumentRow(row)),
       actor,
@@ -1093,13 +1189,16 @@ export class SearchService {
 
     return {
       query: "",
+      mode: query.mode,
       sortBy: query.sort,
-      total: rows[0]?.totalCount ? Number(rows[0].totalCount) : 0,
+      total,
       hits,
       took: Date.now() - t0,
       page: query.page,
       pageSize: query.pageSize,
+      hasMore: query.page * query.pageSize < total,
       hasRelevantResults: hits.length > 0,
+      truncated: false,
     };
   }
 
@@ -1255,6 +1354,77 @@ export class SearchService {
     }
   }
 
+  /**
+   * Records an untrusted client interaction only after resolving its target inside
+   * the authenticated tenant and checking the actor's effective document access.
+   * SEARCH events are server-generated by the actual search paths and are not
+   * accepted through the public telemetry endpoint.
+   */
+  async recordResultInteraction(input: SearchEventInput, user?: any): Promise<boolean> {
+    const actor = this.toDocumentUserContext(user);
+    const keyword = this.normalizeKeyword(input.keyword ?? input.q ?? "");
+    const eventType = this.normalizeSearchEventType(input.eventType);
+    if (
+      !actor.tenantId
+      || !actor.userId
+      || !keyword
+      || (eventType !== "DOCUMENT_VIEW" && eventType !== "DOCUMENT_DOWNLOAD")
+    ) return false;
+
+    const documentId = input.documentId?.trim() || null;
+    const interactionToken = input.interactionToken?.trim() || "";
+    if (!documentId || !interactionToken) return false;
+    if (!this.verifyInteractionToken(interactionToken, actor, keyword, documentId)) return false;
+
+    const targets = await this.db.query<{ documentId: string; categoryId: string | null }>(
+      `SELECT d.id AS "documentId", d.folder_id AS "categoryId"
+       FROM documents d
+       WHERE d.tenant_id = $1
+         AND d.deleted_at IS NULL
+         AND d.id = $2
+       LIMIT 1`,
+      [actor.tenantId, documentId],
+    );
+    if (targets.length !== 1) return false;
+
+    const target = targets[0];
+    const flags = (await this.access.getAccessFlags([target.documentId], actor))[target.documentId];
+    const allowed = eventType === "DOCUMENT_DOWNLOAD" ? flags?.canDownload : flags?.canView;
+    if (!allowed) return false;
+
+    const dedupeBucket = Math.floor(Date.now() / (5 * 60 * 1000));
+    const interactionId = `search_interaction_${createHmac("sha256", this.config.jwt.accessSecret)
+      .update(JSON.stringify([
+        actor.tenantId,
+        actor.userId,
+        keyword,
+        target.documentId,
+        eventType,
+        dedupeBucket,
+      ]))
+      .digest("hex")}`;
+
+    const inserted = await this.db.query<{ id: string }>(
+      `INSERT INTO search_events (
+         id, tenant_id, user_id, keyword, category_id, document_id,
+         content_id, chunk_id, result_count, event_type
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL, 0, $7)
+       ON CONFLICT (id) DO NOTHING
+       RETURNING id`,
+      [
+        interactionId,
+        actor.tenantId,
+        actor.userId,
+        keyword,
+        target.categoryId,
+        target.documentId,
+        eventType,
+      ],
+    );
+    return inserted.length === 1;
+  }
+
   private mapHotSearchRow(row: any): HotSearchItem & { resultCount: number } {
     const searchCount = this.numberOf(row.searchCount ?? row.search_count);
     const clickCount = this.numberOf(row.clickCount ?? row.click_count);
@@ -1337,38 +1507,32 @@ export class SearchService {
 
   /**
    * 解析 knowledgeBaseId（ai-call 的知识库 id）→ ai-knowledge 的 folder 维度。
-   *
-   * 优雅兜底：仅当该 id 在调用方租户下确实对应一个 folder 时才保留过滤（buildSearchQueryParts
-   * 会据此加 `d.folder_id = ...`）；否则丢弃该过滤，退回租户级全库检索。
-   *
-   * 这样做的原因：ai-call 一直在 retrieve 请求里携带 knowledgeBaseId，但两系统尚未对齐
-   * 「kb id ↔ folder id」。若无条件按 folder 过滤，未对齐时会命中 0 条、把当前可用的租户级
-   * 检索直接搞坏。存在性校验保证「已对齐→按库过滤生效；未对齐→行为不变」。
+   * 只有当前租户中真实存在的 folder 才允许继续检索；无效或跨租户 id 返回 false，
+   * 调用方据此直接返回空结果，避免越界扩大检索范围。
    */
   private async resolveKnowledgeBaseFilter(
     filters: SearchFilters,
     actor: DocumentUserContext,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const kbId = filters.knowledgeBaseId?.trim();
     if (!kbId) {
       delete filters.knowledgeBaseId;
-      return;
+      return true;
     }
     const tenantId = actor.tenantId;
     if (!tenantId) {
       delete filters.knowledgeBaseId;
-      return;
+      return false;
     }
     const rows = await this.db.query<{ id: string }>(
       `SELECT id FROM folders WHERE id = $1 AND tenant_id = $2 LIMIT 1`,
       [kbId, tenantId],
     );
     if (rows.length === 0) {
-      // 未对齐：退回租户级检索，不返回空
-      delete filters.knowledgeBaseId;
-    } else {
-      filters.knowledgeBaseId = kbId;
+      return false;
     }
+    filters.knowledgeBaseId = kbId;
+    return true;
   }
 
   private async attachAccessFlags(hits: SearchHit[], actor: DocumentUserContext): Promise<SearchHit[]> {
@@ -1386,6 +1550,69 @@ export class SearchService {
       ...hit,
       canDownload: flags?.canDownload ?? false,
     };
+  }
+
+  private attachInteractionTokens(
+    hits: SearchHit[],
+    actor: DocumentUserContext,
+    keyword: string,
+  ): SearchHit[] {
+    if (!actor.tenantId || !actor.userId) return hits;
+    const normalizedKeyword = this.normalizeKeyword(keyword);
+    if (!normalizedKeyword) return hits;
+    return hits.map((hit) => ({
+      ...hit,
+      interactionToken: this.createInteractionToken({
+        v: 1,
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+        keyword: normalizedKeyword,
+        documentId: hit.documentId,
+        exp: Math.floor(Date.now() / 1000) + this.INTERACTION_TOKEN_TTL_SECONDS,
+      }),
+    }));
+  }
+
+  private createInteractionToken(payload: SearchInteractionTokenPayload): string {
+    const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+    const signature = createHmac("sha256", this.config.jwt.accessSecret)
+      .update(encodedPayload)
+      .digest("base64url");
+    return `${encodedPayload}.${signature}`;
+  }
+
+  private verifyInteractionToken(
+    token: string,
+    actor: DocumentUserContext,
+    keyword: string,
+    documentId: string,
+  ): boolean {
+    try {
+      const [encodedPayload, providedSignature, extra] = token.split(".");
+      if (!encodedPayload || !providedSignature || extra) return false;
+      const expectedSignature = createHmac("sha256", this.config.jwt.accessSecret)
+        .update(encodedPayload)
+        .digest("base64url");
+      const provided = Buffer.from(providedSignature, "base64url");
+      const expected = Buffer.from(expectedSignature, "base64url");
+      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) return false;
+
+      const payload = JSON.parse(
+        Buffer.from(encodedPayload, "base64url").toString("utf8"),
+      ) as Partial<SearchInteractionTokenPayload>;
+      const now = Math.floor(Date.now() / 1000);
+      return payload.v === 1
+        && payload.exp !== undefined
+        && Number.isSafeInteger(payload.exp)
+        && payload.exp >= now
+        && payload.exp <= now + this.INTERACTION_TOKEN_TTL_SECONDS
+        && payload.tenantId === actor.tenantId
+        && payload.userId === actor.userId
+        && payload.keyword === keyword
+        && payload.documentId === documentId;
+    } catch {
+      return false;
+    }
   }
 
   async recordHistory(opts: {

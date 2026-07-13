@@ -1,12 +1,14 @@
 import { ChevronDown, SlidersHorizontal, X } from "lucide-react";
 import type { DocumentPermissionScope } from "@/types/api";
-import type { SearchListQuery } from "@/services/search";
+import type { SearchListQuery, SearchMode } from "@/services/search";
 import { cn } from "@/lib/utils";
 
-export type SearchFiltersValue = Pick<
-  SearchListQuery,
-  "fileType" | "categoryId" | "permissionScope" | "updateTimeRange"
->;
+export type SearchFiltersValue = Pick<SearchListQuery, "fileType" | "categoryId" | "permissionScope" | "updateTimeRange"> & {
+  knowledgeBaseId?: string;
+  folderId?: string;
+};
+
+export interface SearchFilterOption { value: string; label: string; }
 
 interface SearchFiltersProps {
   id?: string;
@@ -15,162 +17,50 @@ interface SearchFiltersProps {
   onChange: (next: Partial<SearchFiltersValue>) => void;
   onClear: () => void;
   onToggleExpanded: () => void;
+  knowledgeBases?: SearchFilterOption[];
+  folders?: SearchFilterOption[];
+  mode?: SearchMode;
+  onModeChange?: (mode: SearchMode) => void;
+  showPermission?: boolean;
 }
 
-const FILE_TYPES = [
-  { value: "", label: "全部类型" },
-  { value: "pdf", label: "PDF" },
-  { value: "docx", label: "DOCX" },
-  { value: "xlsx", label: "XLSX" },
-  { value: "pptx", label: "PPTX" },
-  { value: "txt", label: "TXT" },
+const FILE_TYPES: SearchFilterOption[] = [
+  { value: "", label: "全部文件类型" }, { value: "pdf", label: "PDF" }, { value: "docx", label: "DOCX" },
+  { value: "xlsx", label: "XLSX" }, { value: "pptx", label: "PPTX" }, { value: "txt", label: "TXT" },
 ];
-
-const UPDATE_TIMES: Array<{ value: NonNullable<SearchFiltersValue["updateTimeRange"]> | ""; label: string }> = [
-  { value: "", label: "全部时间" },
-  { value: "today", label: "今天" },
-  { value: "7d", label: "近 7 天" },
+const UPDATE_TIMES: SearchFilterOption[] = [
+  { value: "", label: "全部更新时间" }, { value: "today", label: "今天" }, { value: "7d", label: "近 7 天" },
   { value: "30d", label: "近 30 天" },
-  { value: "custom", label: "自定义" },
+];
+const PERMISSIONS: Array<SearchFilterOption & { value: DocumentPermissionScope | "" }> = [
+  { value: "", label: "全部权限范围" }, { value: "PRIVATE", label: "仅本人可见" }, { value: "MEMBERS", label: "指定成员可见" },
+  { value: "DEPARTMENTS", label: "部门可见" }, { value: "COMPANY", label: "公司可见" }, { value: "PUBLIC", label: "公开可见" },
+];
+const MODES: Array<{ value: SearchMode; label: string; help: string }> = [
+  { value: "hybrid", label: "混合检索", help: "结合关键词与语义" }, { value: "keyword", label: "关键词", help: "匹配标题和正文" }, { value: "semantic", label: "语义检索", help: "按内容含义匹配" },
 ];
 
-const CATEGORIES = [
-  { value: "", label: "全部分类" },
-  { value: "policy", label: "制度规范" },
-  { value: "manual", label: "操作手册" },
-  { value: "training", label: "培训资料" },
-  { value: "project", label: "项目文档" },
-  { value: "technical", label: "技术方案" },
-];
-
-const PERMISSIONS: Array<{ value: DocumentPermissionScope | ""; label: string }> = [
-  { value: "", label: "全部权限" },
-  { value: "PRIVATE", label: "仅本人可见" },
-  { value: "MEMBERS", label: "指定成员可见" },
-  { value: "DEPARTMENTS", label: "部门可见" },
-  { value: "COMPANY", label: "公司可见" },
-  { value: "PUBLIC", label: "公开可见" },
-];
-
-export function SearchFilters({
-  id,
-  value,
-  expanded,
-  onChange,
-  onClear,
-  onToggleExpanded,
-}: SearchFiltersProps) {
+export function SearchFilters({ id, value, expanded, onChange, onClear, onToggleExpanded, knowledgeBases = [], folders = [], mode, onModeChange, showPermission = true }: SearchFiltersProps) {
   const hasFilter = Object.values(value).some(isMeaningfulFilterValue);
-
   return (
-    <div className="scroll-mt-4 border-b border-slate-200 bg-white px-8 py-3" id={id}>
+    <div className="scroll-mt-4 border-b border-slate-200 bg-white px-4 py-3 sm:px-8" id={id}>
       <div className="flex flex-wrap items-center gap-2">
-        <FilterSelect
-          label="文件类型"
-          value={value.fileType ?? ""}
-          options={FILE_TYPES}
-          onChange={(fileType) => onChange({ fileType: fileType || undefined })}
-        />
-        <FilterSelect
-          label="更新时间"
-          value={value.updateTimeRange ?? ""}
-          options={UPDATE_TIMES}
-          onChange={(updateTimeRange) =>
-            onChange({ updateTimeRange: (updateTimeRange || undefined) as SearchFiltersValue["updateTimeRange"] })
-          }
-        />
-        <FilterSelect
-          label="文档分类"
-          value={value.categoryId ?? ""}
-          options={CATEGORIES}
-          onChange={(categoryId) => onChange({ categoryId: categoryId || undefined })}
-        />
-        <FilterSelect
-          label="权限范围"
-          value={value.permissionScope ?? ""}
-          options={PERMISSIONS}
-          onChange={(permissionScope) =>
-            onChange({ permissionScope: (permissionScope || undefined) as DocumentPermissionScope | undefined })
-          }
-        />
-        <button
-          className={cn(
-            "inline-flex h-8 items-center gap-1 rounded border px-3 text-xs transition",
-            expanded
-              ? "border-brand-200 bg-brand-50 text-brand-700"
-              : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50",
-          )}
-          onClick={onToggleExpanded}
-          type="button"
-        >
-          <SlidersHorizontal size={13} />
-          高级搜索
-        </button>
-        <button
-          className="inline-flex h-8 items-center gap-1 rounded px-3 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-40"
-          disabled={!hasFilter}
-          onClick={onClear}
-          type="button"
-        >
-          <X size={13} />
-          清空筛选
-        </button>
+        {knowledgeBases.length > 0 && <FilterSelect label="知识库" value={value.categoryId ?? ""} options={[{ value: "", label: "全部知识库" }, ...knowledgeBases]} onChange={(categoryId) => onChange({ categoryId: categoryId || undefined })} />}
+        {folders.length > 0 && <FilterSelect label="文件夹" value={value.folderId ?? ""} options={[{ value: "", label: "全部文件夹" }, ...folders]} onChange={(folderId) => onChange({ folderId: folderId || undefined })} />}
+        <FilterSelect label="文件类型" value={value.fileType ?? ""} options={FILE_TYPES} onChange={(fileType) => onChange({ fileType: fileType || undefined })} />
+        <FilterSelect label="更新时间" value={value.updateTimeRange ?? ""} options={UPDATE_TIMES} onChange={(updateTimeRange) => onChange({ updateTimeRange: (updateTimeRange || undefined) as SearchFiltersValue["updateTimeRange"] })} />
+        {showPermission && <FilterSelect label="权限范围" value={value.permissionScope ?? ""} options={PERMISSIONS} onChange={(permissionScope) => onChange({ permissionScope: (permissionScope || undefined) as DocumentPermissionScope | undefined })} />}
+        {(onModeChange || mode) && <FilterSelect label="检索模式" value={mode ?? "hybrid"} options={MODES.map(({ value: optionValue, label }) => ({ value: optionValue, label }))} onChange={(next) => onModeChange?.(next as SearchMode)} />}
+        <button aria-expanded={expanded} className={cn("inline-flex h-10 items-center gap-1 rounded border px-3 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500", expanded ? "border-brand-200 bg-brand-50 text-brand-700" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50")} onClick={onToggleExpanded} type="button"><SlidersHorizontal size={13} />{expanded ? "收起筛选" : "更多筛选"}</button>
+        <button aria-label="清除筛选" className="inline-flex h-10 items-center gap-1 rounded px-3 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" disabled={!hasFilter} onClick={onClear} type="button"><X size={13} />清空</button>
       </div>
-      {expanded && (
-        <div className="mt-3 flex flex-wrap items-center gap-2 rounded bg-slate-50 p-3 text-xs text-slate-600">
-          <span className="font-medium text-slate-800">更多筛选</span>
-          <input
-            className="h-8 w-36 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
-            placeholder="标题包含"
-            readOnly
-          />
-          <input
-            className="h-8 w-36 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
-            placeholder="正文包含"
-            readOnly
-          />
-          <input
-            className="h-8 w-32 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
-            placeholder="上传人"
-            readOnly
-          />
-          <span className="text-slate-400">高级条件将在后端字段就绪后启用</span>
-        </div>
-      )}
+      {expanded && <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600"><div className="mb-2 font-medium text-slate-800">检索模式说明</div><div className="grid gap-2 sm:grid-cols-3">{MODES.map((item) => <button key={item.value} className={cn("rounded border bg-white p-2 text-left hover:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500", mode === item.value && "border-brand-300 bg-brand-50")} onClick={() => onModeChange?.(item.value)} type="button"><span className="block font-medium text-slate-800">{item.label}</span><span className="mt-1 block text-slate-500">{item.help}</span></button>)}</div></div>}
     </div>
   );
 }
 
-function isMeaningfulFilterValue(value: unknown) {
-  return Boolean(value && value !== "all");
-}
+function isMeaningfulFilterValue(value: unknown) { return Boolean(value && value !== "all"); }
 
-function FilterSelect({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: Array<{ value: string; label: string }>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="relative inline-flex h-8 items-center">
-      <span className="sr-only">{label}</span>
-      <select
-        className="h-8 appearance-none rounded border border-slate-200 bg-white pl-3 pr-8 text-xs text-slate-800 outline-none transition hover:bg-slate-50 focus:border-brand-500"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value || "all"} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={13} className="pointer-events-none absolute right-2 text-slate-400" />
-    </label>
-  );
+function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: SearchFilterOption[]; onChange: (value: string) => void }) {
+  return <label className="relative inline-flex h-10 items-center"><span className="sr-only">{label}</span><select aria-label={label} className="h-10 max-w-[14rem] appearance-none rounded border border-slate-200 bg-white pl-3 pr-8 text-xs text-slate-800 outline-none transition hover:bg-slate-50 focus:border-brand-500 focus:ring-2 focus:ring-brand-100" value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}</select><ChevronDown aria-hidden="true" className="pointer-events-none absolute right-2 text-slate-400" size={13} /></label>;
 }

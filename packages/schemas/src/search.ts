@@ -13,7 +13,7 @@ export const SearchQuery = z.object({
   topK: z.coerce.number().int().positive().max(50).default(10),
   // 服务间检索（ai-call → /search/retrieve）可按知识库过滤。ai-knowledge 以 folder 为
   // 知识库维度：knowledgeBaseId 映射到 documents.folder_id。留空则租户级全库检索。
-  // 若该 id 在本租户不存在对应 folder，检索会优雅忽略此过滤（退回租户级），不返回空。
+  // 若该 id 在本租户不存在对应 folder，检索返回空结果，绝不退回租户级全库检索。
   knowledgeBaseId: z.string().trim().min(1).optional(),
 });
 export type SearchQuery = z.infer<typeof SearchQuery>;
@@ -35,12 +35,14 @@ export const SearchHit = z.object({
   page: z.number().int().nullable().optional(),
   updatedAt: z.string().nullable().optional(),
   createdAt: z.string().nullable().optional(),
+  interactionToken: z.string().optional(),
 });
 export type SearchHit = z.infer<typeof SearchHit>;
 
 export const SearchListQuery = z.object({
   keyword: z.string().optional(),
   q: z.string().optional(),
+  mode: SearchMode.default("hybrid"),
   fileType: z.string().optional(),
   categoryId: z.string().optional(),
   permissionScope: z.enum(["PRIVATE", "MEMBERS", "DEPARTMENTS", "COMPANY", "PUBLIC", "ADMIN"]).optional(),
@@ -95,6 +97,7 @@ export const SearchEventRequest = z.object({
   documentId: z.string().trim().min(1).nullable().optional(),
   contentId: z.string().trim().min(1).nullable().optional(),
   chunkId: z.string().trim().min(1).nullable().optional(),
+  interactionToken: z.string().trim().min(1).max(2048).nullable().optional(),
 });
 export type SearchEventRequest = z.infer<typeof SearchEventRequest>;
 
@@ -106,6 +109,9 @@ export const SearchResponse = z.object({
   hits: z.array(SearchHit),
   took: z.number(),
   hasRelevantResults: z.boolean().optional(),
+  // When true, total is the bounded result-window size rather than an exact global count.
+  truncated: z.boolean().default(false),
+  resultLimit: z.number().int().positive().optional(),
 });
 export type SearchResponse = z.infer<typeof SearchResponse>;
 

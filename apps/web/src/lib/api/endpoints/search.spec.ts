@@ -5,6 +5,7 @@ import {
   deleteSearchHistory,
   getHotSearch,
   getSearchHistory,
+  recordSearchEvent,
   search,
   searchList,
 } from "./search";
@@ -53,12 +54,21 @@ describe("search endpoints", () => {
   });
 
   it("gets search list with query params", async () => {
-    vi.mocked(apiClient.get).mockResolvedValueOnce({ query: "risk", total: 0, hits: [], took: 1, page: 1, pageSize: 20 });
-    const query = { keyword: "risk", page: 1 };
+    vi.mocked(apiClient.get).mockResolvedValueOnce({ query: "risk", mode: "hybrid", total: 0, hits: [], took: 1, page: 1, pageSize: 20, hasMore: false });
+    const query = { keyword: "risk", mode: "semantic" as const, page: 2 };
 
     await searchList(query);
 
     expect(apiClient.get).toHaveBeenCalledWith("/search", { query });
+  });
+
+  it("records result interaction events without using the search endpoint", async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({ recorded: true });
+    const event = { keyword: "risk", eventType: "DOCUMENT_VIEW" as const, resultCount: 3, documentId: "doc-1", chunkId: "chunk-1" };
+
+    await recordSearchEvent(event);
+
+    expect(apiClient.post).toHaveBeenCalledWith("/search/events", event);
   });
 
   it("gets hot search with query params", async () => {
