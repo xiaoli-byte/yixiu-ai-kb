@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   AlertCircle,
+  Braces,
   CheckCircle2,
   Download,
   Edit2,
@@ -37,6 +38,8 @@ interface DocumentTableProps {
   onPermissions: (doc: DocumentDto) => void;
   onRetryParse: (doc: DocumentDto) => void;
   onRestore?: (doc: DocumentDto) => void;
+  /** 开发调试用：查看切片 token 分布，仅开发环境由父组件传入 */
+  onViewChunks?: (doc: DocumentDto) => void;
   onPageChange: (page: number) => void;
   isArchive?: boolean;
 }
@@ -57,6 +60,7 @@ export function DocumentTable({
   onPermissions,
   onRetryParse,
   onRestore,
+  onViewChunks,
   onPageChange,
   isArchive = false,
 }: DocumentTableProps) {
@@ -169,6 +173,14 @@ export function DocumentTable({
                   <td className="px-4">
                     <div className="flex items-center gap-1">
                       <IconButton icon={Eye} label="查看" onClick={() => onView(doc)} />
+                      {onViewChunks && (
+                        <IconButton
+                          className="text-amber-600 hover:bg-amber-50"
+                          icon={Braces}
+                          label="查看切片 Token（开发调试）"
+                          onClick={() => onViewChunks(doc)}
+                        />
+                      )}
                       {doc.canDownload !== false && <IconButton icon={Download} label="下载" onClick={() => onDownload(doc)} />}
                       {isArchive ? (
                         onRestore ? <IconButton icon={RotateCcw} label="恢复" onClick={() => onRestore(doc)} /> : null

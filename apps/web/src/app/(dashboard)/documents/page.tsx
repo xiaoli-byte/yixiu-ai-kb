@@ -72,6 +72,9 @@ const SUPPORTED_UPLOAD_ACCEPT = [
 
 const PAGE_SIZE = 20;
 
+// 构建期内联：生产构建下切片 Token 调试按钮直接不渲染
+const IS_DEV = process.env.NODE_ENV === "development";
+
 export default function DocumentsPage() {
   const [docs, setDocs] = useState<DocumentDto[]>([]);
   const [total, setTotal] = useState(0);
@@ -520,6 +523,7 @@ export default function DocumentsPage() {
           onToggle={toggleSelected}
           onToggleAll={toggleAllVisible}
           onView={viewDocument}
+          onViewChunks={IS_DEV ? (doc) => void openDetail(doc.id) : undefined}
           isArchive={scope === "archive"}
         />
       </main>
@@ -574,7 +578,9 @@ export default function DocumentsPage() {
               <div>
                 <h3 className="font-semibold">{detail.title}</h3>
                 <p className="mt-1 text-xs text-slate-500">
-                  {detail.chunks.length} 个片段 · {formatBytes(detail.size)} · {detail.mime}
+                  {detail.chunks.length} 个片段 · 共{" "}
+                  {detail.chunks.reduce((sum, chunk) => sum + (chunk.tokens || 0), 0)} tokens ·{" "}
+                  {formatBytes(detail.size)} · {detail.mime}
                 </p>
               </div>
               <button className="grid h-7 w-7 place-items-center rounded text-slate-500 hover:bg-slate-100" onClick={() => setDetail(null)} type="button">
