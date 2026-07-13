@@ -24,6 +24,7 @@ import { DocumentScopeNav, type DocumentScope } from "@/components/documents/Doc
 import { DocumentTable } from "@/components/documents/DocumentTable";
 import { DocumentToolbar } from "@/components/documents/DocumentToolbar";
 import { FolderTree } from "@/components/documents/FolderTree";
+import { FolderPickerModal } from "@/components/documents/FolderPickerModal";
 import { PermissionModal, type PermissionModalTarget } from "@/components/documents/PermissionModal";
 import { formatBytes } from "@/lib/utils";
 import { toast, confirmDialog } from "@/components/ui/feedback";
@@ -107,6 +108,8 @@ export default function DocumentsPage() {
   const [permissionTarget, setPermissionTarget] = useState<PermissionModalTarget | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ id: string; title: string } | null>(null);
   const [mdPreview, setMdPreview] = useState<{ id: string; title: string } | null>(null);
+  // 批量移动：非空即打开文件夹选择器，值为待移动的文档 ID 列表
+  const [moveTarget, setMoveTarget] = useState<string[] | null>(null);
 
   const activeTitle = useMemo(() => {
     const map: Record<DocumentScope, string> = {
@@ -392,6 +395,13 @@ export default function DocumentsPage() {
 
   async function runBatch(action: DocumentBatchAction) {
     if (selectedIds.length === 0) return;
+
+    // 移动需要先选目标文件夹：打开选择器，选中后由 confirmMove 继续
+    if (action === "MOVE") {
+      setMoveTarget(selectedIds);
+      return;
+    }
+
     if (action === "DELETE" || action === "ARCHIVE" || action === "RESTORE") {
       const actionLabel = action === "DELETE" ? "删除" : action === "ARCHIVE" ? "归档" : "恢复";
       const ok = await confirmDialog({
@@ -402,17 +412,14 @@ export default function DocumentsPage() {
       if (!ok) return;
     }
 
-    const payload: { action: DocumentBatchAction; documentIds: string[]; folderId?: string } = {
-      action,
-      documentIds: selectedIds,
-    };
+    await executeBatch({ action, documentIds: selectedIds });
+  }
 
-    if (action === "MOVE") {
-      const folderId = window.prompt("请输入目标文件夹 ID");
-      if (!folderId) return;
-      payload.folderId = folderId;
-    }
-
+  async function executeBatch(payload: {
+    action: DocumentBatchAction;
+    documentIds: string[];
+    folderId?: string;
+  }) {
     try {
       const result = await documentsApi.batchDocuments(payload);
       const failed = result.results.filter((item) => !item.ok);
@@ -425,6 +432,14 @@ export default function DocumentsPage() {
       await fetchList();
     } catch (error) {
       showApiError(error);
+    }
+  }
+
+  function confirmMove(folderId: string) {
+    const documentIds = moveTarget;
+    setMoveTarget(null);
+    if (documentIds && documentIds.length > 0) {
+      void executeBatch({ action: "MOVE", documentIds, folderId });
     }
   }
 
@@ -570,6 +585,15 @@ export default function DocumentsPage() {
           onSave={(data) => handleEditDoc(editDoc.id, data)}
         />
       )}
+
+      <FolderPickerModal
+        open={moveTarget !== null}
+        folders={folders}
+        loading={foldersLoading}
+        count={moveTarget?.length}
+        onClose={() => setMoveTarget(null)}
+        onConfirm={confirmMove}
+      />
 
       <PermissionModal
         open={Boolean(permissionTarget)}
