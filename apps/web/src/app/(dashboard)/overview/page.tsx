@@ -4,6 +4,7 @@ import Link from "next/link";
 import Script from "next/script";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDown,
   ArrowUp,
   Bot,
   FilePlus2,
@@ -339,7 +340,7 @@ export default function OverviewPage() {
           return (
             <section
               key={item.label}
-              className="rounded-lg border border-slate-200/80 bg-white px-6 py-5 shadow-soft"
+              className="rounded-xl border border-slate-200/80 bg-white px-6 py-5 shadow-card"
             >
               <div className="flex items-center gap-4">
                 <div className={cn("grid h-14 w-14 place-items-center rounded-full", item.iconClass)}>
@@ -352,10 +353,7 @@ export default function OverviewPage() {
                   </div>
                   <div className="mt-3 flex items-center gap-2 text-sm">
                     <span className="text-slate-400">较昨日</span>
-                    <span className="inline-flex items-center gap-1 font-semibold text-rose-500">
-                      {formatDelta(item.delta)}
-                      <ArrowUp size={15} strokeWidth={2.4} />
-                    </span>
+                    <DeltaBadge value={item.delta} />
                   </div>
                 </div>
               </div>
@@ -365,7 +363,7 @@ export default function OverviewPage() {
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
-        <section className="rounded-lg border border-slate-200/80 bg-white p-5 shadow-soft">
+        <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-card">
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <h2 className="text-base font-semibold text-slate-800">访问趋势</h2>
@@ -395,7 +393,7 @@ export default function OverviewPage() {
           <EChart option={lineOption} ready={chartsReady} className="h-[270px]" />
         </section>
 
-        <section className="rounded-lg border border-slate-200/80 bg-white p-5 shadow-soft">
+        <section className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-card">
           <div className="mb-3 flex items-center gap-2">
             <h2 className="text-base font-semibold text-slate-800">文档分类占比</h2>
             <Info size={15} className="text-slate-300" />
@@ -425,7 +423,7 @@ export default function OverviewPage() {
         </section>
       </div>
 
-      <section className="mt-4 rounded-lg border border-slate-200/80 bg-white p-5 shadow-soft">
+      <section className="mt-4 rounded-xl border border-slate-200/80 bg-white p-5 shadow-card">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-800">近期操作记录</h2>
           <Link
@@ -611,7 +609,25 @@ function addDays(date: Date, days: number) {
 }
 
 function formatDelta(value: number) {
-  return `${value >= 0 ? "+" : ""}${numberFormat.format(value)}`;
+  return `${value > 0 ? "+" : ""}${numberFormat.format(value)}`;
+}
+
+// 环比徽标：红涨绿跌（国内约定），零/无变化用中性灰、不显箭头
+function DeltaBadge({ value }: { value: number }) {
+  const isUp = value > 0;
+  const isDown = value < 0;
+  const Arrow = isUp ? ArrowUp : isDown ? ArrowDown : null;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 font-semibold tabular-nums",
+        isUp ? "text-rose-500" : isDown ? "text-emerald-600" : "text-slate-400",
+      )}
+    >
+      {formatDelta(value)}
+      {Arrow && <Arrow size={15} strokeWidth={2.4} />}
+    </span>
+  );
 }
 
 function formatDateTime(value: string) {
