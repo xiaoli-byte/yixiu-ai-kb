@@ -31,7 +31,7 @@ export function GraphSavedViews({
   };
 
   return (
-    <section className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-soft">
+    <section className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-card">
       <div className="mb-3 flex items-center gap-2">
         <Bookmark size={16} className="text-brand-600" />
         <h2 className="text-sm font-semibold text-slate-800">保存视图</h2>

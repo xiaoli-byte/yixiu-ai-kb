@@ -63,7 +63,7 @@ const statCards = [
 export function GraphSidebar({ stats, topNodes, recentNodes }: GraphSidebarProps) {
   return (
     <aside className="space-y-4">
-      <section className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-soft">
+      <section className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-card">
         <div className="mb-3 flex items-center gap-2">
           <h2 className="text-sm font-semibold text-slate-800">图谱数据统计</h2>
           <Network size={14} className="text-slate-300" />
@@ -89,7 +89,7 @@ export function GraphSidebar({ stats, topNodes, recentNodes }: GraphSidebarProps
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-soft">
+      <section className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-card">
         <h2 className="mb-3 text-sm font-semibold text-slate-800">热门知识点 Top 5</h2>
         <div className="space-y-3">
           {topNodes.length === 0 ? (
@@ -119,7 +119,7 @@ export function GraphSidebar({ stats, topNodes, recentNodes }: GraphSidebarProps
         </div>
       </section>
 
-      <section className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-soft">
+      <section className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-card">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-800">最近更新节点</h2>
           <Link href="/documents" className="text-xs font-medium text-brand-600 hover:text-brand-700">

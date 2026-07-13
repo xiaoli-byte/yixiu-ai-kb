@@ -42,7 +42,8 @@ body {
   }
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
-           transition disabled:opacity-50 disabled:pointer-events-none;
+           transition disabled:opacity-50 disabled:pointer-events-none
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40;
   }
   .btn-primary {
     @apply btn bg-brand-600 text-white hover:bg-brand-700 shadow-sm;

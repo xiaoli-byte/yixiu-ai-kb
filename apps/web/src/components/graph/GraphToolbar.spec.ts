@@ -38,9 +38,13 @@ describe("GraphToolbar", () => {
   it("keeps the graph search filters compact", () => {
     const html = renderToStaticMarkup(React.createElement(GraphToolbar, toolbarProps));
 
-    expect(html).toContain('aria-label="创建开始"');
-    expect(html).toContain('aria-label="创建结束"');
-    expect(html.match(/type="date"/g)).toHaveLength(2);
+    // 创建时间范围改用自建月历 DateRangeField（无原生 type=date）
+    expect(html).toContain('aria-label="创建时间范围"');
+    expect(html).not.toContain('type="date"');
+    // 三个过滤下拉统一为无障碍 Select（listbox），保留各自 aria-label
+    expect(html).toContain('aria-label="节点类型"');
+    expect(html).toContain('aria-label="文档"');
+    expect(html).toContain('aria-label="关系类型"');
     expect(html).not.toContain('aria-label="更新开始"');
     expect(html).not.toContain('aria-label="更新结束"');
     expect(html).not.toContain('aria-label="节点上限"');

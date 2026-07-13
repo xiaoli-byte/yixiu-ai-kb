@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Calendar,
   Download,
   FileJson,
   Image as ImageIcon,
@@ -10,6 +9,8 @@ import {
   Search,
 } from "lucide-react";
 import type { GraphExploreQuery, GraphFilterOptions } from "@/types/api";
+import { Select } from "@/components/ui/Select";
+import { DateRangeField } from "@/components/ui/DateRangeField";
 
 export type GraphExportFormat = "png" | "svg" | "json";
 
@@ -46,7 +47,7 @@ export function GraphToolbar({
   onExport,
 }: GraphToolbarProps) {
   return (
-    <section className="rounded-lg border border-slate-200/80 bg-white p-3 shadow-soft">
+    <section className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-card">
       <div className="flex flex-wrap items-center gap-1.5" data-filter-row="graph">
         <div className="relative min-w-[190px] flex-[1_1_190px]">
           <Search
@@ -65,59 +66,55 @@ export function GraphToolbar({
           />
         </div>
 
-        <select
-          className="input h-10 min-w-[108px] flex-[0_1_108px]"
+        <Select
+          className="min-w-[108px] flex-[0_1_108px]"
+          triggerClassName="h-10"
+          triggerWidthClassName="w-full"
+          ariaLabel="节点类型"
           value={filters.nodeType || "all"}
-          onChange={(event) =>
-            onChange({ nodeType: event.target.value as GraphExploreQuery["nodeType"] })
-          }
-          aria-label="节点类型"
-        >
-          {nodeTypeOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className="input h-10 min-w-[118px] flex-[0_1_118px]"
-          value={filters.documentId || ""}
-          onChange={(event) => onChange({ documentId: event.target.value || undefined })}
-          aria-label="文档"
-        >
-          <option value="">全部文档</option>
-          {filterOptions.documents.map((document) => (
-            <option key={document.id} value={document.id}>
-              {document.title}
-            </option>
-          ))}
-        </select>
-
-        <select
-          className="input h-10 min-w-[136px] flex-[0_1_136px]"
-          value={filters.relationType || ""}
-          onChange={(event) => onChange({ relationType: event.target.value || undefined })}
-          aria-label="关系类型"
-        >
-          <option value="">全部关系</option>
-          {filterOptions.relationTypes.map((type) => (
-            <option key={type} value={type}>
-              {type}
-            </option>
-          ))}
-        </select>
-
-        <DateRange
-          className="min-w-[268px] flex-[1_1_268px]"
-          from={filters.createdFrom}
-          to={filters.createdTo}
-          fromLabel="创建开始"
-          toLabel="创建结束"
-          rangeLabel="创建时间范围"
-          onFrom={(value) => onChange({ createdFrom: value || undefined })}
-          onTo={(value) => onChange({ createdTo: value || undefined })}
+          options={nodeTypeOptions.map((option) => ({ value: option.value, label: option.label }))}
+          onChange={(value) => onChange({ nodeType: value as GraphExploreQuery["nodeType"] })}
         />
+
+        <Select
+          className="min-w-[118px] flex-[0_1_118px]"
+          triggerClassName="h-10"
+          triggerWidthClassName="w-full"
+          ariaLabel="文档"
+          searchable
+          value={filters.documentId || ""}
+          options={[
+            { value: "", label: "全部文档" },
+            ...filterOptions.documents.map((document) => ({ value: document.id, label: document.title })),
+          ]}
+          onChange={(value) => onChange({ documentId: value || undefined })}
+        />
+
+        <Select
+          className="min-w-[136px] flex-[0_1_136px]"
+          triggerClassName="h-10"
+          triggerWidthClassName="w-full"
+          ariaLabel="关系类型"
+          value={filters.relationType || ""}
+          options={[
+            { value: "", label: "全部关系" },
+            ...filterOptions.relationTypes.map((type) => ({ value: type, label: type })),
+          ]}
+          onChange={(value) => onChange({ relationType: value || undefined })}
+        />
+
+        <div className="min-w-[268px] flex-[1_1_268px]" data-date-range="created">
+          <DateRangeField
+            className="w-full"
+            triggerClassName="h-10 w-full"
+            ariaLabel="创建时间范围"
+            from={filters.createdFrom || ""}
+            to={filters.createdTo || ""}
+            onChange={({ from, to }) =>
+              onChange({ createdFrom: from || undefined, createdTo: to || undefined })
+            }
+          />
+        </div>
         <div className="grid min-w-[162px] flex-none grid-cols-2 gap-2">
           <button className="btn-primary h-10" onClick={onSearch} disabled={loading} type="button">
             {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
@@ -147,7 +144,7 @@ export function GraphToolbar({
               <span className="text-sm">导出图谱</span>
             </summary>
             <div
-              className="absolute right-0 z-20 mt-2 w-36 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+              className="absolute right-0 z-20 mt-2 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-raised"
               role="menu"
             >
               {exportOptions.map(({ format, label, Icon }) => (
@@ -172,59 +169,6 @@ export function GraphToolbar({
         </div>
       </div>
     </section>
-  );
-}
-
-function DateRange({
-  from,
-  to,
-  fromLabel,
-  toLabel,
-  rangeLabel,
-  className,
-  onFrom,
-  onTo,
-}: {
-  from?: string;
-  to?: string;
-  fromLabel: string;
-  toLabel: string;
-  rangeLabel: string;
-  className?: string;
-  onFrom: (value: string) => void;
-  onTo: (value: string) => void;
-}) {
-  return (
-    <div
-      className={[
-        "flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm transition focus-within:border-brand-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-500/30",
-        className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      aria-label={rangeLabel}
-      data-date-range="created"
-      role="group"
-    >
-      <Calendar size={15} className="shrink-0 text-slate-400" />
-      <input
-        className="min-w-0 flex-1 appearance-none bg-transparent text-sm text-slate-900 outline-none [color-scheme:light] [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
-        type="date"
-        value={from || ""}
-        onChange={(event) => onFrom(event.target.value)}
-        aria-label={fromLabel}
-        title={fromLabel}
-      />
-      <span className="shrink-0 text-slate-300">至</span>
-      <input
-        className="min-w-0 flex-1 appearance-none bg-transparent text-sm text-slate-900 outline-none [color-scheme:light] [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
-        type="date"
-        value={to || ""}
-        onChange={(event) => onTo(event.target.value)}
-        aria-label={toLabel}
-        title={toLabel}
-      />
-    </div>
   );
 }
 
