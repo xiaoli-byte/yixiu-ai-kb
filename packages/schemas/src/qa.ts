@@ -10,8 +10,13 @@ export const Citation = z.object({
 export type Citation = z.infer<typeof Citation>;
 
 export const AskRequest = z.object({
-  conversationId: z.string().optional(),
-  question: z.string().min(1).max(2000),
+  // 前端新会话显式发送 null，这里接受 null/undefined 并统一归一为 undefined
+  conversationId: z
+    .string()
+    .nullish()
+    .transform((value) => value ?? undefined),
+  // trim 后再校验：拒绝空串/纯空白，并统一去除首尾空白
+  question: z.string().trim().min(1).max(2000),
   topK: z.coerce.number().int().positive().max(20).default(5),
 });
 export type AskRequest = z.infer<typeof AskRequest>;
@@ -35,6 +40,16 @@ export const AskDoneEvent = z.object({
 });
 export type AskDoneEvent = z.infer<typeof AskDoneEvent>;
 
+/**
+ * 会话已确保存在、LLM 开始生成之前发送的早发事件。
+ * 前端据此在流式开始前就拿到 conversationId（新建会话尤其需要）。
+ */
+export const AskConversationEvent = z.object({
+  type: z.literal("conversation"),
+  conversationId: z.string(),
+});
+export type AskConversationEvent = z.infer<typeof AskConversationEvent>;
+
 export const AskErrorEvent = z.object({
   type: z.literal("error"),
   message: z.string(),
@@ -50,6 +65,7 @@ export type AskNoResultsEvent = z.infer<typeof AskNoResultsEvent>;
 export const AskStreamEvent = z.discriminatedUnion("type", [
   AskChunkEvent,
   AskCitationEvent,
+  AskConversationEvent,
   AskDoneEvent,
   AskErrorEvent,
   AskNoResultsEvent,

@@ -24,6 +24,8 @@ export class RerankService implements OnModuleInit {
   private readonly MAX_DOCUMENTS = 100;
   /** 单条文档送入重排的最大字符数（控制请求体大小） */
   private readonly MAX_DOC_CHARS = 2000;
+  /** rerank HTTP 请求超时（毫秒），避免第三方挂起拖垮问答链路 */
+  private readonly REQUEST_TIMEOUT_MS = 15_000;
 
   constructor(private readonly config: AppConfigService) {}
 
@@ -75,6 +77,8 @@ export class RerankService implements OnModuleInit {
           top_n: Math.min(topN ?? docs.length, docs.length),
         },
       }),
+      // 15s 超时兜底：第三方无响应时快速失败，由调用方降级为召回原序
+      signal: AbortSignal.timeout(this.REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) {
       const errText = await res.text();

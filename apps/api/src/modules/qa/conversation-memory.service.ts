@@ -53,13 +53,13 @@ export class ConversationMemoryService {
       }),
       this.db.query<MessageRow>(
         `SELECT role, content FROM (
-           SELECT role, content, created_at
+           SELECT role, content, created_at, id
            FROM qa_messages
            WHERE conversation_id = $1
-           ORDER BY created_at DESC
+           ORDER BY created_at DESC, id DESC
            LIMIT $2
          ) recent
-         ORDER BY created_at ASC`,
+         ORDER BY created_at ASC, id ASC`,
         [conversationId, this.RECENT_MESSAGE_LIMIT],
       ),
       this.db.queryOne<{ count: string }>(
@@ -104,11 +104,12 @@ export class ConversationMemoryService {
       if (targetCovered - conv.summaryMessageCount < this.SUMMARY_TRIGGER) return;
 
       // 取出「已摘要末尾 → 目标覆盖点」之间的消息作为增量素材
+      // ORDER BY 补充 id 作为第二排序键，与 load() 的稳定排序保持一致，避免同毫秒消息分页错位
       const rows = await this.db.query<MessageRow>(
         `SELECT role, content
          FROM qa_messages
          WHERE conversation_id = $1
-         ORDER BY created_at ASC
+         ORDER BY created_at ASC, id ASC
          OFFSET $2 LIMIT $3`,
         [conversationId, conv.summaryMessageCount, targetCovered - conv.summaryMessageCount],
       );
@@ -136,10 +137,19 @@ export class ConversationMemoryService {
       const normalized = this.truncate(summary.trim(), this.MAX_SUMMARY_CHARS);
       if (!normalized) return;
 
-      await this.prisma.qAConversation.update({
-        where: { id: conversationId },
+      // 乐观并发控制：where 带上读取时的 summaryMessageCount 旧值。
+      // 若期间有并发的另一次更新已抢先写入（count 为 0），说明状态已变化，放弃本次写入，
+      // 下一轮 maybeUpdateSummary 会基于最新 summaryMessageCount 自愈，不视为错误、不抛错。
+      const { count } = await this.prisma.qAConversation.updateMany({
+        where: { id: conversationId, summaryMessageCount: conv.summaryMessageCount },
         data: { summary: normalized, summaryMessageCount: targetCovered },
       });
+      if (count === 0) {
+        this.logger.debug(
+          `会话 ${conversationId} 摘要更新被并发跳过（summaryMessageCount 已变化），本次放弃写入`,
+        );
+        return;
+      }
       this.logger.debug(
         `会话 ${conversationId} 摘要已更新，覆盖前 ${targetCovered}/${total} 条消息`,
       );

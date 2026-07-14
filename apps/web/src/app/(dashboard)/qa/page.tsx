@@ -38,6 +38,9 @@ export default function QaPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // 在途问答请求的会话归属守卫：每次发起自增；切换/新建/删除当前会话时也自增以作废在途请求。
+  // 完成回调用发起时捕获的序号与当前值比对，判断用户是否已经切走当前会话。
+  const requestSeqRef = useRef(0);
 
   const { streaming, streamingText, suggestions, ask, stop, resetSuggestions } = useQaStream();
 
@@ -96,6 +99,8 @@ export default function QaPage() {
   }, [activeId, debugOpen, loadDebugRuns]);
 
   async function openConversation(id: string) {
+    stop(); // 先中止在途流，避免旧会话的回答回填到即将切入的会话
+    requestSeqRef.current += 1; // 作废在途请求的会话归属
     try {
       setActiveId(id);
       resetSuggestions();
@@ -108,6 +113,8 @@ export default function QaPage() {
   }
 
   function newConversation() {
+    stop(); // 先中止在途流，避免旧会话的回答回填到新会话
+    requestSeqRef.current += 1; // 作废在途请求的会话归属
     setActiveId(null);
     setMessages([]);
     resetSuggestions();
@@ -118,6 +125,7 @@ export default function QaPage() {
     try {
       await qaApi.conversationDelete(id);
       setConversations((cs) => cs.filter((c) => c.id !== id));
+      // 删除的是当前会话时走 newConversation —— 其中已先 stop() 中止在途流并作废归属，再切换。
       if (activeId === id) newConversation();
     } catch (e) {
       console.error("删除失败", e);
@@ -155,6 +163,11 @@ export default function QaPage() {
       textareaRef.current.style.height = "auto";
     }
 
+    // 记录本次请求的会话上下文：发起时的 activeId 与自增序号。
+    // 完成时若序号已被切换/新建/删除会话动作改写，说明用户已切走，本次结果不得回填当前 UI。
+    const mySeq = ++requestSeqRef.current;
+    const startActiveId = activeId;
+
     const tempUserMsg: ChatMessage = {
       id: "temp-" + Date.now(),
       role: "user",
@@ -165,9 +178,18 @@ export default function QaPage() {
     };
     setMessages((m) => [...m, tempUserMsg]);
 
-    const result = await ask({ conversationId: activeId, question: q, accessToken });
+    const result = await ask({ conversationId: startActiveId, question: q, accessToken });
+
+    // 归属守卫：用户是否已在请求进行中切换/新建/删除会话（作废了本次请求）。
+    // 注意「发起时 null → 服务端返回新 id」不算切走，因为只有那些动作才会自增序号。
+    const superseded = mySeq !== requestSeqRef.current;
 
     if (result.status === "done") {
+      if (superseded) {
+        // 用户已切到别的会话：不 append 消息、不抢占 activeId，只刷新列表让新会话出现在侧栏。
+        await loadConversations();
+        return;
+      }
       const finalMsg: ChatMessage = {
         id: result.messageId || "ai-" + Date.now(),
         role: "assistant",
@@ -177,26 +199,39 @@ export default function QaPage() {
         createdAt: new Date().toISOString(),
       };
       setMessages((m) => [...m, finalMsg]);
-      const convId = result.conversationId ?? activeId;
+      const convId = result.conversationId ?? startActiveId;
       setActiveId(convId);
       await loadConversations();
       if (debugOpen) {
         await loadDebugRuns(convId);
       }
     } else if (result.status === "aborted") {
-      // 用户主动停止：已生成的部分文本保留为一条 assistant 消息（仅本地展示）
-      const partialMsg: ChatMessage = {
-        id: "ai-stopped-" + Date.now(),
-        role: "assistant",
-        content: result.content,
-        citations: result.citations,
-        feedback: { rating: "none", text: null, updatedAt: null },
-        createdAt: new Date().toISOString(),
-        stopped: true,
-      };
-      setMessages((m) => [...m, partialMsg]);
+      if (superseded) {
+        // 因切换会话而中止：服务端可能已把部分回答落库，只刷新列表，不改动当前 UI。
+        await loadConversations();
+        return;
+      }
+      // 用户点击“停止”按钮：已生成的部分文本保留为一条 assistant 消息（仅本地展示），
+      // 并把已知会话 ID 落到 activeId —— 首问被停止也能拿到 conversationId，下一问继续同一会话。
+      // 首个 token 前就停止（partial 为空）时不展示空气泡，与后端"不落空消息"的语义一致。
+      if (result.content) {
+        const partialMsg: ChatMessage = {
+          id: "ai-stopped-" + Date.now(),
+          role: "assistant",
+          content: result.content,
+          citations: result.citations,
+          feedback: { rating: "none", text: null, updatedAt: null },
+          createdAt: new Date().toISOString(),
+          stopped: true,
+        };
+        setMessages((m) => [...m, partialMsg]);
+      }
+      setActiveId(result.conversationId ?? startActiveId);
+      await loadConversations();
     } else {
-      // 发送失败：恢复输入框内容，保留用户消息气泡，并展示错误提示
+      // 发送失败：恢复输入框内容，保留用户消息气泡，并展示错误提示。
+      // 若用户已切走则不打扰当前会话（静默丢弃）。
+      if (superseded) return;
       setError(result.message);
       setInput(q);
     }

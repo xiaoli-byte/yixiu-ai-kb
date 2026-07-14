@@ -1,6 +1,6 @@
 "use client";
 // 封装 POST /qa/ask 的 SSE 流式请求解析逻辑，供 QA 页面调用。
-// 协议不变：chunk / citations / no_results / done / error 五种事件。
+// 协议：conversation / chunk / citations / no_results / done / error 六种事件。
 import { useCallback, useRef, useState } from "react";
 import { apiBaseUrl, ApiError } from "@/lib/api-client";
 import { COOKIE_SESSION } from "@/lib/store";
@@ -16,6 +16,8 @@ export interface QaStreamDoneResult {
 
 export interface QaStreamAbortedResult {
   status: "aborted";
+  /** abort 时已知的会话 ID（来自 conversation/done 事件）；首问被停止也能拿到，避免下一问另开会话 */
+  conversationId: string | null;
   content: string;
   citations: Citation[];
 }
@@ -61,6 +63,9 @@ export function useQaStream() {
 
     let assembled = "";
     let citations: Citation[] = [];
+    // 会话 ID 提升到 try 外层：conversation / done 事件都会写它，abort 时 catch 分支也能读到，
+    // 从而把服务端已创建的会话归属回本次请求（修复首问被停止后丢失 conversationId 的缺陷）。
+    let convId: string | null = conversationId;
 
     try {
       // 鉴权方式与 apiClient 保持一致：
@@ -86,7 +91,6 @@ export function useQaStream() {
       const reader = (res.body as any).getReader();
       const decoder = new TextDecoder();
       let buf = "";
-      let convId: string | null = conversationId;
       let messageId = "";
 
       while (true) {
@@ -105,14 +109,17 @@ export function useQaStream() {
           try {
             evt = JSON.parse(payload);
           } catch (e) {
-            // 不完整的 JSON 片段（被截断的 data 行），忽略，等待后续数据拼接
-            if ((e as Error).message !== "Unexpected end of JSON input") {
-              console.error("SSE parse error", e);
-            }
+            // 该 data 行已按换行完整切分（未收完的行留在 buf 里等下一次 read），不存在“半截等拼接”的情况；
+            // 走到这里即为罕见的异常/损坏事件，如实丢弃并记录，不再对特定错误文案做特殊判断。
+            console.error("SSE 事件解析失败，已丢弃该行", e, payload);
             continue;
           }
 
-          if (evt.type === "chunk") {
+          if (evt.type === "conversation") {
+            // 会话创建后立即到达（早于 LLM 生成）。记录会话 ID，
+            // 即便随后被 abort 也能把服务端已建好的会话归属到本次请求，避免下一问另开新会话。
+            if (evt.conversationId) convId = evt.conversationId;
+          } else if (evt.type === "chunk") {
             assembled += evt.content;
             setStreamingText(assembled);
           } else if (evt.type === "citations") {
@@ -133,7 +140,7 @@ export function useQaStream() {
       return { status: "done", conversationId: convId, messageId, content: assembled, citations };
     } catch (e: any) {
       if (e?.name === "AbortError") {
-        return { status: "aborted", content: assembled, citations };
+        return { status: "aborted", conversationId: convId, content: assembled, citations };
       }
       return { status: "error", message: e?.message || "发生错误，请重试" };
     } finally {

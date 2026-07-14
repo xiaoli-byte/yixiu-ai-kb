@@ -1,6 +1,7 @@
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { QaService } from "./qa.service";
+import { StreamAbortedError } from "../llm/llm.service";
 import type { SearchHit } from "../search/search.service";
 import type { ConversationMemory } from "./conversation-memory.service";
 
@@ -51,12 +52,13 @@ function createService() {
       findMany: vi.fn(),
       findFirst: vi.fn(),
       findUnique: vi.fn(),
-      deleteMany: vi.fn(),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     qAMessage: {
       create: vi.fn().mockResolvedValue({}),
       findFirst: vi.fn(),
       update: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
     },
     document: {
       findFirst: vi.fn(),
@@ -64,6 +66,8 @@ function createService() {
     user: {
       findFirst: vi.fn().mockResolvedValue({ role: "viewer", departmentId: "dept-1" }),
     },
+    // 批量事务：直接 await 数组内已构造的 create/update promise，保留各 mock 的调用记录
+    $transaction: vi.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   };
   const db = {
     tenantId: "tenant-1",
@@ -139,6 +143,7 @@ function createService() {
 /** 组装一次成功 ask 调用的通用回调集合 */
 function askCallbacks() {
   return {
+    onConversation: vi.fn(),
     onChunk: vi.fn(),
     onCitations: vi.fn(),
     onNoResults: vi.fn(),
@@ -418,6 +423,150 @@ describe("QaService ask 主流程", () => {
       expect.objectContaining({ error: "LLM 网关超时" }),
     );
   });
+
+  it("conversation 事件在会话确保存在后、streamChat 之前早发", async () => {
+    const { service, llm } = createService();
+    const cb = askCallbacks();
+    const order: string[] = [];
+    cb.onConversation.mockImplementation(() => order.push("onConversation"));
+    cb.onDone.mockImplementation(() => order.push("onDone"));
+    llm.streamChat.mockImplementationOnce(
+      async (_messages: unknown, c: { onChunk: (d: string) => void }) => {
+        order.push("streamChat");
+        c.onChunk("答案");
+        return "答案";
+      },
+    );
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      question: "新会话问题",
+      ...cb,
+    });
+
+    // 早发：onConversation 先于 streamChat，且携带新建会话 id
+    expect(cb.onConversation).toHaveBeenCalledWith("conv-1");
+    expect(order).toEqual(["onConversation", "streamChat", "onDone"]);
+  });
+
+  it("客户端断开：user + partial assistant 同事务落库，记 client_aborted，不 onError/onDone", async () => {
+    const { service, prisma, llm, runLog } = createService();
+    llm.streamChat.mockRejectedValueOnce(
+      new StreamAbortedError("client_aborted", "已生成的部分回答"),
+    );
+    const cb = askCallbacks();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      question: "会被中断的问题",
+      ...cb,
+    });
+
+    // 同事务写入 user + assistant(partial)
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.qAMessage.create).toHaveBeenCalledTimes(2);
+    expect(prisma.qAMessage.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ data: expect.objectContaining({ role: "user" }) }),
+    );
+    expect(prisma.qAMessage.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "assistant", content: "已生成的部分回答" }),
+      }),
+    );
+    // runLog 记 partial + client_aborted
+    expect(runLog.log).toHaveBeenCalledWith(
+      expect.objectContaining({ answer: "已生成的部分回答", error: "client_aborted" }),
+    );
+    // 连接已断：不再回调 onError/onDone，且不删除会话（本轮已有 partial 消息）
+    expect(cb.onError).not.toHaveBeenCalled();
+    expect(cb.onDone).not.toHaveBeenCalled();
+    expect(prisma.qAConversation.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("普通错误：本轮不落任何消息，且删除新建的空会话，走 onError", async () => {
+    const { service, prisma, llm } = createService();
+    llm.streamChat.mockRejectedValueOnce(new Error("boom"));
+    const cb = askCallbacks();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      question: "失败的问题",
+      ...cb,
+    });
+
+    // 无孤儿消息：user/assistant 都未写入
+    expect(prisma.qAMessage.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    // 新建会话在失败后被补偿删除（count=0）
+    expect(prisma.qAMessage.count).toHaveBeenCalledWith({
+      where: { conversationId: "conv-1" },
+    });
+    expect(prisma.qAConversation.deleteMany).toHaveBeenCalledWith({
+      where: { id: "conv-1", userId: "user-1", tenantId: "tenant-1" },
+    });
+    expect(cb.onError).toHaveBeenCalledWith(expect.any(Error));
+    expect(cb.onDone).not.toHaveBeenCalled();
+  });
+
+  it("超时（StreamAbortedError timeout）按普通错误处理：不落 partial，删空会话，走 onError", async () => {
+    const { service, prisma, llm } = createService();
+    llm.streamChat.mockRejectedValueOnce(new StreamAbortedError("timeout", "半句"));
+    const cb = askCallbacks();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      question: "会超时的问题",
+      ...cb,
+    });
+
+    expect(prisma.qAMessage.create).not.toHaveBeenCalled();
+    expect(prisma.qAConversation.deleteMany).toHaveBeenCalledWith({
+      where: { id: "conv-1", userId: "user-1", tenantId: "tenant-1" },
+    });
+    expect(cb.onError).toHaveBeenCalledWith(expect.any(StreamAbortedError));
+    expect(cb.onDone).not.toHaveBeenCalled();
+  });
+
+  it("历史归一化：连续同角色合并、首尾孤儿剔除，保证 user/assistant 交替并以 assistant 结尾", async () => {
+    const { service, prisma, memory, llm } = createService();
+    prisma.qAConversation.findFirst.mockResolvedValueOnce({ id: "conv-1" });
+    memory.load.mockResolvedValueOnce({
+      summary: "",
+      recentMessages: [
+        { role: "assistant", content: "孤儿开头助手" },
+        { role: "user", content: "较早用户问题" },
+        { role: "user", content: "较新用户问题" },
+        { role: "assistant", content: "历史助手回答" },
+        { role: "user", content: "孤儿结尾用户" },
+      ],
+      totalMessages: 5,
+    });
+    const cb = askCallbacks();
+
+    await service.ask({
+      userId: "user-1",
+      tenantId: "tenant-1",
+      conversationId: "conv-1",
+      question: "本轮问题",
+      ...cb,
+    });
+
+    const messages = llm.streamChat.mock.calls[0][0] as Array<{ role: string; content: string }>;
+    // [system, user(较新), assistant(历史), user(本轮)]
+    expect(messages.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(messages[1].content).toBe("较新用户问题");
+    expect(messages[2].content).toBe("历史助手回答");
+    const joined = messages.map((m) => m.content).join("\n");
+    expect(joined).not.toContain("孤儿开头助手");
+    expect(joined).not.toContain("孤儿结尾用户");
+    expect(joined).not.toContain("较早用户问题");
+  });
 });
 
 describe("QaService updateMessageFeedback", () => {
@@ -460,5 +609,82 @@ describe("QaService updateMessageFeedback", () => {
         rating: "up",
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe("QaService getConversation", () => {
+  it("会话不存在时抛 NotFoundException", async () => {
+    const { service, prisma } = createService();
+    prisma.qAConversation.findFirst.mockResolvedValueOnce(null);
+
+    await expect(
+      service.getConversation("missing", "user-1", "tenant-1", { userId: "user-1" }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("存量 citations 复核：无 canView / ai_reference 的引用被整条剔除", async () => {
+    const { service, prisma, db, access } = createService();
+    prisma.qAConversation.findFirst.mockResolvedValueOnce({
+      id: "conv-1",
+      title: "标题",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-02T00:00:00Z"),
+    });
+    const citation = (documentId: string, index: number) => ({
+      index,
+      chunkId: `chunk-${documentId}`,
+      documentId,
+      documentTitle: documentId,
+      snippet: `snippet-${documentId}`,
+      page: null,
+      mime: "text/plain",
+    });
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM qa_messages")) {
+        return [
+          {
+            id: "m-user",
+            role: "user",
+            content: "问题",
+            citations: null,
+            feedbackRating: null,
+            feedbackText: null,
+            feedbackAt: null,
+            createdAt: new Date("2026-01-01T00:00:00Z"),
+          },
+          {
+            id: "m-assistant",
+            role: "assistant",
+            content: "回答",
+            citations: [citation("doc-allowed", 1), citation("doc-denied", 2), citation("doc-ai-off", 3)],
+            feedbackRating: null,
+            feedbackText: null,
+            feedbackAt: null,
+            createdAt: new Date("2026-01-01T00:01:00Z"),
+          },
+        ];
+      }
+      if (sql.includes("ai_reference_enabled")) {
+        return [
+          { id: "doc-allowed", aiReferenceEnabled: true },
+          { id: "doc-denied", aiReferenceEnabled: true },
+          { id: "doc-ai-off", aiReferenceEnabled: false },
+        ];
+      }
+      return [];
+    });
+    access.getAccessFlags.mockResolvedValueOnce({
+      "doc-allowed": accessFlags(true),
+      "doc-denied": accessFlags(false),
+      "doc-ai-off": accessFlags(true),
+    });
+
+    const result = await service.getConversation("conv-1", "user-1", "tenant-1", {
+      userId: "user-1",
+    });
+
+    const assistant = result.messages.find((m) => m.id === "m-assistant")!;
+    // 仅保留 canView && ai_reference_enabled 的 doc-allowed
+    expect(assistant.citations.map((c) => c.documentId)).toEqual(["doc-allowed"]);
   });
 });

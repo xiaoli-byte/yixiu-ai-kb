@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
+import { AskRequest } from "@ai-knowledge/schemas";
 import { QaService } from "./qa.service";
 import { DatabaseService } from "../../database/database.service";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
@@ -50,8 +51,9 @@ export class QaController {
   }
 
   @Get("conversations/:id")
-  async get(@Param("id") id: string, @CurrentUser("sub") userId: string) {
-    return this.qa.getConversation(id, userId, this.db.tenantId!);
+  async get(@Param("id") id: string, @CurrentUser() user: any) {
+    const userId = user?.sub ?? user?.userId ?? user?.id;
+    return this.qa.getConversation(id, userId, this.db.tenantId!, user);
   }
 
   @Patch("messages/:id/feedback")
@@ -67,11 +69,6 @@ export class QaController {
       rating: body.rating || "none",
       feedbackText: body.feedbackText,
     });
-  }
-
-  @Get("chunks/:id")
-  async getChunk(@Param("id") id: string) {
-    return this.qa.getChunk(id);
   }
 
   @Get("debug/runs")
@@ -143,24 +140,26 @@ export class QaController {
     @Param("id") id: string,
     @CurrentUser("sub") userId: string,
   ) {
-    return this.qa.deleteConversation(id, userId);
+    return this.qa.deleteConversation(id, userId, this.db.tenantId!);
   }
 
   @Post("ask")
   @RateLimit({ ...RateLimitPolicies.qa, message: "AI 问答请求过于频繁，请稍后再试" })
   async ask(
-    @Body() body: { conversationId?: string; question: string; topK?: number },
+    @Body() body: unknown,
     @CurrentUser() user: any,
     @Res() res: Response,
   ) {
     const userId = user?.sub ?? user?.userId ?? user?.id;
-    const question = (body.question || "").trim();
-    if (!question) {
+    // 请求校验：question 1-2000、topK 默认 5 上限 20（沿用手写 400 的响应方式）
+    const parsed = AskRequest.safeParse(body);
+    if (!parsed.success) {
       res.setHeader("Content-Type", "application/json");
       res.statusCode = 400;
-      res.end(JSON.stringify({ message: "question 不能为空" }));
+      res.end(JSON.stringify({ message: "请求参数不合法" }));
       return;
     }
+    const { conversationId, question, topK } = parsed.data;
 
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
@@ -169,9 +168,12 @@ export class QaController {
     res.setHeader("Content-Encoding", "none");
     res.flushHeaders?.();
 
+    // 客户端断开时中止生成：将 abort 信号透传给 qa.ask -> llm.streamChat
+    const abort = new AbortController();
     let closed = false;
     res.on("close", () => {
       closed = true;
+      abort.abort();
     });
 
     const write = (event: any) => {
@@ -189,20 +191,24 @@ export class QaController {
       userId,
       tenantId: this.db.tenantId!,
       user,
-      conversationId: body.conversationId,
+      conversationId,
       question,
-      topK: body.topK,
+      topK,
+      signal: abort.signal,
+      // 会话确保存在、生成开始前的早发事件，前端据此拿到 conversationId
+      onConversation: (conversation) => write({ type: "conversation", conversationId: conversation }),
       onChunk: (content) => write({ type: "chunk", content }),
       // citations 在 LLM 完成后由 service 调用，此时才发往前端
       onCitations: (citations) => write({ type: "citations", citations }),
       // 无检索结果时通知前端，前端显示提示但不中断流程
       onNoResults: (suggestions) => write({ type: "no_results", suggestions }),
-      onDone: (messageId, conversationId) => {
-        write({ type: "done", messageId, conversationId });
+      onDone: (messageId, conversation) => {
+        write({ type: "done", messageId, conversationId: conversation });
         end();
       },
-      onError: (e) => {
-        write({ type: "error", message: e.message });
+      // 仅向客户端发送通用文案；原始 error 已在 qa.service 记入 logger/runLog
+      onError: () => {
+        write({ type: "error", message: "生成失败，请稍后重试" });
         end();
       },
     });
