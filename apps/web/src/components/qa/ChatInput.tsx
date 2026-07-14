@@ -28,8 +28,8 @@ export function ChatInput({ value, onChange, onSend, onStop, streaming, textarea
   return (
     <div className="sticky bottom-0 shrink-0">
       {/* 顶部渐变遮罩：消息滚动经过输入框时自然淡出，替代分隔线 */}
-      <div className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-slate-50 to-transparent" />
-      <div className="bg-slate-50 px-4 pb-4 pt-1">
+      <div className="pointer-events-none absolute inset-x-0 -top-6 h-6 bg-gradient-to-t from-white to-transparent" />
+      <div className="bg-white px-4 pb-4 pt-1">
         <div className="max-w-3xl mx-auto">
         <div className="rounded-2xl border border-slate-200 bg-white shadow-card focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-500/10 focus-within:shadow-raised transition">
           <textarea

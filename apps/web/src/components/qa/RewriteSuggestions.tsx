@@ -11,7 +11,7 @@ export interface RewriteSuggestionsProps {
 export function RewriteSuggestions({ suggestions, disabled, onPick }: RewriteSuggestionsProps) {
   if (suggestions.length === 0) return null;
   return (
-    <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2 pl-[42px]">
+    <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2">
       <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
         <Sparkles size={12} className="text-ai/80" />
         试试这样问：
