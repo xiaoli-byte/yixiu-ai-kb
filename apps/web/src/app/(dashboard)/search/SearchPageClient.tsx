@@ -23,7 +23,7 @@ import { SearchResultsToolbar } from "@/components/search/SearchResultsToolbar";
 import { SearchResultList } from "@/components/search/SearchResultList";
 import { SearchResultGrid } from "@/components/search/SearchResultGrid";
 import { SearchPagination } from "@/components/search/SearchPagination";
-import { SearchSelectedFilters, type SelectedSearchFilter } from "@/components/search/SearchSelectedFilters";
+import { type SelectedSearchFilter } from "@/components/search/SearchSelectedFilters";
 import { SearchEmptyState, SearchErrorState, SearchLoadingSkeleton } from "@/components/search/SearchStatePanels";
 import MarkdownPreviewModal from "@/components/MarkdownPreviewModal";
 import PdfViewerModal from "@/components/PdfViewerModal";
@@ -573,35 +573,33 @@ export default function SearchPageClient() {
   }
 
   return (
-    <div className="min-h-full bg-white" data-search-state="results">
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-8">
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="min-h-full bg-slate-50" data-search-state="results">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4 sm:px-8">
           <SearchBox inputValue={inputValue} compact onInputChange={setInputValue} onSubmit={() => submitKeyword()} />
           <button
             aria-label="清空搜索条件"
-            className="grid h-11 w-11 place-items-center rounded border border-slate-200 text-slate-500 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="grid h-11 w-11 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500"
             onClick={clearAll}
             type="button"
           >
             <X size={17} />
           </button>
         </div>
+
+        <SearchFilters
+          id="search-filters"
+          value={filters}
+          expanded={advancedOpen}
+          knowledgeBases={knowledgeBaseOptions}
+          mode={mode}
+          showPermission={false}
+          onModeChange={handleModeChange}
+          onChange={applyFilters}
+          onClear={clearFilters}
+          onToggleExpanded={() => setAdvancedOpen((open) => !open)}
+        />
       </div>
-
-      <SearchFilters
-        id="search-filters"
-        value={filters}
-        expanded={advancedOpen}
-        knowledgeBases={knowledgeBaseOptions}
-        mode={mode}
-        showPermission={false}
-        onModeChange={handleModeChange}
-        onChange={applyFilters}
-        onClear={clearFilters}
-        onToggleExpanded={() => setAdvancedOpen((open) => !open)}
-      />
-
-      <SearchSelectedFilters items={selectedFilterItems} onRemove={removeSelectedFilter} onClear={clearFilters} />
 
       <SearchResultsToolbar
         total={result?.total ?? hits.length}
@@ -613,8 +611,11 @@ export default function SearchPageClient() {
         truncated={result?.truncated}
         resultLimit={result?.resultLimit}
         permissionNotice={hits.some((hit) => hit.canDownload === false)}
+        selectedFilters={selectedFilterItems}
         onSortChange={handleSortChange}
         onViewModeChange={handleViewModeChange}
+        onRemoveFilter={removeSelectedFilter}
+        onClearFilters={clearFilters}
       />
 
       {loading && hits.length > 0 && (
@@ -630,7 +631,7 @@ export default function SearchPageClient() {
       {error && hits.length > 0 && <SearchErrorState message={`${error}，当前仍显示上一次结果。`} onRetry={() => void runSearch()} />}
 
       {actionFeedback && (
-        <div aria-live="polite" className="mx-4 my-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 sm:mx-8">
+        <div aria-live="polite" className="mx-4 my-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 sm:mx-8">
           {actionFeedback}
         </div>
       )}
@@ -640,6 +641,7 @@ export default function SearchPageClient() {
       {hits.length > 0 && (viewMode === "list" ? (
         <SearchResultList
           hits={hits}
+          keyword={keyword}
           onPreview={previewSearchHit}
           onOpenOriginal={openOriginalSearchHit}
           onDownload={downloadSearchHit}
@@ -647,6 +649,7 @@ export default function SearchPageClient() {
       ) : (
         <SearchResultGrid
           hits={hits}
+          keyword={keyword}
           onPreview={previewSearchHit}
           onOpenOriginal={openOriginalSearchHit}
           onDownload={downloadSearchHit}
@@ -680,7 +683,7 @@ function SearchBox({
       <div className="relative min-w-[220px] flex-1">
         <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
         <input
-          className="h-11 w-full rounded border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-200"
+          className="h-11 w-full rounded-lg border border-slate-300 bg-white pl-10 pr-3 text-sm text-slate-900 outline-none transition focus:border-brand-600 focus:ring-2 focus:ring-brand-200"
           id="search-keyword"
           placeholder="输入文档标题或内容关键词"
           value={inputValue}
@@ -690,7 +693,7 @@ function SearchBox({
           }}
         />
       </div>
-      <button className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded bg-brand-600 px-5 text-sm font-medium text-white transition hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2" onClick={onSubmit} type="button">
+      <button className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg bg-brand-600 px-5 text-sm font-medium text-white transition hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2" onClick={onSubmit} type="button">
         <Search size={16} />
         搜索
       </button>

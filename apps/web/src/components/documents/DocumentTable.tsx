@@ -79,7 +79,7 @@ export function DocumentTable({
     <div className="flex min-h-0 flex-1 flex-col bg-white">
       <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[980px] border-collapse text-[13px]">
-          <thead className="sticky top-0 z-10 bg-slate-50 text-slate-700">
+          <thead className="sticky top-0 z-10 bg-surface-muted text-slate-700">
             <tr className="h-10 border-b border-slate-200">
               <th className="w-11 px-4 text-left">
                 <input
@@ -109,14 +109,17 @@ export function DocumentTable({
               </tr>
             ) : documents.length === 0 ? (
               <tr>
-                <td className="py-16 text-center text-slate-400" colSpan={8}>
-                  <FileText className="mx-auto mb-2" size={28} />
-                  暂无符合条件的文档
+                <td className="py-16 text-center" colSpan={8}>
+                  <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-slate-100">
+                    <FileText className="text-slate-400" size={24} />
+                  </div>
+                  <p className="text-sm font-medium text-slate-600">暂无符合条件的文档</p>
+                  <p className="mt-1 text-xs text-slate-500">试试调整筛选条件，或点击右上角"上传文档"</p>
                 </td>
               </tr>
             ) : (
               documents.map((doc) => (
-                <tr key={doc.id} className="h-[58px] border-b border-slate-100 hover:bg-slate-50/70">
+                <tr key={doc.id} className="h-[50px] border-b border-slate-100 hover:bg-slate-50/70">
                   <td className="px-4">
                     <input
                       aria-label={`选择 ${doc.title}`}
@@ -145,13 +148,13 @@ export function DocumentTable({
                       <div className="min-w-0">
                         <div className="truncate font-medium text-slate-900">{doc.title}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                          <span>{formatBytes(doc.size)}</span>
+                          <span className="tabular">{formatBytes(doc.size)}</span>
                         </div>
                       </div>
                     </div>
                   </td>
                   <td className="px-4 text-xs text-slate-600">{getFileIcon(doc).label}</td>
-                  <td className="px-4 text-xs text-slate-600">{formatDate(doc.createdAt)}</td>
+                  <td className="px-4 text-xs text-slate-600 tabular">{formatDate(doc.createdAt)}</td>
                   <td className="px-4 text-xs text-slate-700">{doc.ownerName || "未知"}</td>
                   <td className="px-4">
                     <span className={cn("badge rounded px-2 py-0.5 ring-1 ring-inset", statusColor(doc.status))}>
@@ -202,7 +205,7 @@ export function DocumentTable({
           </tbody>
         </table>
       </div>
-      <div className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-2 text-xs text-slate-500">
+      <div className="tabular flex min-h-11 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-2 text-xs text-slate-500">
         <span>共 {total} 条 · 每页 {pageSize} 条</span>
         <div className="flex items-center gap-2">
           <button

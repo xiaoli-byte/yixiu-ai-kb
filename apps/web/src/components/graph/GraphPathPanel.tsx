@@ -48,7 +48,7 @@ export function GraphPathPanel({
   const canUsePair = Boolean(sourceId && targetId && sourceId !== targetId);
 
   return (
-    <section className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-soft">
+    <section className="rounded-xl border border-slate-200/80 bg-white p-4 shadow-card">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-800">

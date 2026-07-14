@@ -125,6 +125,14 @@ const envShape = z
     JWT_REFRESH_SECRET: nonEmpty,
     JWT_ACCESS_TTL: nonEmpty,
     JWT_REFRESH_TTL: nonEmpty,
+    // 联合登录 / 服务间调用（CALL-13）：全部可选，且运行时代码把空串按未设置处理
+    // （jwt.strategy / @xiaoli-byte/authz service-auth.guard 直接读 process.env），
+    // 因此这里只做注册不做 min(1)，避免 compose 透传空串导致启动失败。
+    FEDERATED_TENANT_ALLOWLIST: z.string().optional(),
+    SERVICE_API_TOKEN: z.string().optional(),
+    SERVICE_API_REQUIRE_SIGNATURE: z.string().optional(),
+    SERVICE_API_SIGNING_SECRET: z.string().optional(),
+    SERVICE_API_SIGNATURE_TOLERANCE_MS: z.string().optional(),
     BOOTSTRAP_ADMIN_EMAIL: nonEmpty,
     BOOTSTRAP_ADMIN_PASSWORD: nonEmpty,
     BOOTSTRAP_ADMIN_NAME: nonEmpty,

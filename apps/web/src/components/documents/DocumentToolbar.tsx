@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
-import { ChevronDown, RefreshCw, Search, SlidersHorizontal, Upload, X } from "lucide-react";
+import { RefreshCw, Search, SlidersHorizontal, Upload, X } from "lucide-react";
 import type { DocumentPermissionScope, DocumentStatus } from "@/services/documents";
 import { cn } from "@/lib/utils";
 import { useUsers } from "@/hooks/useUsers";
 import { useDepartments } from "@/hooks/useDepartments";
 import { SearchableSelect } from "@/components/SearchableSelect";
+import { Select } from "@/components/ui/Select";
+import { DateRangeField } from "@/components/ui/DateRangeField";
 
 interface DocumentToolbarProps {
   query: string;
@@ -210,22 +212,19 @@ export function DocumentToolbar({
             loading={departmentsLoading}
             onChange={onDepartmentIdChange}
           />
-          <label className="flex items-center gap-1">
+          <div className="flex items-center gap-1">
             <span>上传时间</span>
-            <input
-              className="h-8 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
-              type="date"
-              value={uploadedFrom}
-              onChange={(event) => onUploadedFromChange(event.target.value)}
+            <DateRangeField
+              ariaLabel="上传时间范围"
+              placeholder="选择日期范围"
+              from={uploadedFrom}
+              to={uploadedTo}
+              onChange={({ from, to }) => {
+                onUploadedFromChange(from);
+                onUploadedToChange(to);
+              }}
             />
-            <span className="text-slate-400">至</span>
-            <input
-              className="h-8 rounded border border-slate-200 bg-white px-2 outline-none focus:border-brand-500"
-              type="date"
-              value={uploadedTo}
-              onChange={(event) => onUploadedToChange(event.target.value)}
-            />
-          </label>
+          </div>
         </div>
       )}
     </div>
@@ -243,21 +242,5 @@ function ToolbarSelect({
   options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
 }) {
-  return (
-    <label className="relative inline-flex h-8 items-center">
-      <span className="sr-only">{label}</span>
-      <select
-        className="h-8 min-w-32 appearance-none rounded border border-slate-200 bg-white pl-3 pr-8 text-xs text-slate-800 outline-none transition hover:bg-slate-50 focus:border-brand-500"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value || "all"} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={13} className="pointer-events-none absolute right-2 text-slate-400" />
-    </label>
-  );
+  return <Select ariaLabel={label} size="sm" value={value} options={options} onChange={onChange} />;
 }

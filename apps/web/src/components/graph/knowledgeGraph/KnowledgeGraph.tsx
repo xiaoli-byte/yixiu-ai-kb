@@ -282,7 +282,7 @@ export const KnowledgeGraph = forwardRef<GraphCanvasHandle, KnowledgeGraphProps>
     return (
       <section
         ref={shellRef}
-        className="relative h-[560px] overflow-hidden rounded-lg border border-slate-200/80 bg-white shadow-soft xl:h-[calc(100vh-180px)] xl:min-h-[520px]"
+        className="relative h-[560px] overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-card xl:h-[calc(100vh-180px)] xl:min-h-[520px]"
       >
         {display.nodes.length === 0 ? (
           <EmptyGraphState loading={loading} error={error} />
@@ -376,7 +376,7 @@ function IconButton({
 }) {
   return (
     <button
-      className="grid h-9 w-9 place-items-center text-slate-500 transition hover:bg-slate-50 hover:text-brand-600"
+      className="grid h-9 w-9 place-items-center text-slate-500 transition hover:bg-slate-50 hover:text-brand-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40"
       title={label}
       aria-label={label}
       onClick={onClick}

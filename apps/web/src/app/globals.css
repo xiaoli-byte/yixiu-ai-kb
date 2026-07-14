@@ -6,9 +6,22 @@
   --background: 248 250 252;
   --foreground: 15 23 42;
   --border: 226 232 240;
-  --muted: 100 116 139;
-  --card: 255 255 255;
+  --muted: 100 116 139; /* 兼容别名，保留 */
+  --card: 255 255 255; /* 兼容别名，保留 */
   --primary: 29 89 245;
+
+  /* 中性面板层（Soft UI Evolution） */
+  --surface: 255 255 255; /* 卡片/表格 */
+  --surface-muted: 241 245 249; /* slate-100，次级面板/表头 */
+  --muted-foreground: 100 116 139; /* slate-500，辅助文字 */
+
+  /* 语义色 */
+  --ai: 77 107 254; /* 蓝紫（DeepSeek 系），AI 专属，仅点状强调（按钮/图标/脉冲），不做大面积底色 */
+  --ai-surface: 240 243 255; /* 极淡蓝紫，克制使用（hover 反馈/空态底） */
+  --success: 5 150 105; /* emerald-600 */
+  --warning: 217 119 6; /* amber-600 */
+  --destructive: 220 38 38; /* red-600 */
+  --ring: 29 89 245; /* 焦点环随品牌色 */
 }
 
 html,
@@ -25,17 +38,24 @@ body {
 
 @layer components {
   .card {
-    @apply bg-white rounded-2xl shadow-soft border border-slate-200/70;
+    @apply bg-white rounded-xl shadow-card border border-slate-200/70;
   }
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
-           transition disabled:opacity-50 disabled:pointer-events-none;
+           transition disabled:opacity-50 disabled:pointer-events-none
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40;
   }
   .btn-primary {
     @apply btn bg-brand-600 text-white hover:bg-brand-700 shadow-sm;
   }
   .btn-ghost {
     @apply btn text-slate-700 hover:bg-slate-100;
+  }
+  .btn-ai {
+    @apply btn bg-ai text-white hover:bg-ai/90 shadow-sm;
+  }
+  .btn-danger {
+    @apply btn text-red-600 hover:bg-red-50;
   }
   .input {
     @apply w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm
@@ -46,8 +66,39 @@ body {
   }
 }
 
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* 正文命中：黄底深字（对齐设计稿的内容高亮），标题命中另用红字（见搜索结果组件） */
 mark {
-  background: #fde68a;
+  background: rgb(253 230 138 / 0.8); /* amber-200 */
+  color: rgb(30 41 59); /* slate-800 */
+  font-weight: 600;
   padding: 0 2px;
   border-radius: 2px;
+}
+
+/* 下拉/popover 弹出：自触发源轻微放大 + 淡入（方案 §动效） */
+@keyframes select-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

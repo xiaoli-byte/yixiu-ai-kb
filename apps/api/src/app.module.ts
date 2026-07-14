@@ -16,6 +16,7 @@ import { DocumentsModule } from "./modules/documents/documents.module";
 import { SearchModule } from "./modules/search/search.module";
 import { QaModule } from "./modules/qa/qa.module";
 import { GraphModule } from "./modules/graph/graph.module";
+import { OverviewModule } from "./modules/overview/overview.module";
 import { EmbeddingsModule } from "./modules/embeddings/embeddings.module";
 import { LlmModule } from "./modules/llm/llm.module";
 import { StorageModule } from "./modules/storage/storage.module";
@@ -68,6 +69,7 @@ loadRootEnv();
     SearchModule,
     QaModule,
     GraphModule,
+    OverviewModule,
   ],
   controllers: [HealthController],
 })

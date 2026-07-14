@@ -8,6 +8,7 @@ import type {
   GraphEvidenceItem,
   GraphNodeEvidenceResponse,
 } from "@/types/api";
+import { Select } from "@/components/ui/Select";
 
 export type GraphSelection =
   | { type: "node"; id: string }
@@ -89,7 +90,7 @@ export function GraphEvidenceDrawer({
       : "关系证据";
 
   return (
-    <aside className="rounded-lg border border-slate-200/80 bg-white shadow-soft">
+    <aside className="rounded-xl border border-slate-200/80 bg-white shadow-card">
       <header className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold text-slate-900">{title}</h2>
@@ -224,22 +225,18 @@ function NodePanel({
       </section>
 
       <section className="space-y-2">
-        <label className="text-xs font-medium text-slate-600" htmlFor="graph-merge-target">
-          合并到
-        </label>
-        <select
-          id="graph-merge-target"
-          className="input h-10"
+        <span className="block text-xs font-medium text-slate-600">合并到</span>
+        <Select
+          className="w-full"
+          triggerClassName="h-10"
+          triggerWidthClassName="w-full"
+          ariaLabel="合并到目标实体"
+          placeholder="选择目标实体"
+          searchable
           value={mergeTargetId}
-          onChange={(event) => onMergeTarget(event.target.value)}
-        >
-          <option value="">选择目标实体</option>
-          {entityTargets.map((node) => (
-            <option key={node.id} value={node.id}>
-              {node.label}
-            </option>
-          ))}
-        </select>
+          options={entityTargets.map((node) => ({ value: node.id, label: node.label }))}
+          onChange={onMergeTarget}
+        />
         <button
           className="btn-ghost h-10 w-full border border-slate-200"
           type="button"

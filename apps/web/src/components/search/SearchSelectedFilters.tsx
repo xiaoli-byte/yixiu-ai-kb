@@ -12,12 +12,12 @@ interface SearchSelectedFiltersProps {
   onClear?: () => void;
 }
 
+/** 已选条件 chips（内嵌形态，由结果工具栏承载，不再独占一行） */
 export function SearchSelectedFilters({ items, onRemove, onClear }: SearchSelectedFiltersProps) {
   if (items.length === 0) return null;
 
   return (
-    <div aria-label="已选搜索条件" className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 sm:px-8">
-      <span className="text-xs font-medium text-slate-600">已选条件</span>
+    <span aria-label="已选搜索条件" className="inline-flex flex-wrap items-center gap-1.5">
       {items.map((item) => (
         <span key={item.key} className="inline-flex max-w-full items-center gap-1 rounded-full border border-brand-100 bg-white px-2.5 py-1 text-xs text-slate-700">
           <span className="text-slate-500">{item.label}：</span>
@@ -27,7 +27,7 @@ export function SearchSelectedFilters({ items, onRemove, onClear }: SearchSelect
           </button>
         </span>
       ))}
-      {onClear && <button className="ml-1 text-xs text-brand-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={onClear} type="button">清除全部</button>}
-    </div>
+      {onClear && <button className="text-xs text-brand-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={onClear} type="button">清除全部</button>}
+    </span>
   );
 }

@@ -29,6 +29,12 @@ x-api-env: &api-env
   JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
   JWT_ACCESS_TTL: ${JWT_ACCESS_TTL}
   JWT_REFRESH_TTL: ${JWT_REFRESH_TTL}
+  # 联合登录（CALL-13）与服务间调用：未配置时按空串透传，运行时视为未启用
+  FEDERATED_TENANT_ALLOWLIST: ${FEDERATED_TENANT_ALLOWLIST}
+  SERVICE_API_TOKEN: ${SERVICE_API_TOKEN}
+  SERVICE_API_REQUIRE_SIGNATURE: ${SERVICE_API_REQUIRE_SIGNATURE}
+  SERVICE_API_SIGNING_SECRET: ${SERVICE_API_SIGNING_SECRET}
+  SERVICE_API_SIGNATURE_TOLERANCE_MS: ${SERVICE_API_SIGNATURE_TOLERANCE_MS}
   BOOTSTRAP_TENANT_ID: ${BOOTSTRAP_TENANT_ID}
   BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL}
   BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
@@ -104,6 +110,11 @@ services:
     environment:
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_AUTH: ${NEO4J_USER}/${NEO4J_PASSWORD}
+      # 与 docker-compose.yml（开发）对齐：apoc 过程放开 + 显式内存参数
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_dbms_memory_heap_initial__size: 512m
+      NEO4J_dbms_memory_heap_max__size: 1G
+      NEO4J_dbms_memory_pagecache_size: 512m
     volumes:
       - neo4j_data:/data
     ports:
@@ -215,18 +226,22 @@ services:
         condition: service_healthy
 
   web:
+    # 生产按 ai-call 的 /knowledge zone 内嵌部署：basePath 构建期内联，运行期 next start
+    # 重新读 next.config，需要构建参数与运行时环境保持一致（见 apps/web/next.config.mjs）
     build:
       context: .
       dockerfile: ./apps/web/Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: /api
+        NEXT_PUBLIC_API_URL: /knowledge/api
         API_INTERNAL_URL: http://api:9999/api
+        WEB_BASE_PATH: /knowledge
     container_name: ai-knowledge-web
     restart: unless-stopped
     environment:
       NODE_ENV: production
       API_INTERNAL_URL: http://api:9999/api
-      NEXT_PUBLIC_API_URL: /api
+      NEXT_PUBLIC_API_URL: /knowledge/api
+      WEB_BASE_PATH: /knowledge
     ports:
       - "${WEB_PORT}:8888"
     depends_on:

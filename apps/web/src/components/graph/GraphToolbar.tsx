@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Calendar,
   Download,
   FileJson,
   Image as ImageIcon,
@@ -10,6 +9,8 @@ import {
   Search,
 } from "lucide-react";
 import type { GraphExploreQuery, GraphFilterOptions } from "@/types/api";
+import { Select } from "@/components/ui/Select";
+import { DateRangeField } from "@/components/ui/DateRangeField";
 
 export type GraphExportFormat = "png" | "svg" | "json";
 
@@ -46,7 +47,7 @@ export function GraphToolbar({
   onExport,
 }: GraphToolbarProps) {
   return (
-    <section className="rounded-lg border border-slate-200/80 bg-white p-3 shadow-soft">
+    <section className="rounded-xl border border-slate-200/80 bg-white p-3 shadow-card">
       <div className="flex flex-wrap items-center gap-1.5" data-filter-row="graph">
         <div className="relative min-w-[190px] flex-[1_1_190px]">
           <Search
@@ -65,76 +66,77 @@ export function GraphToolbar({
           />
         </div>
 
-        <select
-          className="input h-10 min-w-[108px] flex-[0_1_108px]"
-          value={filters.nodeType || "all"}
-          onChange={(event) =>
-            onChange({ nodeType: event.target.value as GraphExploreQuery["nodeType"] })
-          }
-          aria-label="节点类型"
-        >
-          {nodeTypeOptions.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        <span className="flex min-w-[150px] flex-[0_1_160px] items-center gap-1.5">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">节点类型:</span>
+          <Select
+            className="min-w-0 flex-1"
+            triggerClassName="h-10"
+            triggerWidthClassName="w-full"
+            ariaLabel="节点类型"
+            value={filters.nodeType || "all"}
+            options={nodeTypeOptions.map((option) => ({ value: option.value, label: option.label }))}
+            onChange={(value) => onChange({ nodeType: value as GraphExploreQuery["nodeType"] })}
+          />
+        </span>
 
-        <select
-          className="input h-10 min-w-[118px] flex-[0_1_118px]"
-          value={filters.documentId || ""}
-          onChange={(event) => onChange({ documentId: event.target.value || undefined })}
-          aria-label="文档"
-        >
-          <option value="">全部文档</option>
-          {filterOptions.documents.map((document) => (
-            <option key={document.id} value={document.id}>
-              {document.title}
-            </option>
-          ))}
-        </select>
+        <span className="flex min-w-[140px] flex-[0_1_150px] items-center gap-1.5">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">文档:</span>
+          <Select
+            className="min-w-0 flex-1"
+            triggerClassName="h-10"
+            triggerWidthClassName="w-full"
+            ariaLabel="文档"
+            searchable
+            value={filters.documentId || ""}
+            options={[
+              { value: "", label: "全部" },
+              ...filterOptions.documents.map((document) => ({ value: document.id, label: document.title })),
+            ]}
+            onChange={(value) => onChange({ documentId: value || undefined })}
+          />
+        </span>
 
-        <select
-          className="input h-10 min-w-[136px] flex-[0_1_136px]"
-          value={filters.relationType || ""}
-          onChange={(event) => onChange({ relationType: event.target.value || undefined })}
-          aria-label="关系类型"
-        >
-          <option value="">全部关系</option>
-          {filterOptions.relationTypes.map((type) => (
-            <option key={type} value={type}>
-              {type}
-            </option>
-          ))}
-        </select>
+        <span className="flex min-w-[160px] flex-[0_1_170px] items-center gap-1.5">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">关系类型:</span>
+          <Select
+            className="min-w-0 flex-1"
+            triggerClassName="h-10"
+            triggerWidthClassName="w-full"
+            ariaLabel="关系类型"
+            value={filters.relationType || ""}
+            options={[
+              { value: "", label: "全部" },
+              ...filterOptions.relationTypes.map((type) => ({ value: type, label: type })),
+            ]}
+            onChange={(value) => onChange({ relationType: value || undefined })}
+          />
+        </span>
 
-        <DateRange
-          className="min-w-[268px] flex-[1_1_268px]"
-          from={filters.createdFrom}
-          to={filters.createdTo}
-          fromLabel="创建开始"
-          toLabel="创建结束"
-          rangeLabel="创建时间范围"
-          onFrom={(value) => onChange({ createdFrom: value || undefined })}
-          onTo={(value) => onChange({ createdTo: value || undefined })}
-        />
+        <div className="flex min-w-[300px] flex-[1_1_300px] items-center gap-1.5" data-date-range="created">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">创建时间:</span>
+          <DateRangeField
+            className="min-w-0 flex-1"
+            triggerClassName="h-10 w-full"
+            ariaLabel="创建时间范围"
+            from={filters.createdFrom || ""}
+            to={filters.createdTo || ""}
+            onChange={({ from, to }) =>
+              onChange({ createdFrom: from || undefined, createdTo: to || undefined })
+            }
+          />
+        </div>
         <div className="grid min-w-[162px] flex-none grid-cols-2 gap-2">
-          <button className="btn-primary h-10" onClick={onSearch} disabled={loading} type="button">
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-            搜索
-          </button>
           <button className="btn-ghost h-10 border border-slate-200" onClick={onReset} type="button">
             <RotateCcw size={15} />
             重置
           </button>
+          <button className="btn-primary h-10" onClick={onSearch} disabled={loading} type="button">
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+            搜索
+          </button>
         </div>
-      </div>
 
-      <div
-        className="mt-3 flex justify-end border-t border-slate-100 pt-3"
-        data-export-row="graph"
-      >
-        <div className="relative">
+        <div className="ml-auto" data-export-row="graph">
           <details className="group relative">
             <summary
               className="btn-ghost h-10 cursor-pointer list-none border border-slate-200 px-3 [&::-webkit-details-marker]:hidden"
@@ -147,7 +149,7 @@ export function GraphToolbar({
               <span className="text-sm">导出图谱</span>
             </summary>
             <div
-              className="absolute right-0 z-20 mt-2 w-36 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+              className="absolute right-0 z-20 mt-2 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-raised"
               role="menu"
             >
               {exportOptions.map(({ format, label, Icon }) => (
@@ -172,59 +174,6 @@ export function GraphToolbar({
         </div>
       </div>
     </section>
-  );
-}
-
-function DateRange({
-  from,
-  to,
-  fromLabel,
-  toLabel,
-  rangeLabel,
-  className,
-  onFrom,
-  onTo,
-}: {
-  from?: string;
-  to?: string;
-  fromLabel: string;
-  toLabel: string;
-  rangeLabel: string;
-  className?: string;
-  onFrom: (value: string) => void;
-  onTo: (value: string) => void;
-}) {
-  return (
-    <div
-      className={[
-        "flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm transition focus-within:border-brand-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-500/30",
-        className,
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      aria-label={rangeLabel}
-      data-date-range="created"
-      role="group"
-    >
-      <Calendar size={15} className="shrink-0 text-slate-400" />
-      <input
-        className="min-w-0 flex-1 appearance-none bg-transparent text-sm text-slate-900 outline-none [color-scheme:light] [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
-        type="date"
-        value={from || ""}
-        onChange={(event) => onFrom(event.target.value)}
-        aria-label={fromLabel}
-        title={fromLabel}
-      />
-      <span className="shrink-0 text-slate-300">至</span>
-      <input
-        className="min-w-0 flex-1 appearance-none bg-transparent text-sm text-slate-900 outline-none [color-scheme:light] [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none"
-        type="date"
-        value={to || ""}
-        onChange={(event) => onTo(event.target.value)}
-        aria-label={toLabel}
-        title={toLabel}
-      />
-    </div>
   );
 }
 
