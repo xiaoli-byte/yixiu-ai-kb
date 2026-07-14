@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -59,7 +60,10 @@ export function DateRangeField({
   triggerClassName,
 }: DateRangeFieldProps) {
   const [open, setOpen] = useState(false);
+  // 弹层贴近视口右缘时改为右对齐，避免溢出撑出横向滚动条
+  const [alignRight, setAlignRight] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
 
@@ -97,6 +101,20 @@ export function DateRangeField({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open, close]);
+
+  // 打开时测量：左对齐会溢出视口右缘则翻转为右对齐（绘制前完成，无闪动）
+  useLayoutEffect(() => {
+    if (!open) {
+      setAlignRight(false);
+      return;
+    }
+    const rect = containerRef.current?.getBoundingClientRect();
+    const popupWidth = popupRef.current?.offsetWidth ?? 0;
+    if (!rect || !popupWidth) return;
+    const overflowsRight = rect.left + popupWidth > window.innerWidth - 8;
+    const fitsLeftward = rect.right - popupWidth >= 8;
+    setAlignRight(overflowsRight && fitsLeftward);
+  }, [open]);
 
   // 焦点日变化时保证在可视月份内
   useEffect(() => {
@@ -236,9 +254,13 @@ export function DateRangeField({
 
       {open && (
         <div
+          ref={popupRef}
           role="dialog"
           aria-label={ariaLabel}
-          className="absolute left-0 top-[calc(100%+4px)] z-20 w-[17rem] overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-raised"
+          className={cn(
+            "absolute top-[calc(100%+4px)] z-20 w-[17rem] overflow-hidden rounded-xl border border-slate-200 bg-white p-3 shadow-raised",
+            alignRight ? "right-0" : "left-0",
+          )}
           style={{ animation: "select-pop 160ms ease-out" }}
         >
           {/* 月份导航 */}

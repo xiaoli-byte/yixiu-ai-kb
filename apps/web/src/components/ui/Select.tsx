@@ -7,6 +7,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -65,7 +66,10 @@ export function Select({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [activeIndex, setActiveIndex] = useState(-1);
+  // 弹层贴近视口右缘时改为右对齐，避免溢出撑出横向滚动条
+  const [alignRight, setAlignRight] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const typeahead = useRef<{ str: string; at: number }>({ str: "", at: 0 });
@@ -104,6 +108,20 @@ export function Select({
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open, close]);
+
+  // 打开时测量：左对齐会溢出视口右缘则翻转为右对齐（绘制前完成，无闪动）
+  useLayoutEffect(() => {
+    if (!open) {
+      setAlignRight(false);
+      return;
+    }
+    const rect = containerRef.current?.getBoundingClientRect();
+    const popupWidth = popupRef.current?.offsetWidth ?? 0;
+    if (!rect || !popupWidth) return;
+    const overflowsRight = rect.left + popupWidth > window.innerWidth - 8;
+    const fitsLeftward = rect.right - popupWidth >= 8;
+    setAlignRight(overflowsRight && fitsLeftward);
+  }, [open]);
 
   // 活动项滚动进视口
   useEffect(() => {
@@ -224,7 +242,11 @@ export function Select({
 
       {open && (
         <div
-          className="absolute left-0 top-[calc(100%+4px)] z-20 min-w-[min(16rem,90vw)] max-w-[20rem] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-raised"
+          ref={popupRef}
+          className={cn(
+            "absolute top-[calc(100%+4px)] z-20 min-w-[min(16rem,90vw)] max-w-[20rem] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-raised",
+            alignRight ? "right-0" : "left-0",
+          )}
           style={{ animation: "select-pop 160ms ease-out" }}
         >
           {searchable && (
