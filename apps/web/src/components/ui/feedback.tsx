@@ -39,14 +39,31 @@ interface FeedbackStore {
 }
 
 let toastSeq = 0;
-const TOAST_DURATION = 4000;
+const TOAST_DURATION = 4000; // 自动消失时长
+const TOAST_MAX = 3; // 同屏最多展示条数，超出丢弃最旧的一条（防止刷屏）
+const TOAST_DEDUPE_WINDOW = 2000; // 相同文案的去重窗口：短时间内连点触发的同一错误不重复弹出
+
+// 记录每条文案最近一次展示的时间戳，用于短窗口去重；到期后自动清理，避免无限增长
+const recentMessageAt = new Map<string, number>();
 
 const useFeedback = create<FeedbackStore>((set, get) => ({
   toasts: [],
   confirm: { open: false, title: "" },
   pushToast: (type, message) => {
+    const now = Date.now();
+    const lastAt = recentMessageAt.get(message);
+    if (lastAt !== undefined && now - lastAt < TOAST_DEDUPE_WINDOW) {
+      return; // 去重窗口内的相同文案（如连点触发的同一报错），直接丢弃
+    }
+    recentMessageAt.set(message, now);
+    setTimeout(() => recentMessageAt.delete(message), TOAST_DEDUPE_WINDOW);
+
     const id = ++toastSeq;
-    set((s) => ({ toasts: [...s.toasts, { id, type, message }] }));
+    set((s) => {
+      const next = [...s.toasts, { id, type, message }];
+      // 同屏最多 TOAST_MAX 条，超出的丢最旧的
+      return { toasts: next.length > TOAST_MAX ? next.slice(next.length - TOAST_MAX) : next };
+    });
     setTimeout(() => get().dismissToast(id), TOAST_DURATION);
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),

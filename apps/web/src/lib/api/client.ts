@@ -1,5 +1,6 @@
 import { ApiError, RateLimitError, TokenExpiredError } from "./errors";
 import { useAuth, COOKIE_SESSION } from "../store";
+import { toast } from "@/components/ui/feedback";
 
 // zone 模式（basePath=/knowledge，构建期内联）下本地登录页在 /knowledge/login；
 // 独立部署为空串，/login 即本地登录页。
@@ -217,6 +218,9 @@ async function clientFetchBlob(
 }
 
 // 处理响应
+// 统一错误提示入口：HTTP 错误响应在这里集中弹 toast，调用方无需各自处理即可获得友好提示。
+// 注意：COOKIE_SESSION 哨兵 401 的整页跳转登录分支（见 clientFetch/clientFetchBlob）
+// 在到达这里之前就已经 throw，不会走到这个函数，因此不会重复弹出提示（跳转本身就是反馈）。
 async function handleResponse<T>(response: Response): Promise<T> {
   // 429 Too Many Requests
   if (response.status === 429) {
@@ -225,10 +229,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
     try {
       body = await response.json();
     } catch {}
-    throw new RateLimitError(
-      body?.message || "请求过于频繁，请稍后再试",
-      retryAfter
-    );
+    const message = body?.message || "请求过于频繁，请稍后再试";
+    toast.error(message);
+    throw new RateLimitError(message, retryAfter);
   }
 
   if (!response.ok) {
@@ -238,9 +241,11 @@ async function handleResponse<T>(response: Response): Promise<T> {
     } catch {
       body = { message: await response.text() };
     }
+    const message = body?.message || body?.error?.message || `请求失败 (${response.status})`;
+    toast.error(message);
     throw new ApiError(
       response.status,
-      body?.message || body?.error?.message || `请求失败 (${response.status})`,
+      message,
       body?.code || body?.error?.code,
       undefined,
       body

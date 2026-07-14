@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import type { Folder } from "@/types/api";
 import { cn } from "@/lib/utils";
+import { useIsEditor } from "@/contexts/permissions-context";
+import { useThrottleFn } from "@/hooks/useThrottleFn";
 
 interface FolderTreeProps {
   folders: Folder[];
@@ -142,7 +144,9 @@ function TreeNode({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const canManage = Boolean(onDeleteFolder || onCreateSubfolder || onRenameFolder);
+  // 新建子文件夹/重命名/删除均为写操作，需 editor 及以上角色；viewer 即便父级传入了回调也不可见
+  const isEditorOrAbove = useIsEditor();
+  const canManage = isEditorOrAbove && Boolean(onDeleteFolder || onCreateSubfolder || onRenameFolder);
 
   useEffect(() => {
     if (creating || renaming) {
@@ -186,6 +190,11 @@ function TreeNode({
     onDeleteFolder?.(folder.id, folder.name);
   }
 
+  // 新建/重命名/删除都是"点击或回车即发请求"的写操作，节流防止连点/回车+失焦重复触发
+  const throttledConfirmCreate = useThrottleFn(confirmCreate, 800);
+  const throttledConfirmRename = useThrottleFn(confirmRename, 800);
+  const throttledHandleDelete = useThrottleFn(handleDelete, 800);
+
   return (
     <div>
       <div
@@ -225,10 +234,10 @@ function TreeNode({
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") confirmRename();
+                if (e.key === "Enter") throttledConfirmRename();
                 if (e.key === "Escape") setRenaming(false);
               }}
-              onBlur={confirmRename}
+              onBlur={throttledConfirmRename}
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
@@ -260,7 +269,7 @@ function TreeNode({
             {onDeleteFolder && (
               <button
                 className="grid h-5 w-5 place-items-center rounded text-slate-400 hover:bg-rose-100 hover:text-rose-600"
-                onClick={handleDelete}
+                onClick={throttledHandleDelete}
                 title="删除文件夹"
                 type="button"
               >
@@ -285,10 +294,10 @@ function TreeNode({
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") confirmCreate();
+              if (e.key === "Enter") throttledConfirmCreate();
               if (e.key === "Escape") setCreating(false);
             }}
-            onBlur={confirmCreate}
+            onBlur={throttledConfirmCreate}
           />
         </div>
       )}

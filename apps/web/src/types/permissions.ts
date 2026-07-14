@@ -38,7 +38,11 @@ export interface UserPermissions {
   permissions: Permission[];
 }
 
-/** 角色权限映射 */
+/**
+ * 角色权限映射
+ * 注意：需与后端 apps/api/src/common/permissions/permissions.types.ts 的
+ * ROLE_PERMISSIONS 保持同步，改动需两边一致。
+ */
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   [Role.SUPER_ADMIN]: [
     { resource: Resource.DOCUMENTS, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE, Action.MANAGE] },
@@ -57,7 +61,8 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     { resource: Resource.USERS, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE, Action.MANAGE] },
     { resource: Resource.DEPARTMENTS, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE, Action.MANAGE] },
     { resource: Resource.CONVERSATIONS, actions: [Action.READ] },
-    { resource: Resource.GRAPH, actions: [Action.READ] },
+    // 与后端一致：ADMIN 对图谱拥有完整管理权限（含写操作），而非仅只读
+    { resource: Resource.GRAPH, actions: [Action.MANAGE] },
     { resource: Resource.SETTINGS, actions: [Action.MANAGE] },
   ],
   [Role.EDITOR]: [
@@ -65,7 +70,8 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     { resource: Resource.FOLDERS, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE] },
     { resource: Resource.TAGS, actions: [Action.READ, Action.UPDATE] },
     { resource: Resource.CONVERSATIONS, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE] },
-    { resource: Resource.GRAPH, actions: [Action.READ] },
+    // 与后端一致：EDITOR 对图谱有完整的创建/查看/修改/删除权限，而非仅只读
+    { resource: Resource.GRAPH, actions: [Action.CREATE, Action.READ, Action.UPDATE, Action.DELETE] },
   ],
   [Role.VIEWER]: [
     { resource: Resource.DOCUMENTS, actions: [Action.READ] },

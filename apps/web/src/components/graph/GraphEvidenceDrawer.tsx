@@ -9,6 +9,7 @@ import type {
   GraphNodeEvidenceResponse,
 } from "@/types/api";
 import { Select } from "@/components/ui/Select";
+import { EditorOrAbove } from "@/components/PermissionGate";
 
 export type GraphSelection =
   | { type: "node"; id: string }
@@ -218,10 +219,13 @@ function NodePanel({
           onChange={(event) => onNodeReason(event.target.value)}
           placeholder="变更原因"
         />
-        <button className="btn-primary h-10 w-full" type="button" disabled={busy} onClick={onUpdateAliases}>
-          <Pencil size={15} />
-          保存别名
-        </button>
+        {/* 保存别名为写操作，对非 editor+ 角色隐藏 */}
+        <EditorOrAbove hidden>
+          <button className="btn-primary h-10 w-full" type="button" disabled={busy} onClick={onUpdateAliases}>
+            <Pencil size={15} />
+            保存别名
+          </button>
+        </EditorOrAbove>
       </section>
 
       <section className="space-y-2">
@@ -237,15 +241,18 @@ function NodePanel({
           options={entityTargets.map((node) => ({ value: node.id, label: node.label }))}
           onChange={onMergeTarget}
         />
-        <button
-          className="btn-ghost h-10 w-full border border-slate-200"
-          type="button"
-          disabled={busy || !mergeTargetId}
-          onClick={onMerge}
-        >
-          <Merge size={15} />
-          软合并实体
-        </button>
+        {/* 软合并实体为写操作，对非 editor+ 角色隐藏 */}
+        <EditorOrAbove hidden>
+          <button
+            className="btn-ghost h-10 w-full border border-slate-200"
+            type="button"
+            disabled={busy || !mergeTargetId}
+            onClick={onMerge}
+          >
+            <Merge size={15} />
+            软合并实体
+          </button>
+        </EditorOrAbove>
       </section>
 
       <EvidenceList evidences={data.evidences} />
@@ -303,29 +310,38 @@ function EdgePanel({
           onChange={(event) => onRelationReason(event.target.value)}
           placeholder="变更或审核原因"
         />
-        <button className="btn-primary h-10 w-full" type="button" disabled={busy || !relationType.trim()} onClick={onUpdateRelation}>
-          <Pencil size={15} />
-          保存关系
-        </button>
+        {/* 保存关系为写操作，对非 editor+ 角色隐藏 */}
+        <EditorOrAbove hidden>
+          <button className="btn-primary h-10 w-full" type="button" disabled={busy || !relationType.trim()} onClick={onUpdateRelation}>
+            <Pencil size={15} />
+            保存关系
+          </button>
+        </EditorOrAbove>
       </section>
 
       <div className="grid grid-cols-3 gap-2">
-        <button className="btn-ghost h-10 border border-slate-200" type="button" disabled={busy} onClick={() => onReview("APPROVED")}>
-          <CheckCircle2 size={15} />
-          通过
-        </button>
-        <button className="btn-ghost h-10 border border-slate-200" type="button" disabled={busy} onClick={() => onReview("PENDING")}>
-          待审
-        </button>
-        <button className="btn-ghost h-10 border border-red-100 text-red-600 hover:bg-red-50" type="button" disabled={busy} onClick={() => onReview("REJECTED")}>
-          驳回
-        </button>
+        {/* 审核三键（通过/待审/驳回）为写操作，对非 editor+ 角色隐藏 */}
+        <EditorOrAbove hidden>
+          <button className="btn-ghost h-10 border border-slate-200" type="button" disabled={busy} onClick={() => onReview("APPROVED")}>
+            <CheckCircle2 size={15} />
+            通过
+          </button>
+          <button className="btn-ghost h-10 border border-slate-200" type="button" disabled={busy} onClick={() => onReview("PENDING")}>
+            待审
+          </button>
+          <button className="btn-ghost h-10 border border-red-100 text-red-600 hover:bg-red-50" type="button" disabled={busy} onClick={() => onReview("REJECTED")}>
+            驳回
+          </button>
+        </EditorOrAbove>
       </div>
 
-      <button className="btn-ghost h-10 w-full border border-red-100 text-red-600 hover:bg-red-50" type="button" disabled={busy} onClick={onDelete}>
-        <Trash2 size={15} />
-        删除关系
-      </button>
+      {/* 删除关系为写操作，对非 editor+ 角色隐藏 */}
+      <EditorOrAbove hidden>
+        <button className="btn-ghost h-10 w-full border border-red-100 text-red-600 hover:bg-red-50" type="button" disabled={busy} onClick={onDelete}>
+          <Trash2 size={15} />
+          删除关系
+        </button>
+      </EditorOrAbove>
 
       <EvidenceList evidences={data.evidences} />
     </div>

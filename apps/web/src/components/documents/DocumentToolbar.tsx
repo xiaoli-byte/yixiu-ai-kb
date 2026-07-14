@@ -9,6 +9,7 @@ import { useDepartments } from "@/hooks/useDepartments";
 import { SearchableSelect } from "@/components/SearchableSelect";
 import { Select } from "@/components/ui/Select";
 import { DateRangeField } from "@/components/ui/DateRangeField";
+import { EditorOrAbove } from "@/components/PermissionGate";
 
 interface DocumentToolbarProps {
   query: string;
@@ -175,15 +176,18 @@ export function DocumentToolbar({
           清空
         </button>
         <div className="ml-auto flex items-center gap-2">
-          <button
-            className="inline-flex h-8 items-center gap-1.5 rounded bg-brand-600 px-3 text-[13px] font-medium text-white shadow-sm hover:bg-brand-700 disabled:opacity-60"
-            disabled={uploading}
-            onClick={onUploadClick}
-            type="button"
-          >
-            <Upload size={14} />
-            批量上传
-          </button>
+          {/* 批量上传是写操作，仅 editor 及以上角色可见（viewer 隐藏） */}
+          <EditorOrAbove hidden>
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded bg-brand-600 px-3 text-[13px] font-medium text-white shadow-sm hover:bg-brand-700 disabled:opacity-60"
+              disabled={uploading}
+              onClick={onUploadClick}
+              type="button"
+            >
+              <Upload size={14} />
+              批量上传
+            </button>
+          </EditorOrAbove>
           <button
             className="grid h-8 w-8 place-items-center rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50"
             disabled={loading}
