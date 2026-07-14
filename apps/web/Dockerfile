@@ -1,8 +1,11 @@
 FROM node:24-alpine AS builder
 ARG NEXT_PUBLIC_API_URL
 ARG API_INTERNAL_URL
+# Multi-Zones：作为 ai-call 的 /knowledge zone 内嵌时传入（basePath 在构建期内联进产物）
+ARG WEB_BASE_PATH
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV API_INTERNAL_URL=$API_INTERNAL_URL
+ENV WEB_BASE_PATH=$WEB_BASE_PATH
 WORKDIR /app
 RUN apk add --no-cache python3 make g++ curl openssl && npm install -g pnpm@9
 
