@@ -251,7 +251,7 @@ export default function QaPage() {
         </header>
 
         {/* 消息 + 输入：同一滚动容器，输入框 sticky 贴底，滚动条贯穿全高 */}
-        <div ref={scrollerRef} className="flex-1 overflow-y-auto bg-white">
+        <div ref={scrollerRef} className="flex-1 overflow-y-auto bg-slate-50">
           <div className="flex min-h-full flex-col">
             <div className="flex-1 px-4 py-6 space-y-5">
           {messages.length === 0 && !streaming && (

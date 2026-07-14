@@ -53,7 +53,7 @@ describe("GraphToolbar", () => {
     expect(html).not.toContain('aria-label="实体类型"');
   });
 
-  it("uses one created date range field and moves export to its own row", () => {
+  it("uses one created date range field and keeps export inline at the row end", () => {
     const html = renderToStaticMarkup(React.createElement(GraphToolbar, toolbarProps));
 
     expect(html).toContain('data-filter-row="graph"');

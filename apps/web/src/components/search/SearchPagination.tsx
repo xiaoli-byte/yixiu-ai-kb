@@ -15,14 +15,14 @@ export function SearchPagination({ page, pageSize, total, truncated = false, onP
   const end = Math.min(currentPage * pageSize, total);
 
   return (
-    <nav aria-label="搜索结果分页" className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-4 sm:px-8">
+    <nav aria-label="搜索结果分页" className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-8">
       <p className="text-xs text-slate-500">
         显示第 {start}–{end} 条，{truncated ? `当前可浏览 ${total} 条（结果已截断）` : `共 ${total} 条`}
       </p>
       <div className="flex items-center gap-1">
         <button
           aria-label="上一页"
-          className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           disabled={currentPage <= 1}
           onClick={() => onPageChange(currentPage - 1)}
           type="button"
@@ -34,7 +34,7 @@ export function SearchPagination({ page, pageSize, total, truncated = false, onP
         </span>
         <button
           aria-label="下一页"
-          className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           disabled={currentPage >= pageCount}
           onClick={() => onPageChange(currentPage + 1)}
           type="button"

@@ -66,46 +66,56 @@ export function GraphToolbar({
           />
         </div>
 
-        <Select
-          className="min-w-[108px] flex-[0_1_108px]"
-          triggerClassName="h-10"
-          triggerWidthClassName="w-full"
-          ariaLabel="节点类型"
-          value={filters.nodeType || "all"}
-          options={nodeTypeOptions.map((option) => ({ value: option.value, label: option.label }))}
-          onChange={(value) => onChange({ nodeType: value as GraphExploreQuery["nodeType"] })}
-        />
+        <span className="flex min-w-[150px] flex-[0_1_160px] items-center gap-1.5">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">节点类型:</span>
+          <Select
+            className="min-w-0 flex-1"
+            triggerClassName="h-10"
+            triggerWidthClassName="w-full"
+            ariaLabel="节点类型"
+            value={filters.nodeType || "all"}
+            options={nodeTypeOptions.map((option) => ({ value: option.value, label: option.label }))}
+            onChange={(value) => onChange({ nodeType: value as GraphExploreQuery["nodeType"] })}
+          />
+        </span>
 
-        <Select
-          className="min-w-[118px] flex-[0_1_118px]"
-          triggerClassName="h-10"
-          triggerWidthClassName="w-full"
-          ariaLabel="文档"
-          searchable
-          value={filters.documentId || ""}
-          options={[
-            { value: "", label: "全部文档" },
-            ...filterOptions.documents.map((document) => ({ value: document.id, label: document.title })),
-          ]}
-          onChange={(value) => onChange({ documentId: value || undefined })}
-        />
+        <span className="flex min-w-[140px] flex-[0_1_150px] items-center gap-1.5">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">文档:</span>
+          <Select
+            className="min-w-0 flex-1"
+            triggerClassName="h-10"
+            triggerWidthClassName="w-full"
+            ariaLabel="文档"
+            searchable
+            value={filters.documentId || ""}
+            options={[
+              { value: "", label: "全部" },
+              ...filterOptions.documents.map((document) => ({ value: document.id, label: document.title })),
+            ]}
+            onChange={(value) => onChange({ documentId: value || undefined })}
+          />
+        </span>
 
-        <Select
-          className="min-w-[136px] flex-[0_1_136px]"
-          triggerClassName="h-10"
-          triggerWidthClassName="w-full"
-          ariaLabel="关系类型"
-          value={filters.relationType || ""}
-          options={[
-            { value: "", label: "全部关系" },
-            ...filterOptions.relationTypes.map((type) => ({ value: type, label: type })),
-          ]}
-          onChange={(value) => onChange({ relationType: value || undefined })}
-        />
+        <span className="flex min-w-[160px] flex-[0_1_170px] items-center gap-1.5">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">关系类型:</span>
+          <Select
+            className="min-w-0 flex-1"
+            triggerClassName="h-10"
+            triggerWidthClassName="w-full"
+            ariaLabel="关系类型"
+            value={filters.relationType || ""}
+            options={[
+              { value: "", label: "全部" },
+              ...filterOptions.relationTypes.map((type) => ({ value: type, label: type })),
+            ]}
+            onChange={(value) => onChange({ relationType: value || undefined })}
+          />
+        </span>
 
-        <div className="min-w-[268px] flex-[1_1_268px]" data-date-range="created">
+        <div className="flex min-w-[300px] flex-[1_1_300px] items-center gap-1.5" data-date-range="created">
+          <span aria-hidden="true" className="whitespace-nowrap text-xs text-slate-500">创建时间:</span>
           <DateRangeField
-            className="w-full"
+            className="min-w-0 flex-1"
             triggerClassName="h-10 w-full"
             ariaLabel="创建时间范围"
             from={filters.createdFrom || ""}
@@ -116,22 +126,17 @@ export function GraphToolbar({
           />
         </div>
         <div className="grid min-w-[162px] flex-none grid-cols-2 gap-2">
-          <button className="btn-primary h-10" onClick={onSearch} disabled={loading} type="button">
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-            搜索
-          </button>
           <button className="btn-ghost h-10 border border-slate-200" onClick={onReset} type="button">
             <RotateCcw size={15} />
             重置
           </button>
+          <button className="btn-primary h-10" onClick={onSearch} disabled={loading} type="button">
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+            搜索
+          </button>
         </div>
-      </div>
 
-      <div
-        className="mt-3 flex justify-end border-t border-slate-100 pt-3"
-        data-export-row="graph"
-      >
-        <div className="relative">
+        <div className="ml-auto" data-export-row="graph">
           <details className="group relative">
             <summary
               className="btn-ghost h-10 cursor-pointer list-none border border-slate-200 px-3 [&::-webkit-details-marker]:hidden"

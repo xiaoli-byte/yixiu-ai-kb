@@ -72,9 +72,10 @@ body {
   }
 }
 
+/* 正文命中：黄底深字（对齐设计稿的内容高亮），标题命中另用红字（见搜索结果组件） */
 mark {
-  background: rgb(var(--primary) / 0.14);
-  color: rgb(var(--primary));
+  background: rgb(253 230 138 / 0.8); /* amber-200 */
+  color: rgb(30 41 59); /* slate-800 */
   font-weight: 600;
   padding: 0 2px;
   border-radius: 2px;

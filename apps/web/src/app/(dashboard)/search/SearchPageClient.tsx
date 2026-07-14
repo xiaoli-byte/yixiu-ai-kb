@@ -573,9 +573,9 @@ export default function SearchPageClient() {
   }
 
   return (
-    <div className="min-h-full bg-white" data-search-state="results">
-      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-4 backdrop-blur sm:px-8">
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="min-h-full bg-slate-50" data-search-state="results">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4 sm:px-8">
           <SearchBox inputValue={inputValue} compact onInputChange={setInputValue} onSubmit={() => submitKeyword()} />
           <button
             aria-label="清空搜索条件"
@@ -586,20 +586,20 @@ export default function SearchPageClient() {
             <X size={17} />
           </button>
         </div>
-      </div>
 
-      <SearchFilters
-        id="search-filters"
-        value={filters}
-        expanded={advancedOpen}
-        knowledgeBases={knowledgeBaseOptions}
-        mode={mode}
-        showPermission={false}
-        onModeChange={handleModeChange}
-        onChange={applyFilters}
-        onClear={clearFilters}
-        onToggleExpanded={() => setAdvancedOpen((open) => !open)}
-      />
+        <SearchFilters
+          id="search-filters"
+          value={filters}
+          expanded={advancedOpen}
+          knowledgeBases={knowledgeBaseOptions}
+          mode={mode}
+          showPermission={false}
+          onModeChange={handleModeChange}
+          onChange={applyFilters}
+          onClear={clearFilters}
+          onToggleExpanded={() => setAdvancedOpen((open) => !open)}
+        />
+      </div>
 
       <SearchResultsToolbar
         total={result?.total ?? hits.length}
@@ -641,6 +641,7 @@ export default function SearchPageClient() {
       {hits.length > 0 && (viewMode === "list" ? (
         <SearchResultList
           hits={hits}
+          keyword={keyword}
           onPreview={previewSearchHit}
           onOpenOriginal={openOriginalSearchHit}
           onDownload={downloadSearchHit}
@@ -648,6 +649,7 @@ export default function SearchPageClient() {
       ) : (
         <SearchResultGrid
           hits={hits}
+          keyword={keyword}
           onPreview={previewSearchHit}
           onOpenOriginal={openOriginalSearchHit}
           onDownload={downloadSearchHit}

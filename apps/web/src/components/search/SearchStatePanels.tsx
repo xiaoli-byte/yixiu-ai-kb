@@ -2,10 +2,10 @@ import { AlertCircle, FileSearch, Loader2, RefreshCw } from "lucide-react";
 
 export function SearchLoadingSkeleton({ count = 4 }: { count?: number }) {
   return (
-    <div aria-label="正在加载搜索结果" aria-busy="true" className="space-y-3 bg-white px-4 py-5 sm:px-8">
+    <div aria-label="正在加载搜索结果" aria-busy="true" className="space-y-3 px-4 py-5 sm:px-8">
       {Array.from({ length: count }, (_, index) => (
-        <div className="flex animate-pulse gap-3 rounded-lg border border-slate-100 p-4 motion-reduce:animate-none" key={index}>
-          <div className="h-10 w-10 shrink-0 rounded-lg bg-slate-200" />
+        <div className="flex animate-pulse gap-3 rounded-xl border border-slate-200/70 bg-white p-4 shadow-card motion-reduce:animate-none" key={index}>
+          <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-200" />
           <div className="min-w-0 flex-1 space-y-2"><div className="h-4 w-2/5 rounded bg-slate-200" /><div className="h-3 w-4/5 rounded bg-slate-100" /><div className="h-3 w-1/3 rounded bg-slate-100" /></div>
         </div>
       ))}

@@ -1,6 +1,7 @@
 import { ArrowRight, BookOpen, Clock3, FileText, FolderOpen, Search, Sparkles } from "lucide-react";
 import type { HotSearchItem, HotSearchQuery, SearchHistoryItem } from "@/services/search";
 import { HotSearchPanel } from "./HotSearchPanel";
+import { fileBadgeText, fileBadgeTone } from "./SearchResultList";
 import { SearchHistoryPanel } from "./SearchHistoryPanel";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
@@ -128,8 +129,8 @@ export function SearchLanding({
                     onClick={() => onRecentDocumentSelect?.(item)}
                     type="button"
                   >
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600">
-                      <FileText size={18} />
+                    <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg text-[10px] font-bold text-white ${fileBadgeTone(item.fileType || "FILE")}`}>
+                      {item.fileType && item.fileType !== "FILE" ? fileBadgeText(item.fileType) : <FileText size={17} />}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium text-slate-800">{item.title}</span>
