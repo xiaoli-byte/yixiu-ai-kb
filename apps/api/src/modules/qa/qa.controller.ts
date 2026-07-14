@@ -15,6 +15,7 @@ import { AskRequest } from "@ai-knowledge/schemas";
 import { QaService } from "./qa.service";
 import { DatabaseService } from "../../database/database.service";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { PermissionsGuard } from "../../common/permissions/permissions.guard";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import type { Response } from "express";
 
@@ -29,7 +30,9 @@ function buildContentDisposition(title: string, disposition: "inline" | "attachm
   return `${disposition}; filename="${fallbackTitle}"; filename*=UTF-8''${encodedTitle}`;
 }
 
-@UseGuards(AuthGuard("jwt"))
+// PermissionsGuard 在方法无权限声明时直接放行（本控制器均为登录用户的自有数据），
+// 挂上它是为了让未来新增的 @RequirePermissions/@RequireMinRole 真正生效——守卫缺席时这些装饰器会静默无效。
+@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("qa")
 export class QaController {
   constructor(

@@ -147,6 +147,10 @@ export class GraphController {
     return this.graph.listViews();
   }
 
+  // 视图三个写口故意用 GRAPH:READ 而非写权限：视图是「个人收藏的过滤/布局」，对所有能读图谱的
+  // 角色（含 viewer）开放私有视图。越权面由 service 兜底：SHARED 可见性需 editor+
+  // （saveView→assertCanShareView），update/delete 校验归属（deleteView 仅删自己的）。
+  // 若改成 RequireMinRole(EDITOR) 会砍掉 viewer 的私有视图能力，属产品决策，勿随手收紧。
   @Post("views")
   @RequirePermissions({ resource: Resource.GRAPH, action: Action.READ })
   async saveView(@Body() dto: SaveGraphViewDto) {

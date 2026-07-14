@@ -8,9 +8,11 @@ import { SearchModule } from "../search/search.module";
 import { StorageModule } from "../storage/storage.module";
 import { LlmModule } from "../llm/llm.module";
 import { DocumentAccessService } from "../documents/document-access.service";
+import { PermissionsModule } from "../../common/permissions/permissions.module";
 
 @Module({
-  imports: [SearchModule, StorageModule, LlmModule],
+  // PermissionsModule:控制器类级 PermissionsGuard 需要注入 PermissionsService
+  imports: [SearchModule, StorageModule, LlmModule, PermissionsModule],
   controllers: [QaController],
   providers: [
     QaService,

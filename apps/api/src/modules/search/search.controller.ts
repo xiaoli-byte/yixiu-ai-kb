@@ -2,10 +2,12 @@ import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from "@n
 import { AuthGuard } from "@nestjs/passport";
 import { SearchEventRequest, SearchQuery } from "@ai-knowledge/schemas";
 import { SearchService } from "./search.service";
+import { PermissionsGuard } from "../../common/permissions/permissions.guard";
 import { RateLimit, RateLimitGuard, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 
-@UseGuards(AuthGuard("jwt"), RateLimitGuard)
+// PermissionsGuard 见 qa.controller 同注：无方法级声明时放行，仅为让未来的权限装饰器真正生效。
+@UseGuards(AuthGuard("jwt"), RateLimitGuard, PermissionsGuard)
 @Controller("search")
 export class SearchController {
   constructor(private readonly search: SearchService) {}

@@ -51,13 +51,19 @@ export class DocumentsController {
     return this.docs.getDetail(id, user);
   }
 
+  // 以下写口的角色层门禁取 UPDATE 而非 MANAGE：MANAGE 仅 admin 持有，会挡掉持逐文档显式授权的
+  // editor；细粒度判定（含显式授权/归属）仍由 service 的 assertDocumentAccess ACL 兜底，
+  // 角色层只负责挡住只读角色（viewer 及未知联合角色）。
   @Put("batch/permissions")
+  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
   async setBatchPermissions(@Body() body: unknown, @CurrentUser() user: any) {
     return this.docs.setBatchPermissions(body, user);
   }
 
   @Post("batch")
+  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
   async batch(@Body() body: unknown, @CurrentUser() user: any) {
+    // 批量动作里的删除/归档等，由 service 逐条 assert EDIT/DELETE
     return this.docs.batch(body, user);
   }
 
@@ -99,11 +105,13 @@ export class DocumentsController {
   }
 
   @Put(":id/permissions")
+  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
   async setPermissions(@Param("id") id: string, @Body() body: unknown, @CurrentUser() user: any) {
     return this.docs.setPermissions(id, body, user);
   }
 
   @Post(":id/parse/retry")
+  @RequirePermissions({ resource: Resource.DOCUMENTS, action: Action.UPDATE })
   async retryParse(@Param("id") id: string, @CurrentUser() user: any) {
     return this.docs.retryParse(id, user);
   }

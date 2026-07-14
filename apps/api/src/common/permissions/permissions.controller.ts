@@ -1,6 +1,7 @@
 import { Controller, Get, Patch, Body, UseGuards } from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { CurrentUser } from "../decorators/current-user.decorator";
+import { AdminOnly } from "./permissions.guard";
 import { RolesManagementService } from "./roles-management.service";
 import { PermissionsService } from "./permissions.service";
 import { Role, Resource, Action } from "./permissions.types";
@@ -35,8 +36,10 @@ export class PermissionsController {
 
   /**
    * 获取用户列表及角色
+   * 用户目录属管理员能力（与 users.controller 的 AdminOnly 口径对齐）；前端当前无调用，收紧零影响。
    */
   @Get("users")
+  @AdminOnly()
   async getUsersWithRoles(
     @CurrentUser("sub") userId: string,
     @CurrentUser("tenantId") tenantId: string,
@@ -52,14 +55,16 @@ export class PermissionsController {
 
   /**
    * 修改用户角色（管理员）
+   * ⚠️ KB-05 半成品桩：尚未落库，仅返回 success 占位。
+   * @AdminOnly 必须保留——没有它任意登录用户都能调本端点，补齐落库实现时即成提权漏洞。
    */
   @Patch("users/:userId/role")
+  @AdminOnly()
   async updateUserRole(
     @CurrentUser("sub") operatorId: string,
     @CurrentUser("tenantId") tenantId: string,
     @Body() body: { role: Role },
   ) {
-    // 这个操作会检查实际权限
     return { success: true };
   }
 
