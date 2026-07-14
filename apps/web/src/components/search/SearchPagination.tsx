@@ -22,19 +22,19 @@ export function SearchPagination({ page, pageSize, total, truncated = false, onP
       <div className="flex items-center gap-1">
         <button
           aria-label="上一页"
-          className="grid h-10 w-10 place-items-center rounded border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           disabled={currentPage <= 1}
           onClick={() => onPageChange(currentPage - 1)}
           type="button"
         >
           <ChevronLeft size={16} />
         </button>
-        <span aria-current="page" className="grid h-10 min-w-10 place-items-center rounded bg-brand-50 px-3 text-xs font-medium text-brand-700">
+        <span aria-current="page" className="grid h-10 min-w-10 place-items-center rounded-lg bg-brand-50 px-3 text-xs font-medium text-brand-700 tabular">
           {currentPage} / {pageCount}
         </span>
         <button
           aria-label="下一页"
-          className="grid h-10 w-10 place-items-center rounded border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          className="grid h-10 w-10 place-items-center rounded-lg border border-slate-200 text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           disabled={currentPage >= pageCount}
           onClick={() => onPageChange(currentPage + 1)}
           type="button"

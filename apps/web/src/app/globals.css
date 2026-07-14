@@ -73,8 +73,8 @@ body {
 }
 
 mark {
-  background: rgb(var(--primary) / 0.12);
-  color: inherit;
+  background: rgb(var(--primary) / 0.14);
+  color: rgb(var(--primary));
   font-weight: 600;
   padding: 0 2px;
   border-radius: 2px;
