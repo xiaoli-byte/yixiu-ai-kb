@@ -3,8 +3,8 @@ import type {
   Conversation,
   ConversationDetail,
   MessageFeedback,
-  PdfUrlResponse,
   MarkdownContentResponse,
+  ParsedContentResponse,
   QaDebugRun,
   UpdateMessageFeedbackRequest,
 } from "@/types/api";
@@ -50,21 +50,6 @@ export async function updateMessageFeedback(
   );
 }
 
-// 获取文档 PDF URL
-export async function getDocumentPdfUrl(
-  documentId: string
-): Promise<PdfUrlResponse> {
-  const res = await apiClient.get<PdfUrlResponse>(
-    `/qa/documents/${documentId}/pdf-url`
-  );
-  // 后端返回的 url 硬编码 /api 前缀，zone 模式（/knowledge/api）下会 404，
-  // 统一在前端按 apiBaseUrl 重建文件地址
-  return {
-    ...res,
-    url: buildDocumentFileUrl(documentId),
-  };
-}
-
 // 文档原文件下载/预览地址（带鉴权，需附 Authorization 或同源 cookie）
 export function buildDocumentFileUrl(documentId: string): string {
   return `${apiBaseUrl}/qa/documents/${encodeURIComponent(documentId)}/file`;
@@ -91,6 +76,15 @@ export async function getDocumentMarkdown(
 ): Promise<MarkdownContentResponse> {
   return apiClient.get<MarkdownContentResponse>(
     `/qa/documents/${documentId}/markdown`
+  );
+}
+
+// 获取文档解析文本（切片拼接）：Office 在线预览 / 图片 OCR / 音频转写
+export async function getDocumentParsedContent(
+  documentId: string
+): Promise<ParsedContentResponse> {
+  return apiClient.get<ParsedContentResponse>(
+    `/qa/documents/${encodeURIComponent(documentId)}/content`
   );
 }
 

@@ -21,6 +21,9 @@ import {
 } from "lucide-react";
 import type { DocumentDto } from "@/services/documents";
 import { cn, formatBytes, statusColor, statusLabel } from "@/lib/utils";
+import { useIsEditor } from "@/contexts/permissions-context";
+import { useThrottleFn } from "@/hooks/useThrottleFn";
+import { getFileTypeLabel, type FileTypeLabel } from "@/lib/file-preview";
 
 interface DocumentTableProps {
   documents: DocumentDto[];
@@ -67,6 +70,8 @@ export function DocumentTable({
   const allSelected = documents.length > 0 && documents.every((doc) => selectedIds.includes(doc.id));
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const [goToPageInput, setGoToPageInput] = useState("");
+  // 编辑/删除/权限设置/重试解析为写操作，需 editor 及以上角色；下载与恢复维持原有 flag 逻辑不变
+  const isEditorOrAbove = useIsEditor();
 
   function submitPageJump() {
     const nextPage = Number.parseInt(goToPageInput, 10);
@@ -114,92 +119,27 @@ export function DocumentTable({
                     <FileText className="text-slate-400" size={24} />
                   </div>
                   <p className="text-sm font-medium text-slate-600">暂无符合条件的文档</p>
-                  <p className="mt-1 text-xs text-slate-500">试试调整筛选条件，或点击右上角"上传文档"</p>
+                  <p className="mt-1 text-xs text-slate-500">试试调整筛选条件，或点击右上角「上传文档」</p>
                 </td>
               </tr>
             ) : (
               documents.map((doc) => (
-                <tr key={doc.id} className="h-[50px] border-b border-slate-100 hover:bg-slate-50/70">
-                  <td className="px-4">
-                    <input
-                      aria-label={`选择 ${doc.title}`}
-                      checked={selectedIds.includes(doc.id)}
-                      className="h-3.5 w-3.5 accent-brand-600"
-                      onChange={() => onToggle(doc.id)}
-                      type="checkbox"
-                    />
-                  </td>
-                  <td className="px-4">
-                    <div className="flex min-w-0 items-center gap-2">
-                      {(() => {
-                        const { Icon, bgClass, textClass } = getFileIcon(doc);
-                        return (
-                          <div
-                            className={cn(
-                              "grid h-8 w-8 shrink-0 place-items-center rounded ring-1",
-                              bgClass,
-                              textClass,
-                            )}
-                          >
-                            <Icon size={16} />
-                          </div>
-                        );
-                      })()}
-                      <div className="min-w-0">
-                        <div className="truncate font-medium text-slate-900">{doc.title}</div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                          <span className="tabular">{formatBytes(doc.size)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 text-xs text-slate-600">{getFileIcon(doc).label}</td>
-                  <td className="px-4 text-xs text-slate-600 tabular">{formatDate(doc.createdAt)}</td>
-                  <td className="px-4 text-xs text-slate-700">{doc.ownerName || "未知"}</td>
-                  <td className="px-4">
-                    <span className={cn("badge rounded px-2 py-0.5 ring-1 ring-inset", statusColor(doc.status))}>
-                      {doc.status === "READY" ? (
-                        <CheckCircle2 size={11} />
-                      ) : doc.status === "FAILED" ? (
-                        <AlertCircle size={11} />
-                      ) : (
-                        <Loader2 size={11} className="animate-spin" />
-                      )}
-                      {statusLabel(doc.status)}
-                    </span>
-                  </td>
-                  <td className="px-4">
-                    <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                      {permissionLabel(doc.permissionScope)}
-                    </span>
-                  </td>
-                  <td className="px-4">
-                    <div className="flex items-center gap-1">
-                      <IconButton icon={Eye} label="查看" onClick={() => onView(doc)} />
-                      {onViewChunks && (
-                        <IconButton
-                          className="text-amber-600 hover:bg-amber-50"
-                          icon={Braces}
-                          label="查看切片 Token（开发调试）"
-                          onClick={() => onViewChunks(doc)}
-                        />
-                      )}
-                      {doc.canDownload !== false && <IconButton icon={Download} label="下载" onClick={() => onDownload(doc)} />}
-                      {isArchive ? (
-                        onRestore ? <IconButton icon={RotateCcw} label="恢复" onClick={() => onRestore(doc)} /> : null
-                      ) : doc.status === "FAILED" ? (
-                        <IconButton icon={RotateCcw} label="重试解析" onClick={() => onRetryParse(doc)} />
-                      ) : null}
-                      {!isArchive && doc.canManagePermission !== false && (
-                        <IconButton icon={ShieldCheck} label="权限设置" onClick={() => onPermissions(doc)} />
-                      )}
-                      {!isArchive && doc.canEdit !== false && <IconButton icon={Edit2} label="编辑" onClick={() => onEdit(doc)} />}
-                      {doc.canDelete !== false && (
-                        <IconButton className="text-rose-600 hover:bg-rose-50" icon={Trash2} label="删除" onClick={() => onDelete(doc)} />
-                      )}
-                    </div>
-                  </td>
-                </tr>
+                <DocumentRow
+                  key={doc.id}
+                  doc={doc}
+                  selected={selectedIds.includes(doc.id)}
+                  isArchive={isArchive}
+                  isEditorOrAbove={isEditorOrAbove}
+                  onToggle={onToggle}
+                  onView={onView}
+                  onDownload={onDownload}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onPermissions={onPermissions}
+                  onRetryParse={onRetryParse}
+                  onRestore={onRestore}
+                  onViewChunks={onViewChunks}
+                />
               ))
             )}
           </tbody>
@@ -256,6 +196,133 @@ export function DocumentTable({
   );
 }
 
+interface DocumentRowProps {
+  doc: DocumentDto;
+  selected: boolean;
+  isArchive: boolean;
+  isEditorOrAbove: boolean;
+  onToggle: (id: string) => void;
+  onView: (doc: DocumentDto) => void;
+  onDownload: (doc: DocumentDto) => void;
+  onEdit: (doc: DocumentDto) => void;
+  onDelete: (doc: DocumentDto) => void;
+  onPermissions: (doc: DocumentDto) => void;
+  onRetryParse: (doc: DocumentDto) => void;
+  onRestore?: (doc: DocumentDto) => void;
+  onViewChunks?: (doc: DocumentDto) => void;
+}
+
+// 拆成独立的行组件，是为了让节流 Hook 按"每一行"单独计时：
+// 如果把节流状态放在 DocumentTable 里给所有行共用，连续删除 A、B 两个不同文档时，
+// 第二次点击会被误判成对同一个操作的"连点"而被节流丢弃。
+function DocumentRow({
+  doc,
+  selected,
+  isArchive,
+  isEditorOrAbove,
+  onToggle,
+  onView,
+  onDownload,
+  onEdit,
+  onDelete,
+  onPermissions,
+  onRetryParse,
+  onRestore,
+  onViewChunks,
+}: DocumentRowProps) {
+  // 行内写操作节流，防止连点/双击导致重复请求（600~1000ms，取 800ms）
+  const throttledDownload = useThrottleFn(() => onDownload(doc), 800);
+  const throttledRestore = useThrottleFn(onRestore ? () => onRestore(doc) : undefined, 800);
+  const throttledRetryParse = useThrottleFn(() => onRetryParse(doc), 800);
+  const throttledPermissions = useThrottleFn(() => onPermissions(doc), 800);
+  const throttledEdit = useThrottleFn(() => onEdit(doc), 800);
+  const throttledDelete = useThrottleFn(() => onDelete(doc), 800);
+
+  return (
+    <tr className="h-[50px] border-b border-slate-100 hover:bg-slate-50/70">
+      <td className="px-4">
+        <input
+          aria-label={`选择 ${doc.title}`}
+          checked={selected}
+          className="h-3.5 w-3.5 accent-brand-600"
+          onChange={() => onToggle(doc.id)}
+          type="checkbox"
+        />
+      </td>
+      <td className="px-4">
+        <div className="flex min-w-0 items-center gap-2">
+          {(() => {
+            const { Icon, bgClass, textClass } = getFileIcon(doc);
+            return (
+              <div
+                className={cn(
+                  "grid h-8 w-8 shrink-0 place-items-center rounded ring-1",
+                  bgClass,
+                  textClass,
+                )}
+              >
+                <Icon size={16} />
+              </div>
+            );
+          })()}
+          <div className="min-w-0">
+            <div className="truncate font-medium text-slate-900">{doc.title}</div>
+            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <span className="tabular">{formatBytes(doc.size)}</span>
+            </div>
+          </div>
+        </div>
+      </td>
+      <td className="px-4 text-xs text-slate-600">{getFileIcon(doc).label}</td>
+      <td className="px-4 text-xs text-slate-600 tabular">{formatDate(doc.createdAt)}</td>
+      <td className="px-4 text-xs text-slate-700">{doc.ownerName || "未知"}</td>
+      <td className="px-4">
+        <span className={cn("badge rounded px-2 py-0.5 ring-1 ring-inset", statusColor(doc.status))}>
+          {doc.status === "READY" ? (
+            <CheckCircle2 size={11} />
+          ) : doc.status === "FAILED" ? (
+            <AlertCircle size={11} />
+          ) : (
+            <Loader2 size={11} className="animate-spin" />
+          )}
+          {statusLabel(doc.status)}
+        </span>
+      </td>
+      <td className="px-4">
+        <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
+          {permissionLabel(doc.permissionScope)}
+        </span>
+      </td>
+      <td className="px-4">
+        <div className="flex items-center gap-1">
+          <IconButton icon={Eye} label="查看" onClick={() => onView(doc)} />
+          {onViewChunks && (
+            <IconButton
+              className="text-amber-600 hover:bg-amber-50"
+              icon={Braces}
+              label="查看切片 Token（开发调试）"
+              onClick={() => onViewChunks(doc)}
+            />
+          )}
+          {doc.canDownload !== false && <IconButton icon={Download} label="下载" onClick={throttledDownload} />}
+          {isArchive ? (
+            onRestore ? <IconButton icon={RotateCcw} label="恢复" onClick={throttledRestore} /> : null
+          ) : doc.status === "FAILED" && isEditorOrAbove ? (
+            <IconButton icon={RotateCcw} label="重试解析" onClick={throttledRetryParse} />
+          ) : null}
+          {!isArchive && isEditorOrAbove && doc.canManagePermission !== false && (
+            <IconButton icon={ShieldCheck} label="权限设置" onClick={throttledPermissions} />
+          )}
+          {!isArchive && isEditorOrAbove && doc.canEdit !== false && <IconButton icon={Edit2} label="编辑" onClick={throttledEdit} />}
+          {isEditorOrAbove && doc.canDelete !== false && (
+            <IconButton className="text-rose-600 hover:bg-rose-50" icon={Trash2} label="删除" onClick={throttledDelete} />
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 function IconButton({
   icon: Icon,
   label,
@@ -281,92 +348,22 @@ interface FileIconMeta {
   label: string;
 }
 
-function getFileIcon(doc: DocumentDto): FileIconMeta {
-  const mime = (doc.mime || "").toLowerCase();
-  const title = (doc.title || "").toLowerCase();
-  const ext = (() => {
-    const idx = title.lastIndexOf(".");
-    return idx >= 0 ? title.slice(idx) : "";
-  })();
+// 图标/配色按共享的文件类型标签映射（分类逻辑统一在 @/lib/file-preview，避免多处漂移）
+const FILE_ICON_META: Record<FileTypeLabel, FileIconMeta> = {
+  PDF: { Icon: FileText, bgClass: "bg-rose-50 ring-rose-100", textClass: "text-rose-600", label: "PDF" },
+  DOCX: { Icon: FileText, bgClass: "bg-blue-50 ring-blue-100", textClass: "text-blue-600", label: "DOCX" },
+  XLSX: { Icon: FileSpreadsheet, bgClass: "bg-emerald-50 ring-emerald-100", textClass: "text-emerald-600", label: "XLSX" },
+  PPTX: { Icon: Presentation, bgClass: "bg-orange-50 ring-orange-100", textClass: "text-orange-600", label: "PPTX" },
+  IMG: { Icon: FileImage, bgClass: "bg-purple-50 ring-purple-100", textClass: "text-purple-600", label: "IMG" },
+  VIDEO: { Icon: FileVideo, bgClass: "bg-indigo-50 ring-indigo-100", textClass: "text-indigo-600", label: "VIDEO" },
+  AUDIO: { Icon: FileAudio, bgClass: "bg-pink-50 ring-pink-100", textClass: "text-pink-600", label: "AUDIO" },
+  MD: { Icon: FileText, bgClass: "bg-slate-100 ring-slate-200", textClass: "text-slate-600", label: "MD" },
+  TXT: { Icon: FileText, bgClass: "bg-slate-100 ring-slate-200", textClass: "text-slate-600", label: "TXT" },
+  FILE: { Icon: File, bgClass: "bg-slate-100 ring-slate-200", textClass: "text-slate-500", label: "FILE" },
+};
 
-  if (mime === "application/pdf" || ext === ".pdf") {
-    return { Icon: FileText, bgClass: "bg-rose-50 ring-rose-100", textClass: "text-rose-600", label: "PDF" };
-  }
-  if (
-    mime.includes("word") ||
-    mime.includes("wordprocessingml") ||
-    [".doc", ".docx", ".docm"].includes(ext)
-  ) {
-    return { Icon: FileText, bgClass: "bg-blue-50 ring-blue-100", textClass: "text-blue-600", label: "DOCX" };
-  }
-  if (
-    mime.includes("excel") ||
-    mime.includes("spreadsheetml") ||
-    mime.includes("sheet") ||
-    [".xls", ".xlsx", ".xlsm"].includes(ext)
-  ) {
-    return {
-      Icon: FileSpreadsheet,
-      bgClass: "bg-emerald-50 ring-emerald-100",
-      textClass: "text-emerald-600",
-      label: "XLSX",
-    };
-  }
-  if (
-    mime.includes("powerpoint") ||
-    mime.includes("presentationml") ||
-    mime.includes("presentation") ||
-    [".ppt", ".pptx", ".pptm"].includes(ext)
-  ) {
-    return {
-      Icon: Presentation,
-      bgClass: "bg-orange-50 ring-orange-100",
-      textClass: "text-orange-600",
-      label: "PPTX",
-    };
-  }
-  if (
-    mime.startsWith("image/") ||
-    [".png", ".jpg", ".jpeg", ".jpe", ".jfif", ".webp", ".bmp", ".tif", ".tiff"].includes(ext)
-  ) {
-    return { Icon: FileImage, bgClass: "bg-purple-50 ring-purple-100", textClass: "text-purple-600", label: "IMG" };
-  }
-  if (mime.startsWith("video/") || [".mp4", ".mov", ".mkv", ".webm"].includes(ext)) {
-    return {
-      Icon: FileVideo,
-      bgClass: "bg-indigo-50 ring-indigo-100",
-      textClass: "text-indigo-600",
-      label: "VIDEO",
-    };
-  }
-  if (
-    mime.startsWith("audio/") ||
-    [".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".amr", ".wma"].includes(ext)
-  ) {
-    return { Icon: FileAudio, bgClass: "bg-pink-50 ring-pink-100", textClass: "text-pink-600", label: "AUDIO" };
-  }
-  if (
-    mime.startsWith("text/") ||
-    [
-      ".txt",
-      ".text",
-      ".md",
-      ".markdown",
-      ".csv",
-      ".tsv",
-      ".json",
-      ".jsonl",
-      ".log",
-      ".xml",
-      ".html",
-      ".htm",
-      ".yaml",
-      ".yml",
-    ].includes(ext)
-  ) {
-    return { Icon: FileText, bgClass: "bg-slate-100 ring-slate-200", textClass: "text-slate-600", label: "TXT" };
-  }
-  return { Icon: File, bgClass: "bg-slate-100 ring-slate-200", textClass: "text-slate-500", label: "FILE" };
+function getFileIcon(doc: DocumentDto): FileIconMeta {
+  return FILE_ICON_META[getFileTypeLabel(doc.mime, doc.title)];
 }
 
 function permissionLabel(scope?: string | null) {

@@ -5,28 +5,19 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ExternalLink, Sparkles } from "lucide-react";
 import { FeedbackControls } from "./FeedbackControls";
+import { getFileBadge } from "@/lib/file-preview";
 import type { ChatMessage, MessageFeedback, MessageFeedbackRating } from "./types";
-
-function isMarkdownDoc(mime: string, title: string): boolean {
-  return mime.includes("markdown") || mime === "text/markdown" || title.toLowerCase().endsWith(".md");
-}
-
-/** 引用文档图标：按文件类型着色（与检索结果页徽标同一套语义色） */
-function citationBadge(mime: string, title: string): { text: string; tone: string } {
-  const raw = `${mime} ${title.split(".").pop() || ""}`.toLowerCase();
-  if (raw.includes("pdf")) return { text: "PDF", tone: "bg-rose-500" };
-  if (raw.includes("word") || raw.includes("doc")) return { text: "W", tone: "bg-blue-500" };
-  if (raw.includes("sheet") || raw.includes("excel") || raw.includes("xls")) return { text: "X", tone: "bg-emerald-500" };
-  if (raw.includes("presentation") || raw.includes("ppt")) return { text: "P", tone: "bg-amber-500" };
-  if (isMarkdownDoc(mime, title)) return { text: "MD", tone: "bg-slate-500" };
-  if (raw.includes("text") || raw.includes("txt")) return { text: "TXT", tone: "bg-sky-500" };
-  return { text: "DOC", tone: "bg-slate-400" };
-}
 
 export interface MessageBubbleProps {
   msg: ChatMessage;
   streaming?: boolean;
-  onCitationClick: (documentId: string, documentTitle: string, mime: string, page?: number) => void;
+  onCitationClick: (
+    documentId: string,
+    documentTitle: string,
+    mime: string,
+    page?: number,
+    canDownload?: boolean,
+  ) => void;
   onFeedback?: (
     messageId: string,
     rating: MessageFeedbackRating,
@@ -99,11 +90,11 @@ export function MessageBubble({ msg, streaming, onCitationClick, onFeedback }: M
             <div className="mb-2 text-xs font-medium text-slate-500">引用文档（{msg.citations.length}）</div>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {msg.citations.map((c) => {
-                const badge = citationBadge(c.mime || "", c.documentTitle);
+                const badge = getFileBadge(c.mime || "", c.documentTitle);
                 return (
                   <button
                     key={c.index}
-                    onClick={() => onCitationClick(c.documentId, c.documentTitle, c.mime || "", c.page ?? undefined)}
+                    onClick={() => onCitationClick(c.documentId, c.documentTitle, c.mime || "", c.page ?? undefined, c.canDownload !== false)}
                     className="group flex min-w-0 cursor-pointer items-center gap-2.5 rounded-lg border border-slate-200 bg-white p-2.5 text-left transition hover:border-brand-300 hover:shadow-card"
                     title={c.snippet}
                   >

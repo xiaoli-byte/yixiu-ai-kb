@@ -28,7 +28,11 @@ import {
   type DocumentUserContext,
   type PermissionAuditLogInput,
 } from "./document-access.service";
-import { isSupportedDocumentFile, SUPPORTED_DOCUMENT_EXTENSIONS } from "./document-file-types";
+import {
+  isSupportedDocumentFile,
+  normalizeDocumentMime,
+  SUPPORTED_DOCUMENT_EXTENSIONS,
+} from "./document-file-types";
 
 type PrismaRawTransaction = {
   $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
@@ -215,6 +219,9 @@ export class DocumentsService {
       );
     }
     const targetFolderId = await this.normalizeAndValidateTargetFolder(folderId, tenantId);
+    // 浏览器/操作系统上报的 mimetype 不可靠，落库前按扩展名归一为规范 MIME，
+    // 作为下游解析/渲染分发的权威依据（校验逻辑仍用原始 file.mimetype，见上）
+    const normalizedMime = normalizeDocumentMime(file.mimetype, originalName);
 
     const fileHash = sha256Hex(file.buffer);
     const id = uuid();
@@ -239,7 +246,7 @@ export class DocumentsService {
         duplicateOfDocumentId: exactDuplicate?.id ?? null,
         dedupReason: exactDuplicate ? "FILE_HASH" : null,
         title: originalName,
-        mime: file.mimetype,
+        mime: normalizedMime,
         size: BigInt(file.size),
         status: reusedStatus,
         storageKey: key,

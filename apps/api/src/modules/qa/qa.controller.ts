@@ -87,15 +87,6 @@ export class QaController {
     });
   }
 
-  @Get("documents/:id/pdf-url")
-  async getDocumentUrl(
-    @Param("id") id: string,
-    @CurrentUser() user: any,
-  ) {
-    const tenantId = this.db.tenantId!;
-    return this.qa.getDocumentPresignedUrl(id, tenantId, user);
-  }
-
   @Get("documents/:id/file")
   async getDocumentFile(
     @Param("id") id: string,
@@ -136,6 +127,16 @@ export class QaController {
   ) {
     const tenantId = this.db.tenantId!;
     return this.qa.getDocumentMarkdown(id, tenantId, user);
+  }
+
+  // 解析文本（切片拼接）：Office 在线预览 / 图片 OCR / 音频转写文本
+  @Get("documents/:id/content")
+  async getDocumentContent(
+    @Param("id") id: string,
+    @CurrentUser() user: any,
+  ) {
+    const tenantId = this.db.tenantId!;
+    return this.qa.getDocumentParsedText(id, tenantId, user);
   }
 
   @Delete("conversations/:id")

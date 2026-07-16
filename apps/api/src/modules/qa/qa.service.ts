@@ -33,6 +33,8 @@ export interface Citation {
   mime: string;        // 文档 MIME 类型
   snippet: string;
   page: number | null;  // PDF 页码
+  /** 当前用户对该文档的下载权限（读取/下发时实时计算，不作为落库快照的权威值） */
+  canDownload?: boolean;
 }
 
 export type QAMessageFeedbackRating = "up" | "down" | "none";
@@ -61,6 +63,11 @@ type QaUserInput =
   | string
   | (Partial<DocumentUserContext> & { sub?: string; id?: string });
 
+/** 「可作为 AI 参考」文档的附加权限位（目前仅下载权限） */
+interface ReferenceDocumentFlags {
+  canDownload: boolean;
+}
+
 /**
  * AI 问答主管道：会话记忆 → 查询规划 → 混合召回 → 权限过滤 → 重排 → 多轮生成 → 持久化。
  */
@@ -72,6 +79,9 @@ export class QaService {
   private readonly MAX_RECALL_CANDIDATES = 50;
   /** 重排相关性分数下限，低于此值的候选不进入参考资料 */
   private readonly RERANK_MIN_SCORE = 0.2;
+  /** 解析文本预览最多拼接的切片数 / 字符数（超出则截断并标记 truncated） */
+  private static readonly PARSED_TEXT_MAX_CHUNKS = 300;
+  private static readonly PARSED_TEXT_MAX_CHARS = 500_000;
 
   private readonly SYSTEM_PROMPT = `你是企业内部知识库 AI 助手。
 
@@ -157,7 +167,13 @@ export class QaService {
       messageCount: normalized.length,
       messages: normalized.map((m) => ({
         ...m,
-        citations: m.citations.filter((c) => allowedDocs.has(c.documentId)),
+        // canDownload 用读取时的实时权限覆盖落库快照（权限可能在落库后变更）
+        citations: m.citations
+          .filter((c) => allowedDocs.has(c.documentId))
+          .map((c) => ({
+            ...c,
+            canDownload: allowedDocs.get(c.documentId)?.canDownload ?? false,
+          })),
       })),
     };
   }
@@ -212,23 +228,6 @@ export class QaService {
     return this.runLog.listDebugRuns(tenantId, userId, opts);
   }
 
-  async getDocumentPresignedUrl(docId: string, tenantId: string, user: QaUserInput) {
-    const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
-    if (doc) {
-      await this.access.assertDocumentAccess(
-        doc.id,
-        "VIEW",
-        await this.buildDocumentUserContext(tenantId, user),
-      );
-    }
-    if (!doc) throw new ForbiddenException("文档不存在");
-    return {
-      url: `/api/qa/documents/${encodeURIComponent(docId)}/file`,
-      title: doc.title,
-      mime: doc.mime,
-    };
-  }
-
   async getDocumentFile(
     docId: string,
     tenantId: string,
@@ -263,7 +262,12 @@ export class QaService {
     if (!doc) throw new ForbiddenException("文档不存在");
 
     // 检查是否为 Markdown 文件（格式不符属于请求错误，而非权限问题）
-    if (!doc.mime.includes("markdown") && !doc.title.toLowerCase().endsWith(".md")) {
+    const lowerTitle = doc.title.toLowerCase();
+    if (
+      !doc.mime.includes("markdown") &&
+      !lowerTitle.endsWith(".md") &&
+      !lowerTitle.endsWith(".markdown")
+    ) {
       throw new BadRequestException("该文档不是 Markdown 格式");
     }
 
@@ -272,6 +276,44 @@ export class QaService {
       title: doc.title,
       content: content.toString("utf-8"),
       mime: doc.mime,
+    };
+  }
+
+  /**
+   * 文档的解析文本（切片按 idx 顺序拼接）。
+   * 用于浏览器无法原生渲染的类型（Office）的在线预览，以及图片 OCR / 音频转写文本查看。
+   */
+  async getDocumentParsedText(docId: string, tenantId: string, user: QaUserInput) {
+    const doc = await this.findDocumentOrCanonicalUpload(docId, tenantId);
+    if (doc) {
+      await this.access.assertDocumentAccess(
+        doc.id,
+        "VIEW",
+        await this.buildDocumentUserContext(tenantId, user),
+      );
+    }
+    if (!doc) throw new ForbiddenException("文档不存在");
+
+    // 去重后切片挂在 canonical 内容上（contentId），未去重的挂在文档上（documentId），两路兼取
+    const chunks = await this.prisma.chunk.findMany({
+      where: doc.contentId
+        ? { OR: [{ documentId: doc.id }, { contentId: doc.contentId }] }
+        : { documentId: doc.id },
+      orderBy: { idx: "asc" },
+      take: QaService.PARSED_TEXT_MAX_CHUNKS,
+      select: { idx: true, text: true },
+    });
+
+    const joined = chunks.map((chunk) => chunk.text).join("\n\n");
+    const truncated =
+      chunks.length >= QaService.PARSED_TEXT_MAX_CHUNKS ||
+      joined.length > QaService.PARSED_TEXT_MAX_CHARS;
+
+    return {
+      title: doc.title,
+      mime: doc.mime,
+      content: joined.slice(0, QaService.PARSED_TEXT_MAX_CHARS),
+      truncated,
     };
   }
 
@@ -355,8 +397,9 @@ export class QaService {
         user: actor,
       });
 
-      // 4. 权限 + AI 引用开关过滤
-      const accessibleHits = await this.filterRecallHits(hits, opts.tenantId, actor);
+      // 4. 权限 + AI 引用开关过滤（顺带拿到各文档的下载权限位，供 citations 下发）
+      const { hits: accessibleHits, allowed: referenceFlags } =
+        await this.filterRecallHits(hits, opts.tenantId, actor);
 
       // 5. 重排精选（失败降级为召回原序）
       const filteredHits = await this.rerankHits(retrievalQuery, accessibleHits, requestedTopK);
@@ -371,6 +414,7 @@ export class QaService {
         mime: h.mime,
         snippet: h.text,
         page: h.page,
+        canDownload: referenceFlags.get(h.documentId)?.canDownload ?? false,
       }));
 
       if (citations.length === 0) {
@@ -497,6 +541,12 @@ export class QaService {
     citations: Citation[];
     assistantMessageId: string;
   }) {
+    // 显式给 assistant 晚 1ms 的 createdAt：默认 now() 会让同事务两条消息 created_at 完全相同，
+    // 而排序 tie-break 用的 cuid 非单调（字典序可能 assistant<user），会导致历史每轮"先答后问"错序。
+    // 用可排序的 created_at 从根上保证 user→assistant 次序，不再依赖 id 的单调性假设。
+    const now = Date.now();
+    const userCreatedAt = new Date(now);
+    const assistantCreatedAt = new Date(now + 1);
     await this.prisma.$transaction([
       this.prisma.qAMessage.create({
         data: {
@@ -504,6 +554,7 @@ export class QaService {
           conversationId: input.conversationId,
           role: "user",
           content: input.question,
+          createdAt: userCreatedAt,
         },
       }),
       this.prisma.qAMessage.create({
@@ -513,11 +564,12 @@ export class QaService {
           role: "assistant",
           content: input.answer,
           citations: input.citations as any,
+          createdAt: assistantCreatedAt,
         },
       }),
       this.prisma.qAConversation.update({
         where: { id: input.conversationId },
-        data: { updatedAt: new Date() },
+        data: { updatedAt: assistantCreatedAt },
       }),
     ]);
   }
@@ -643,39 +695,44 @@ export class QaService {
     hits: SearchHit[],
     tenantId: string,
     actor: DocumentUserContext,
-  ): Promise<SearchHit[]> {
+  ): Promise<{ hits: SearchHit[]; allowed: Map<string, ReferenceDocumentFlags> }> {
     const allowed = await this.allowedReferenceDocuments(
       hits.map((hit) => hit.documentId),
       tenantId,
       actor,
     );
-    return hits.filter((hit) => allowed.has(hit.documentId));
+    return { hits: hits.filter((hit) => allowed.has(hit.documentId)), allowed };
   }
 
   /**
    * 计算「当前用户可作为 AI 参考」的文档集合：canView 且 ai_reference_enabled。
    * 召回过滤与存量 citations 复核共用此口径。
+   * 返回 Map 以便调用方顺带取到 canDownload（getAccessFlags 已一并算出，无额外查询）。
    */
   private async allowedReferenceDocuments(
     documentIds: string[],
     tenantId: string,
     actor: DocumentUserContext,
-  ): Promise<Set<string>> {
+  ): Promise<Map<string, ReferenceDocumentFlags>> {
+    const result = new Map<string, ReferenceDocumentFlags>();
     const uniqueIds = [...new Set(documentIds.filter(Boolean))];
-    if (uniqueIds.length === 0) return new Set();
+    if (uniqueIds.length === 0) return result;
 
     const [flags, aiReferenceFlags] = await Promise.all([
       this.access.getAccessFlags(uniqueIds, actor),
       this.loadAiReferenceFlags(uniqueIds, tenantId),
     ]);
 
-    return new Set(
-      uniqueIds.filter((documentId) => {
-        const canView = flags[documentId]?.canView ?? false;
-        const aiReferenceEnabled = aiReferenceFlags.get(documentId) ?? false;
-        return canView && aiReferenceEnabled;
-      }),
-    );
+    for (const documentId of uniqueIds) {
+      const canView = flags[documentId]?.canView ?? false;
+      const aiReferenceEnabled = aiReferenceFlags.get(documentId) ?? false;
+      if (canView && aiReferenceEnabled) {
+        result.set(documentId, {
+          canDownload: flags[documentId]?.canDownload ?? false,
+        });
+      }
+    }
+    return result;
   }
 
   private async loadAiReferenceFlags(documentIds: string[], tenantId: string) {

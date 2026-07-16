@@ -2,8 +2,8 @@ import {
   getConversations as convListApi,
   getConversation as convGetApi,
   deleteConversation as convDeleteApi,
-  getDocumentPdfUrl as pdfUrlApi,
   getDocumentMarkdown as mdApi,
+  getDocumentParsedContent as parsedContentApi,
   getDebugRuns as debugRunsApi,
   getAskEndpoint as askEndpointApi,
   updateMessageFeedback as updateMessageFeedbackApi,
@@ -18,7 +18,7 @@ export type {
   ChatMessage,
   Conversation,
   ConversationDetail,
-  PdfUrlResponse,
+  ParsedContentResponse,
   MarkdownContentResponse,
   QaDebugRun,
   MessageFeedback,
@@ -30,8 +30,8 @@ export type {
 export const conversationList = convListApi;
 export const conversationGet = convGetApi;
 export const conversationDelete = convDeleteApi;
-export const getDocumentPdfUrl = pdfUrlApi;
 export const getDocumentMarkdown = mdApi;
+export const getDocumentParsedContent = parsedContentApi;
 export const getDebugRuns = debugRunsApi;
 export const getAskEndpoint = askEndpointApi;
 export const updateMessageFeedback = updateMessageFeedbackApi;
@@ -44,8 +44,8 @@ const qaApi = {
   conversationList,
   conversationGet,
   conversationDelete,
-  getDocumentPdfUrl,
   getDocumentMarkdown,
+  getDocumentParsedContent,
   getDebugRuns,
   getAskEndpoint,
   updateMessageFeedback,

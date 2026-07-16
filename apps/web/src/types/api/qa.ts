@@ -8,6 +8,8 @@ export interface Citation {
   mime: string;
   snippet: string;
   page: number | null;
+  /** 当前用户对该文档的下载权限（服务端实时下发；历史数据可能缺省，缺省视为可下载） */
+  canDownload?: boolean;
 }
 
 export interface ChatMessage {
@@ -43,16 +45,18 @@ export interface ConversationDetail {
   messages: ChatMessage[];
 }
 
-export interface PdfUrlResponse {
-  url: string;
-  title: string;
-  mime: string;
-}
-
 export interface MarkdownContentResponse {
   title: string;
   content: string;
   mime: string;
+}
+
+/** 解析文本（切片拼接）：Office 在线预览 / 图片 OCR / 音频转写 */
+export interface ParsedContentResponse {
+  title: string;
+  content: string;
+  mime: string;
+  truncated: boolean;
 }
 
 export interface QaDebugRun {

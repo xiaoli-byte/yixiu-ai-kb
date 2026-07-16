@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 
 export interface RecommendedCategory { id: string; label: string; target: "categoryId"; }
 export interface SearchKnowledgeBase { id: string; name: string; description?: string; documentCount?: number; folderCount?: number; href?: string; }
-export interface RecentSearchDocument { id: string; title: string; path?: string; fileType?: string; updatedAt?: string; href?: string; }
+export interface RecentSearchDocument { id: string; title: string; path?: string; fileType?: string; mime?: string; canDownload?: boolean; updatedAt?: string; href?: string; }
 
 interface SearchLandingProps {
   inputValue: string; hotItems: HotSearchItem[]; historyItems: SearchHistoryItem[]; recommendedCategories?: RecommendedCategory[]; selectedCategoryId?: string; hotRange: NonNullable<HotSearchQuery["range"]>; hotLoading?: boolean;

@@ -202,7 +202,10 @@ export default function PdfViewerModal({
           if (entry.isIntersecting) ratios.set(pageNumber, entry.intersectionRatio);
           else ratios.delete(pageNumber);
         }
-        let visiblePage = page;
+        // 初值无实际意义：仅当 largestRatio >= 0 时才会触发 setPage，
+        // 此时 visiblePage 必然已在下方循环中被赋值为具体页码。
+        // 这样可以避免把 page 放进依赖数组，防止翻页时重建 IntersectionObserver。
+        let visiblePage = 0;
         let largestRatio = -1;
         for (const [pageNumber, ratio] of ratios) {
           if (ratio > largestRatio) {

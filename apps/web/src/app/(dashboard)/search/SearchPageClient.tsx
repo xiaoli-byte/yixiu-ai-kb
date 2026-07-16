@@ -25,8 +25,8 @@ import { SearchResultGrid } from "@/components/search/SearchResultGrid";
 import { SearchPagination } from "@/components/search/SearchPagination";
 import { type SelectedSearchFilter } from "@/components/search/SearchSelectedFilters";
 import { SearchEmptyState, SearchErrorState, SearchLoadingSkeleton } from "@/components/search/SearchStatePanels";
-import MarkdownPreviewModal from "@/components/MarkdownPreviewModal";
-import PdfViewerModal from "@/components/PdfViewerModal";
+import DocumentPreviewModal from "@/components/DocumentPreviewModal";
+import { getFileTypeLabel } from "@/lib/file-preview";
 
 const DEFAULT_PAGE_SIZE = 10;
 const SEARCH_SORTS: SearchSortBy[] = ["relevance", "time", "name"];
@@ -73,8 +73,7 @@ export default function SearchPageClient() {
   const [recentDocuments, setRecentDocuments] = useState<DocumentDto[]>([]);
   const [landingLoading, setLandingLoading] = useState(true);
   const [landingErrors, setLandingErrors] = useState<LandingErrors>({});
-  const [pdfPreview, setPdfPreview] = useState<{ id: string; title: string; page?: number; canDownload?: boolean } | null>(null);
-  const [markdownPreview, setMarkdownPreview] = useState<{ id: string; title: string; canDownload?: boolean } | null>(null);
+  const [docPreview, setDocPreview] = useState<{ id: string; title: string; mime?: string; page?: number; canDownload?: boolean } | null>(null);
   const lastQueryKey = useRef("");
   const lastSuccessfulPage = useRef(1);
   const hasSuccessfulResult = useRef(false);
@@ -97,7 +96,9 @@ export default function SearchPageClient() {
       id: document.id,
       title: document.title,
       path: categories.find((category) => category.id === document.folderId)?.name || "未设置路径",
-      fileType: fileTypeOfDocument(document),
+      fileType: getFileTypeLabel(document.mime, document.title),
+      mime: document.mime,
+      canDownload: document.canDownload !== false,
       updatedAt: document.updatedAt,
     })),
     [categories, recentDocuments],
@@ -470,14 +471,8 @@ export default function SearchPageClient() {
   }, []);
 
   const handleRecentDocumentSelect = useCallback((item: RecentSearchDocument) => {
-    if (isMarkdownTitle(item.title)) {
-      setMarkdownPreview({ id: item.id, title: item.title });
-    } else if (isPdfTitle(item.title)) {
-      setPdfPreview({ id: item.id, title: item.title });
-    } else {
-      void openDocumentBlob(item.id, item.title);
-    }
-  }, [openDocumentBlob]);
+    setDocPreview({ id: item.id, title: item.title, mime: item.mime, canDownload: item.canDownload !== false });
+  }, []);
 
   const recordHitEvent = useCallback(
     (hit: SearchHit, eventType: SearchEventType) => {
@@ -502,15 +497,15 @@ export default function SearchPageClient() {
   const previewSearchHit = useCallback(
     (hit: SearchHit) => {
       recordHitEvent(hit, "DOCUMENT_VIEW");
-      if (isMarkdownHit(hit)) {
-        setMarkdownPreview({ id: hit.documentId, title: hit.documentTitle, canDownload: hit.canDownload !== false });
-      } else if (isPdfHit(hit)) {
-        setPdfPreview({ id: hit.documentId, title: hit.documentTitle, page: hit.page ?? undefined, canDownload: hit.canDownload !== false });
-      } else {
-        void openDocumentBlob(hit.documentId, hit.documentTitle);
-      }
+      setDocPreview({
+        id: hit.documentId,
+        title: hit.documentTitle,
+        mime: hit.mime,
+        page: hit.page ?? undefined,
+        canDownload: hit.canDownload !== false,
+      });
     },
-    [openDocumentBlob, recordHitEvent],
+    [recordHitEvent],
   );
 
   const downloadSearchHit = useCallback((hit: SearchHit) => {
@@ -566,8 +561,7 @@ export default function SearchPageClient() {
             onRecentDocumentSelect={handleRecentDocumentSelect}
           />
         </div>
-        {pdfPreview && <PdfViewerModal documentId={pdfPreview.id} title={pdfPreview.title} initialPage={pdfPreview.page} canDownload={pdfPreview.canDownload} onClose={() => setPdfPreview(null)} />}
-        {markdownPreview && <MarkdownPreviewModal documentId={markdownPreview.id} title={markdownPreview.title} canDownload={markdownPreview.canDownload} onClose={() => setMarkdownPreview(null)} />}
+        {docPreview && <DocumentPreviewModal documentId={docPreview.id} title={docPreview.title} mime={docPreview.mime} initialPage={docPreview.page} canDownload={docPreview.canDownload} onClose={() => setDocPreview(null)} />}
       </>
     );
   }
@@ -660,8 +654,7 @@ export default function SearchPageClient() {
         <SearchPagination page={displayedPage} pageSize={DEFAULT_PAGE_SIZE} total={result?.total ?? hits.length} truncated={result?.truncated} onPageChange={handlePageChange} />
       )}
 
-      {pdfPreview && <PdfViewerModal documentId={pdfPreview.id} title={pdfPreview.title} initialPage={pdfPreview.page} canDownload={pdfPreview.canDownload} onClose={() => setPdfPreview(null)} />}
-      {markdownPreview && <MarkdownPreviewModal documentId={markdownPreview.id} title={markdownPreview.title} canDownload={markdownPreview.canDownload} onClose={() => setMarkdownPreview(null)} />}
+      {docPreview && <DocumentPreviewModal documentId={docPreview.id} title={docPreview.title} mime={docPreview.mime} initialPage={docPreview.page} canDownload={docPreview.canDownload} onClose={() => setDocPreview(null)} />}
     </div>
   );
 }
@@ -739,30 +732,3 @@ function normalizeSearchSort(value: SearchSortBy): SearchSortBy {
   return SEARCH_SORTS.includes(value) ? value : "relevance";
 }
 
-function isMarkdownTitle(title: string) {
-  const lower = title.toLowerCase();
-  return lower.endsWith(".md") || lower.endsWith(".markdown");
-}
-
-function isPdfTitle(title: string) {
-  return title.toLowerCase().endsWith(".pdf");
-}
-
-function isMarkdownHit(hit: SearchHit) {
-  return hit.mime?.toLowerCase().includes("markdown") || isMarkdownTitle(hit.documentTitle);
-}
-
-function isPdfHit(hit: SearchHit) {
-  return hit.mime?.toLowerCase() === "application/pdf" || isPdfTitle(hit.documentTitle);
-}
-
-function fileTypeOfDocument(document: DocumentDto) {
-  const mime = (document.mime || "").toLowerCase();
-  const title = document.title.toLowerCase();
-  if (mime === "application/pdf" || title.endsWith(".pdf")) return "PDF";
-  if (mime.includes("word") || /\.docx?$/.test(title)) return "DOCX";
-  if (mime.includes("sheet") || /\.xlsx?$/.test(title)) return "XLSX";
-  if (mime.includes("presentation") || /\.pptx?$/.test(title)) return "PPTX";
-  if (mime.startsWith("text/") || isMarkdownTitle(title)) return "TXT";
-  return "FILE";
-}

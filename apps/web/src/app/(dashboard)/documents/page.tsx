@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderPlus, Loader2, Upload, X } from "lucide-react";
 import { ApiError } from "@/lib/api-client";
-import { buildDocumentFileUrl } from "@/services/qa";
+import { getDocumentFileBlob } from "@/services/qa";
 import documentsApi, {
   type DocumentBatchAction,
   type DocumentBatchUploadResult,
@@ -17,8 +17,7 @@ import documentsApi, {
 import foldersApi from "@/services/folders";
 import type { Folder } from "@/types/api";
 import FolderTagManager from "@/components/FolderTagManager";
-import MarkdownPreviewModal from "@/components/MarkdownPreviewModal";
-import PdfViewerModal from "@/components/PdfViewerModal";
+import DocumentPreviewModal from "@/components/DocumentPreviewModal";
 import { BatchActionBar } from "@/components/documents/BatchActionBar";
 import { DocumentScopeNav, type DocumentScope } from "@/components/documents/DocumentScopeNav";
 import { DocumentTable } from "@/components/documents/DocumentTable";
@@ -30,14 +29,23 @@ import { formatBytes } from "@/lib/utils";
 import { toast, confirmDialog } from "@/components/ui/feedback";
 import { mergeUploadFiles, uploadFileKey } from "./uploadSelection";
 
+// 与后端 SUPPORTED_DOCUMENT_EXTENSIONS（apps/api/src/modules/documents/document-file-types.ts）保持同步
 const SUPPORTED_UPLOAD_ACCEPT = [
   ".pdf",
   ".md",
   ".markdown",
   ".txt",
+  ".text",
   ".csv",
+  ".tsv",
   ".json",
   ".jsonl",
+  ".log",
+  ".xml",
+  ".html",
+  ".htm",
+  ".yaml",
+  ".yml",
   ".docx",
   ".doc",
   ".docm",
@@ -106,8 +114,7 @@ export default function DocumentsPage() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [editDoc, setEditDoc] = useState<DocumentDto | null>(null);
   const [permissionTarget, setPermissionTarget] = useState<PermissionModalTarget | null>(null);
-  const [pdfPreview, setPdfPreview] = useState<{ id: string; title: string } | null>(null);
-  const [mdPreview, setMdPreview] = useState<{ id: string; title: string } | null>(null);
+  const [preview, setPreview] = useState<{ id: string; title: string; mime?: string; canDownload?: boolean } | null>(null);
   // 批量移动：非空即打开文件夹选择器，值为待移动的文档 ID 列表
   const [moveTarget, setMoveTarget] = useState<string[] | null>(null);
 
@@ -223,14 +230,6 @@ export default function DocumentsPage() {
     setSelectedIds([]);
   }, []);
 
-  function isMarkdownDoc(mime: string, title: string): boolean {
-    return mime.includes("markdown") || mime === "text/markdown" || title.toLowerCase().endsWith(".md");
-  }
-
-  function isPdfDoc(mime: string, title: string): boolean {
-    return mime === "application/pdf" || title.toLowerCase().endsWith(".pdf");
-  }
-
   async function uploadFiles(files: File[], folderId?: string) {
     if (files.length === 0) return;
     setUploading(true);
@@ -279,18 +278,24 @@ export default function DocumentsPage() {
   }
 
   function viewDocument(doc: DocumentDto) {
-    if (isMarkdownDoc(doc.mime, doc.title)) {
-      setMdPreview({ id: doc.id, title: doc.title });
-    } else if (isPdfDoc(doc.mime, doc.title)) {
-      setPdfPreview({ id: doc.id, title: doc.title });
-    } else {
-      void openDetail(doc.id);
-    }
+    // 统一预览弹窗：PDF/图片/音视频/Markdown/文本原生渲染，Office 等给下载引导
+    setPreview({ id: doc.id, title: doc.title, mime: doc.mime, canDownload: doc.canDownload !== false });
   }
 
-  function downloadDocument(doc: DocumentDto) {
-    if (typeof window !== "undefined") {
-      window.open(buildDocumentFileUrl(doc.id), "_blank", "noopener,noreferrer");
+  async function downloadDocument(doc: DocumentDto) {
+    // 通过带鉴权的 fetch 拉取文件（window.open 直开受保护 URL 在 Bearer 登录模式下会 401）
+    try {
+      const blob = await getDocumentFileBlob(doc.id, { download: true });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = doc.title;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (error) {
+      showApiError(error);
     }
   }
 
@@ -663,23 +668,14 @@ export default function DocumentsPage() {
         </div>
       )}
 
-      {pdfPreview && (
-        <PdfViewerModal
-          documentId={pdfPreview.id}
-          title={pdfPreview.title}
+      {preview && (
+        <DocumentPreviewModal
+          documentId={preview.id}
+          title={preview.title}
+          mime={preview.mime}
+          canDownload={preview.canDownload}
           onClose={() => {
-            setPdfPreview(null);
-            setDetail(null);
-          }}
-        />
-      )}
-
-      {mdPreview && (
-        <MarkdownPreviewModal
-          documentId={mdPreview.id}
-          title={mdPreview.title}
-          onClose={() => {
-            setMdPreview(null);
+            setPreview(null);
             setDetail(null);
           }}
         />

@@ -19,7 +19,7 @@ export type {
   ChatMessage,
   Conversation,
   ConversationDetail,
-  PdfUrlResponse,
+  ParsedContentResponse,
   MarkdownContentResponse,
   SearchHit,
   SearchResponse,

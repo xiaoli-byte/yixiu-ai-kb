@@ -15,12 +15,8 @@ import { RewriteSuggestions } from "@/components/qa/RewriteSuggestions";
 import { DebugDrawer } from "@/components/qa/DebugDrawer";
 import type { ChatMessage, Conversation, MessageFeedback, MessageFeedbackRating } from "@/components/qa/types";
 
-const PdfViewerModal = dynamic(() => import("@/components/PdfViewerModal"), { ssr: false });
-const MarkdownPreviewModal = dynamic(() => import("@/components/MarkdownPreviewModal"), { ssr: false });
-
-function isMarkdownDoc(mime: string, title: string): boolean {
-  return mime.includes("markdown") || mime === "text/markdown" || title.toLowerCase().endsWith(".md");
-}
+// 统一预览弹窗：内部按文件类型（PDF/图片/音视频/Markdown/文本/Office）分发渲染方式
+const DocumentPreviewModal = dynamic(() => import("@/components/DocumentPreviewModal"), { ssr: false });
 
 export default function QaPage() {
   const { accessToken } = useAuth();
@@ -29,8 +25,7 @@ export default function QaPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [pdfDoc, setPdfDoc] = useState<{ id: string; title: string; page?: number } | null>(null);
-  const [mdDoc, setMdDoc] = useState<{ id: string; title: string } | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<{ id: string; title: string; mime?: string; page?: number; canDownload?: boolean } | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugRuns, setDebugRuns] = useState<QaDebugRun[]>([]);
   const [debugLoading, setDebugLoading] = useState(false);
@@ -44,17 +39,12 @@ export default function QaPage() {
 
   const { streaming, streamingText, suggestions, ask, stop, resetSuggestions } = useQaStream();
 
-  const openDocument = useCallback((docId: string, title: string, mime: string, page?: number) => {
-    if (isMarkdownDoc(mime, title)) {
-      setMdDoc({ id: docId, title });
-    } else {
-      setPdfDoc({ id: docId, title, page });
-    }
+  const openDocument = useCallback((docId: string, title: string, mime: string, page?: number, canDownload?: boolean) => {
+    setPreviewDoc({ id: docId, title, mime, page, canDownload });
   }, []);
 
   const closeDocument = useCallback(() => {
-    setPdfDoc(null);
-    setMdDoc(null);
+    setPreviewDoc(null);
   }, []);
 
   useEffect(() => {
@@ -277,11 +267,6 @@ export default function QaPage() {
             >
               <Bug size={12} /> 调试
             </button>
-            {activeId && (
-              <button className="btn-ghost text-xs" onClick={newConversation}>
-                <Plus size={12} /> 新会话
-              </button>
-            )}
           </div>
         </header>
 
@@ -339,13 +324,17 @@ export default function QaPage() {
           </div>
         </div>
 
-        {/* PDF 预览弹窗 */}
-        {pdfDoc && (
-          <PdfViewerModal documentId={pdfDoc.id} title={pdfDoc.title} initialPage={pdfDoc.page} onClose={closeDocument} />
+        {/* 文档预览弹窗：按文件类型分发渲染方式 */}
+        {previewDoc && (
+          <DocumentPreviewModal
+            documentId={previewDoc.id}
+            title={previewDoc.title}
+            mime={previewDoc.mime}
+            initialPage={previewDoc.page}
+            canDownload={previewDoc.canDownload}
+            onClose={closeDocument}
+          />
         )}
-
-        {/* Markdown 预览弹窗 */}
-        {mdDoc && <MarkdownPreviewModal documentId={mdDoc.id} title={mdDoc.title} onClose={closeDocument} />}
       </div>
 
       <DebugDrawer

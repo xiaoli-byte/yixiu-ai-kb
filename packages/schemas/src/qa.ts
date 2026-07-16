@@ -4,8 +4,15 @@ export const Citation = z.object({
   index: z.number().int(),
   chunkId: z.string(),
   documentId: z.string(),
+  contentId: z.string().optional(),
   documentTitle: z.string(),
+  /** 文档 MIME 类型：前端据此选择预览渲染方式 */
+  mime: z.string().optional(),
   snippet: z.string(),
+  /** PDF 页码（其他类型为 null） */
+  page: z.number().int().nullable().optional(),
+  /** 当前用户对该文档的下载权限（服务端下发/读取时实时计算） */
+  canDownload: z.boolean().optional(),
 });
 export type Citation = z.infer<typeof Citation>;
 

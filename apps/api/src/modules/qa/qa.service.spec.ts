@@ -213,6 +213,12 @@ describe("QaService ask 主流程", () => {
       }),
     );
 
+    // 同轮 user/assistant 的 createdAt 必须可排序（assistant 严格晚于 user），
+    // 否则历史加载时会因同毫秒 + cuid 非单调而"先答后问"错序
+    const userCreatedAt = prisma.qAMessage.create.mock.calls[0][0].data.createdAt as Date;
+    const assistantCreatedAt = prisma.qAMessage.create.mock.calls[1][0].data.createdAt as Date;
+    expect(userCreatedAt.getTime()).toBeLessThan(assistantCreatedAt.getTime());
+
     // runLog 记录
     expect(runLog.log).toHaveBeenCalledWith(
       expect.objectContaining({ question: "如何配置定价？", answer: expect.any(String) }),
