@@ -30,8 +30,14 @@ export class ConversationMemoryService {
   private readonly RECENT_MESSAGE_LIMIT = 10;
   /** 单条历史消息进入 prompt 的最大字符数 */
   private readonly MAX_MESSAGE_CHARS = 1600;
-  /** 未摘要消息超过该阈值时触发一次摘要更新 */
-  private readonly SUMMARY_TRIGGER = 6;
+  /**
+   * 未摘要消息超过该阈值时触发一次摘要更新。
+   * 取 3 而非更大值以缩小「记忆盲区」：摘要覆盖点 = 总数 - RECENT_MESSAGE_LIMIT，
+   * 而摘要滞后一轮异步生成，阈值越大，早期消息「已滑出最近原文窗口、又尚未进摘要」
+   * 的窗口越宽（最坏 SUMMARY_TRIGGER-1 条）。取 3 把盲区压到最多 2 条（约 1 轮），
+   * 代价是摘要 LLM 调用更频繁（约每 1.5 轮一次，异步执行不影响首字延迟）。
+   */
+  private readonly SUMMARY_TRIGGER = 3;
   /** 摘要文本的最大字符数 */
   private readonly MAX_SUMMARY_CHARS = 1200;
 

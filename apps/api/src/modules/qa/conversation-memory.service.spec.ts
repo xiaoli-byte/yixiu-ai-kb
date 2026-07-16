@@ -78,13 +78,39 @@ describe("ConversationMemoryService maybeUpdateSummary", () => {
       summary: "",
       summaryMessageCount: 0,
     });
-    // 总消息 12 条，最近 10 条保留原文，未摘要覆盖点为 2，小于阈值 6
+    // 总消息 12 条，最近 10 条保留原文，未摘要覆盖点为 2，小于阈值 3
     db.queryOne.mockResolvedValueOnce({ count: "12" });
 
     await service.maybeUpdateSummary("conv-1");
 
     expect(llm.chat).not.toHaveBeenCalled();
     expect(prisma.qAConversation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("对话进入 5~8 轮区间时早期消息不落入记忆盲区（总数 14 即触发摘要覆盖）", async () => {
+    // 实测盲区场景：7 轮问答后总数 14，覆盖点 = 14 - 10 = 4。旧阈值 6 时 4 < 6 不触发，
+    // 第 8 轮提问时最早两轮既滑出最近原文窗口、又未进摘要 → 模型看不到、答错“最开始问的是什么”。
+    // 阈值降到 3 后 4 >= 3 必触发，摘要在第 8 轮提问前就覆盖到早期轮次，盲区消除。
+    const { service, prisma, db, llm } = createService();
+    prisma.qAConversation.findUnique.mockResolvedValueOnce({
+      summary: "",
+      summaryMessageCount: 0,
+    });
+    db.queryOne.mockResolvedValueOnce({ count: "14" });
+    db.query.mockResolvedValueOnce(
+      Array.from({ length: 4 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        content: `消息${i}`,
+      })),
+    );
+
+    await service.maybeUpdateSummary("conv-1");
+
+    expect(llm.chat).toHaveBeenCalledTimes(1);
+    expect(prisma.qAConversation.updateMany).toHaveBeenCalledWith({
+      where: { id: "conv-1", summaryMessageCount: 0 },
+      data: { summary: "合并后的摘要", summaryMessageCount: 4 },
+    });
   });
 
   it("达到阈值时调用 llm.chat 并通过 updateMany 乐观更新 summary/summaryMessageCount", async () => {
