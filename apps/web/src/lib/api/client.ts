@@ -1,5 +1,5 @@
 import { ApiError, RateLimitError, TokenExpiredError } from "./errors";
-import { useAuth, COOKIE_SESSION } from "../store";
+import { useAuth } from "../store";
 import { toast } from "@/components/ui/feedback";
 
 // zone 模式（basePath=/knowledge，构建期内联）下本地登录页在 /knowledge/login；
@@ -15,78 +15,47 @@ function redirectToFederatedLogin() {
   window.location.href = `/login?redirect=${encodeURIComponent(backTo)}`;
 }
 
-// Token 存储键
-const TOKEN_KEY = "accessToken";
-const REFRESH_KEY = "refreshToken";
-
-// 获取 token
-function getStoredToken(key: string): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(key);
-}
-
-// 设置 token
-function setStoredToken(key: string, value: string) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(key, value);
-}
-
-// 清除 token
-function removeStoredToken(key: string) {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(key);
-}
-
-// 清除所有认证信息
+// 新会话完全使用 httpOnly cookie；仅清除旧版本遗留的 localStorage token。
 export function clearAuth() {
-  removeStoredToken(TOKEN_KEY);
-  removeStoredToken(REFRESH_KEY);
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("accessToken");
+  localStorage.removeItem("refreshToken");
 }
 
-// 保存认证信息
-export function saveAuth(accessToken: string, refreshToken: string) {
-  setStoredToken(TOKEN_KEY, accessToken);
-  setStoredToken(REFRESH_KEY, refreshToken);
+/** @deprecated 登录凭证由 API 写入 httpOnly cookie，前端不得保存 token。 */
+export function saveAuth(_accessToken?: string, _refreshToken?: string) {
+  clearAuth();
 }
 
 // 单例：防止并发 401 时多次发起 refresh
 let isRefreshing = false;
-let refreshQueue: Array<(token: string) => void> = [];
+let refreshQueue: Array<(ok: boolean) => void> = [];
 
 // 执行 refresh
-async function doRefresh(): Promise<string | null> {
-  const refreshToken = getStoredToken(REFRESH_KEY);
-  if (!refreshToken) return null;
-
+async function doRefresh(): Promise<boolean> {
   try {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken }),
+      credentials: "include",
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    const newToken: string = data?.accessToken;
-    if (!newToken) return null;
-    setStoredToken(TOKEN_KEY, newToken);
-    return newToken;
+    return res.ok;
   } catch {
-    return null;
+    return false;
   }
 }
 
 // 刷新并重试
-async function refreshAndRetry(): Promise<string | null> {
+async function refreshAndRetry(): Promise<boolean> {
   if (!isRefreshing) {
     isRefreshing = true;
-    const token = await doRefresh();
+    const ok = await doRefresh();
     isRefreshing = false;
-    refreshQueue.forEach((cb) => cb(token ?? ""));
+    refreshQueue.forEach((cb) => cb(ok));
     refreshQueue = [];
-    return token;
+    return ok;
   }
-  return new Promise<string>((resolve) => {
-    refreshQueue.push((token: string) => resolve(token));
+  return new Promise<boolean>((resolve) => {
+    refreshQueue.push((ok) => resolve(ok));
   });
 }
 
@@ -114,11 +83,6 @@ async function clientFetch<T>(
     ...headers,
   };
 
-  const token = getStoredToken(TOKEN_KEY);
-  if (token) {
-    finalHeaders["Authorization"] = `Bearer ${token}`;
-  }
-
   const response = await fetch(url, {
     method,
     headers: finalHeaders,
@@ -129,35 +93,23 @@ async function clientFetch<T>(
     signal,
   });
 
-  if (response.status === 401) {
-    if (token) {
-      clearAuth();
-      const newToken = await refreshAndRetry();
-      if (newToken) {
-        finalHeaders["Authorization"] = `Bearer ${newToken}`;
-        const retryRes = await fetch(url, {
-          method,
-          headers: finalHeaders,
-          credentials: "include",
-          body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
-          signal,
-        });
-        return handleResponse<T>(retryRes);
-      }
-      if (typeof window !== "undefined") {
-        // Bearer 流的本地登录页要带上 basePath（zone 模式下是 /knowledge/login）。
-        window.location.href = `${WEB_BASE_PATH}/login`;
-      }
-      throw new TokenExpiredError();
+  if (response.status === 401 && !/\/auth\/(login|refresh)$/.test(url.split("?")[0])) {
+    const refreshed = await refreshAndRetry();
+    if (refreshed) {
+      const retryRes = await fetch(url, {
+        method,
+        headers: finalHeaders,
+        credentials: "include",
+        body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
+        signal,
+      });
+      return handleResponse<T>(retryRes);
     }
-    // cookie 会话（无状态联合登录）过期/失效：本地没有 refresh token 可刷（真正的凭证
-    // 是 ai-call 的 httpOnly cookie），清内存态后整页跳 ai-call 登录页重新联合登录。
-    // 不处理的话这里会一路抛 ApiError，用户只看到报错且无法自愈（原 #2 死路）。
-    if (useAuth.getState().accessToken === COOKIE_SESSION) {
-      useAuth.getState().logout();
-      redirectToFederatedLogin();
-      throw new TokenExpiredError();
-    }
+    clearAuth();
+    useAuth.getState().logout();
+    if (WEB_BASE_PATH) redirectToFederatedLogin();
+    else if (typeof window !== "undefined") window.location.href = "/login";
+    throw new TokenExpiredError();
   }
 
   return handleResponse<T>(response);
@@ -177,9 +129,6 @@ async function clientFetchBlob(
     ...headers,
   };
 
-  const token = getStoredToken(TOKEN_KEY);
-  if (token) finalHeaders.Authorization = `Bearer ${token}`;
-
   let response = await fetch(url, {
     method,
     headers: finalHeaders,
@@ -188,24 +137,14 @@ async function clientFetchBlob(
   });
 
   if (response.status === 401) {
-    if (token) {
-      const newToken = await refreshAndRetry();
-      if (newToken) {
-        finalHeaders.Authorization = `Bearer ${newToken}`;
-        response = await fetch(url, {
-          method,
-          headers: finalHeaders,
-          credentials: "include",
-          signal,
-        });
-      } else {
-        clearAuth();
-        if (typeof window !== "undefined") window.location.href = `${WEB_BASE_PATH}/login`;
-        throw new TokenExpiredError();
-      }
-    } else if (useAuth.getState().accessToken === COOKIE_SESSION) {
+    const refreshed = await refreshAndRetry();
+    if (refreshed) {
+      response = await fetch(url, { method, headers: finalHeaders, credentials: "include", signal });
+    } else {
+      clearAuth();
       useAuth.getState().logout();
-      redirectToFederatedLogin();
+      if (WEB_BASE_PATH) redirectToFederatedLogin();
+      else if (typeof window !== "undefined") window.location.href = "/login";
       throw new TokenExpiredError();
     }
   }

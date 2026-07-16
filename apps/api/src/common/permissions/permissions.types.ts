@@ -1,6 +1,7 @@
 /**
  * 权限系统 - 类型定义和枚举
  */
+import { ROLE_RANK } from "@xiaoli-byte/authz";
 
 /** 角色类型 */
 export enum Role {
@@ -75,12 +76,12 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ],
 };
 
-/** 角色层级（用于权限继承判断） */
+/** 角色层级（用于权限继承判断）。数值唯一定义在 @xiaoli-byte/authz/core 的 ROLE_RANK，此处仅按本地枚举取值。 */
 export const ROLE_HIERARCHY: Record<Role, number> = {
-  [Role.SUPER_ADMIN]: 4,
-  [Role.ADMIN]: 3,
-  [Role.EDITOR]: 2,
-  [Role.VIEWER]: 1,
+  [Role.SUPER_ADMIN]: ROLE_RANK.super_admin,
+  [Role.ADMIN]: ROLE_RANK.admin,
+  [Role.EDITOR]: ROLE_RANK.editor,
+  [Role.VIEWER]: ROLE_RANK.viewer,
 };
 
 /** 用户上下文信息 */

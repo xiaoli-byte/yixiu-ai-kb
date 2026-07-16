@@ -25,11 +25,11 @@ async function serverFetch<T>(
   init?: RequestInit & { next?: { revalidate?: number | false; tags?: string[] } }
 ): Promise<T> {
   const cookieStore = await cookies();
-  const token = cookieStore.get("accessToken")?.value;
+  const token = cookieStore.get("access_token")?.value;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(token ? { Cookie: `access_token=${encodeURIComponent(token)}` } : {}),
     ...((init?.headers as Record<string, string>) || {}),
   };
 

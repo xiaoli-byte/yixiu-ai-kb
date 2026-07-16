@@ -10,8 +10,10 @@ export class LoginDto {
 }
 
 export class RefreshDto {
+  // 仅兼容正在升级中的非浏览器客户端；浏览器仅使用 httpOnly refresh cookie。
+  @IsOptional()
   @IsString()
-  refreshToken!: string;
+  refreshToken?: string;
 }
 
 export class CreateUserDto {

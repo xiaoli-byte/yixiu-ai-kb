@@ -2,8 +2,13 @@ export {
   signAccessToken,
   verifyAccessToken,
   decodeAccessTokenUnsafe,
+  decodeAccessTokenHeaderUnsafe,
 } from "./access-token.js";
-export type { AccessTokenSignKeys, AccessTokenVerifyKeys } from "./access-token.js";
+export type {
+  AccessTokenAlgorithm,
+  AccessTokenSignKeys,
+  AccessTokenVerifyKeys,
+} from "./access-token.js";
 
 export {
   generateRefreshToken,

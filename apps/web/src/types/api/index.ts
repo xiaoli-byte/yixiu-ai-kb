@@ -60,7 +60,7 @@ export type {
   MessageFeedback,
   MessageFeedbackRating,
   MarkdownContentResponse,
-  PdfUrlResponse,
+  ParsedContentResponse,
   QaDebugRun,
   UpdateMessageFeedbackRequest,
 } from "./qa";

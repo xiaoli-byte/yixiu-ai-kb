@@ -6,12 +6,10 @@ import {
   Param,
   Patch,
   Post,
-  UseGuards,
 } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
 import { DepartmentsService } from "./departments.service";
 import { DatabaseService } from "../../database/database.service";
-import { PermissionsGuard, AdminOnly } from "../../common/permissions/permissions.guard";
+import { AdminOnly } from "../../common/permissions/permissions.guard";
 import { Resource, Action } from "../../common/permissions/permissions.types";
 
 class CreateDeptDto {
@@ -24,7 +22,6 @@ class UpdateDeptDto {
   parentId?: string;
 }
 
-@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("departments")
 export class DepartmentsController {
   constructor(

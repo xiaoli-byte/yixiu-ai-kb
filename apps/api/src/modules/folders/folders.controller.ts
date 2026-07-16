@@ -8,11 +8,12 @@ import {
   Post,
   UseGuards,
 } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
 import { FoldersService } from "./folders.service";
 import { DatabaseService } from "../../database/database.service";
-import { PermissionsGuard, RequirePermissions, AdminOnly } from "../../common/permissions/permissions.guard";
+import { RequirePermissions, AdminOnly, AnyAuthenticated } from "../../common/permissions/permissions.guard";
 import { Resource, Action } from "../../common/permissions/permissions.types";
+import { Public } from "../../common/decorators/public.decorator";
+import { ServiceAuthGuard } from "@xiaoli-byte/authz";
 
 class CreateFolderDto {
   name!: string;
@@ -24,7 +25,6 @@ class UpdateFolderDto {
   parentId?: string;
 }
 
-@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("folders")
 export class FoldersController {
   constructor(
@@ -33,22 +33,37 @@ export class FoldersController {
   ) {}
 
   @Get()
+  @AnyAuthenticated()
   async list() {
     return this.folders.list(this.db.tenantId!);
   }
 
   @Get("tree")
+  @AnyAuthenticated()
   async getTree() {
     return this.folders.getFolderTree(this.db.tenantId!);
   }
 
+  /**
+   * 仅供 ai-call 场景配置读取当前租户可关联的知识库目录。
+   * @Public 只绕过用户 JWT；ServiceAuthGuard 仍负责服务令牌与租户身份注入。
+   */
+  @Get("selectable")
+  @Public()
+  @UseGuards(ServiceAuthGuard)
+  async listSelectable() {
+    return this.folders.list(this.db.tenantId!);
+  }
+
   @Get(":id")
+  @AnyAuthenticated()
   async getById(@Param("id") id: string) {
     const folder = await this.folders.list(this.db.tenantId!);
     return folder.find((f: any) => f.id === id);
   }
 
   @Get(":id/stats")
+  @AnyAuthenticated()
   async getStats(@Param("id") id: string) {
     return this.folders.getStats(id, this.db.tenantId!);
   }

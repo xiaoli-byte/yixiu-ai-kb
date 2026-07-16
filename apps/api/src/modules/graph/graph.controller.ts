@@ -1,9 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from "@nestjs/common";
 import { GraphService } from "./graph.service";
 import { DatabaseService } from "../../database/database.service";
 import {
-  PermissionsGuard,
   RequireMinRole,
   RequirePermissions,
 } from "../../common/permissions/permissions.guard";
@@ -45,7 +43,6 @@ class ReviewRelationDto {
   reason?: string;
 }
 
-@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("graph")
 export class GraphController {
   constructor(

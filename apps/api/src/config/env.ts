@@ -123,6 +123,12 @@ const envShape = z
     NEO4J_BOLT_PORT: numeric.optional(),
     JWT_ACCESS_SECRET: nonEmpty,
     JWT_REFRESH_SECRET: nonEmpty,
+    JWT_ACCESS_ALGORITHM: z.enum(["HS256", "RS256"]).default("HS256"),
+    JWT_ACCESS_PRIVATE_KEY: z.string().optional(),
+    JWT_ACCESS_PUBLIC_KEY: z.string().optional(),
+    JWT_ACCESS_KEY_ID: z.string().optional(),
+    FEDERATED_JWT_ACCESS_PUBLIC_KEY: z.string().optional(),
+    FEDERATED_JWT_ACCESS_KEY_ID: z.string().optional(),
     JWT_ACCESS_TTL: nonEmpty,
     JWT_REFRESH_TTL: nonEmpty,
     // 联合登录 / 服务间调用（CALL-13）：全部可选，且运行时代码把空串按未设置处理
@@ -268,6 +274,18 @@ export function validateEnv(config: Record<string, unknown>) {
 
     if (env.JWT_ACCESS_TTL === "7d") {
       throw new Error("Production JWT_ACCESS_TTL must not use the development value 7d");
+    }
+    if (env.JWT_ACCESS_ALGORITHM !== "RS256") {
+      throw new Error("Production JWT_ACCESS_ALGORITHM must be RS256");
+    }
+    for (const key of [
+      "JWT_ACCESS_PRIVATE_KEY",
+      "JWT_ACCESS_PUBLIC_KEY",
+      "FEDERATED_JWT_ACCESS_PUBLIC_KEY",
+    ] as const) {
+      if (!env[key]?.trim()) {
+        throw new Error(`Production environment variable ${key} is required for RS256`);
+      }
     }
   }
 

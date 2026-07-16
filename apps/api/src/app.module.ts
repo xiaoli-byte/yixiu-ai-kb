@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { LoggerModule } from "nestjs-pino";
 import { ClsModule } from "nestjs-cls";
@@ -21,6 +22,8 @@ import { EmbeddingsModule } from "./modules/embeddings/embeddings.module";
 import { LlmModule } from "./modules/llm/llm.module";
 import { StorageModule } from "./modules/storage/storage.module";
 import { HealthController } from "./common/health.controller";
+import { JwtAuthGuard } from "./common/guards/jwt-auth.guard";
+import { PermissionsGuard } from "./common/permissions/permissions.guard";
 import { loadRootEnv, validateEnv } from "./config/env";
 import { AppConfigModule } from "./config/app-config.module";
 import { AppConfigService } from "./config/app-config.service";
@@ -72,5 +75,11 @@ loadRootEnv();
     OverviewModule,
   ],
   controllers: [HealthController],
+  providers: [
+    // 全局默认拒绝：先 JWT 验签（@Public 跳过），再权限声明检查（无声明→403）。
+    // 注册顺序即执行顺序，勿调换。
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PermissionsGuard },
+  ],
 })
 export class AppModule {}

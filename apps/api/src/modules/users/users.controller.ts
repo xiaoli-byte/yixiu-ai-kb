@@ -7,18 +7,15 @@ import {
   Patch,
   Post,
   Put,
-  UseGuards,
   BadRequestException,
 } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
 import { UsersService } from "./users.service";
 import { DatabaseService } from "../../database/database.service";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { PermissionsGuard, RequirePermissions, AdminOnly } from "../../common/permissions/permissions.guard";
+import { RequirePermissions, AdminOnly, AnyAuthenticated } from "../../common/permissions/permissions.guard";
 import { Resource, Action } from "../../common/permissions/permissions.types";
 import { CreateUserDto, UpdateUserDto, ChangePasswordDto } from "../auth/dto";
 
-@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("users")
 export class UsersController {
   constructor(
@@ -27,6 +24,7 @@ export class UsersController {
   ) {}
 
   @Get("me")
+  @AnyAuthenticated()
   async me(@CurrentUser("sub") id: string) {
     return this.users.findById(id);
   }
@@ -39,6 +37,7 @@ export class UsersController {
   }
 
   @Get(":id")
+  @AnyAuthenticated()
   async getById(@Param("id") id: string) {
     return this.users.findById(id);
   }
@@ -68,6 +67,7 @@ export class UsersController {
   }
 
   @Put("me/password")
+  @AnyAuthenticated()
   async changePassword(
     @CurrentUser("sub") userId: string,
     @Body() dto: ChangePasswordDto,

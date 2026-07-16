@@ -57,7 +57,10 @@ export class JwtAuthGuard implements CanActivate {
 
     let claims: AuthClaims;
     try {
-      claims = verifyAccessToken(token, { secret: this.options.accessSecret });
+      claims = verifyAccessToken(
+        token,
+        this.options.accessTokenVerifyKeys ?? { secret: this.options.accessSecret },
+      );
     } catch {
       if (isPublic) return true;
       throw new UnauthorizedException("Invalid or expired access token");

@@ -9,6 +9,7 @@ import { PrismaClient } from "@prisma/client";
 import { PRISMA } from "../../database/database.service";
 import * as bcrypt from "bcrypt";
 import { v4 as uuid } from "uuid";
+import { resolveKbRole } from "@xiaoli-byte/authz";
 
 export interface UserDto {
   id: string;
@@ -42,11 +43,11 @@ export class UsersService {
     const u = await this.prisma.user.findUnique({ where: { id } });
     if (!u) throw new NotFoundException("用户不存在");
     const { passwordHash, ...rest } = u;
-    return rest;
+    return { ...rest, role: await this.getEffectiveRole(u.id, u.tenantId, u.role) };
   }
 
   async list(tenantId: string): Promise<Omit<UserDto, never>[]> {
-    return this.prisma.user.findMany({
+    const users = await this.prisma.user.findMany({
       where: { tenantId },
       select: {
         id: true,
@@ -59,6 +60,12 @@ export class UsersService {
       },
       orderBy: { createdAt: "desc" },
     });
+    return Promise.all(
+      users.map(async (user) => ({
+        ...user,
+        role: await this.getEffectiveRole(user.id, tenantId, user.role),
+      })),
+    );
   }
 
   async create(
@@ -74,25 +81,30 @@ export class UsersService {
 
     const passwordHash = await bcrypt.hash(data.password, 10);
     const id = uuid();
-    const user = await this.prisma.user.create({
-      data: {
-        id,
-        tenantId,
-        email: data.email,
-        name: data.name,
-        passwordHash,
-        role: data.role || "viewer",
-        departmentId: data.departmentId || null,
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        departmentId: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+    const role = data.role || "viewer";
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          id,
+          tenantId,
+          email: data.email,
+          name: data.name,
+          passwordHash,
+          role,
+          departmentId: data.departmentId || null,
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          departmentId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+      await tx.membership.create({ data: { userId: id, tenantId, roles: [role] } });
+      return created;
     });
     return user;
   }
@@ -107,22 +119,32 @@ export class UsersService {
     });
     if (!user) throw new NotFoundException("用户不存在");
 
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: {
-        name: data.name,
-        role: data.role,
-        departmentId: data.departmentId,
-      },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        departmentId: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.user.update({
+        where: { id },
+        data: {
+          name: data.name,
+          role: data.role,
+          departmentId: data.departmentId,
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          departmentId: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+      if (data.role) {
+        await tx.membership.upsert({
+          where: { userId_tenantId: { userId: id, tenantId } },
+          create: { userId: id, tenantId, roles: [data.role] },
+          update: { roles: [data.role] },
+        });
+      }
+      return result;
     });
     return updated;
   }
@@ -174,5 +196,13 @@ export class UsersService {
     });
 
     return { message: "密码重置成功" };
+  }
+
+  private async getEffectiveRole(userId: string, tenantId: string, legacyRole: string): Promise<string> {
+    const membership = await this.prisma.membership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      select: { roles: true },
+    });
+    return resolveKbRole(membership?.roles ?? []).role ?? legacyRole;
   }
 }

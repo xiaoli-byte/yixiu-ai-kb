@@ -8,14 +8,12 @@ import {
   Post,
   Query,
   Res,
-  UseGuards,
 } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
 import { AskRequest } from "@ai-knowledge/schemas";
 import { QaService } from "./qa.service";
 import { DatabaseService } from "../../database/database.service";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { PermissionsGuard } from "../../common/permissions/permissions.guard";
+import { AnyAuthenticated } from "../../common/permissions/permissions.guard";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import type { Response } from "express";
 
@@ -30,9 +28,6 @@ function buildContentDisposition(title: string, disposition: "inline" | "attachm
   return `${disposition}; filename="${fallbackTitle}"; filename*=UTF-8''${encodedTitle}`;
 }
 
-// PermissionsGuard 在方法无权限声明时直接放行（本控制器均为登录用户的自有数据），
-// 挂上它是为了让未来新增的 @RequirePermissions/@RequireMinRole 真正生效——守卫缺席时这些装饰器会静默无效。
-@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("qa")
 export class QaController {
   constructor(
@@ -41,6 +36,7 @@ export class QaController {
   ) {}
 
   @Get("conversations")
+  @AnyAuthenticated()
   async list(@CurrentUser("sub") userId: string) {
     const tenantId = this.db.tenantId!;
     const items = await this.qa.listConversations(userId, tenantId);
@@ -54,12 +50,14 @@ export class QaController {
   }
 
   @Get("conversations/:id")
+  @AnyAuthenticated()
   async get(@Param("id") id: string, @CurrentUser() user: any) {
     const userId = user?.sub ?? user?.userId ?? user?.id;
     return this.qa.getConversation(id, userId, this.db.tenantId!, user);
   }
 
   @Patch("messages/:id/feedback")
+  @AnyAuthenticated()
   async updateMessageFeedback(
     @Param("id") id: string,
     @Body() body: { rating?: string; feedbackText?: string | null },
@@ -75,6 +73,7 @@ export class QaController {
   }
 
   @Get("debug/runs")
+  @AnyAuthenticated()
   async listDebugRuns(
     @CurrentUser("sub") userId: string,
     @Query("conversationId") conversationId?: string,
@@ -88,6 +87,7 @@ export class QaController {
   }
 
   @Get("documents/:id/file")
+  @AnyAuthenticated()
   async getDocumentFile(
     @Param("id") id: string,
     @CurrentUser() user: any,
@@ -121,6 +121,7 @@ export class QaController {
   }
 
   @Get("documents/:id/markdown")
+  @AnyAuthenticated()
   async getDocumentMarkdown(
     @Param("id") id: string,
     @CurrentUser() user: any,
@@ -131,6 +132,7 @@ export class QaController {
 
   // 解析文本（切片拼接）：Office 在线预览 / 图片 OCR / 音频转写文本
   @Get("documents/:id/content")
+  @AnyAuthenticated()
   async getDocumentContent(
     @Param("id") id: string,
     @CurrentUser() user: any,
@@ -140,6 +142,7 @@ export class QaController {
   }
 
   @Delete("conversations/:id")
+  @AnyAuthenticated()
   async delete(
     @Param("id") id: string,
     @CurrentUser("sub") userId: string,
@@ -148,6 +151,7 @@ export class QaController {
   }
 
   @Post("ask")
+  @AnyAuthenticated()
   @RateLimit({ ...RateLimitPolicies.qa, message: "AI 问答请求过于频繁，请稍后再试" })
   async ask(
     @Body() body: unknown,

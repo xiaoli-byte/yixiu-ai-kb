@@ -20,7 +20,7 @@ function KnowledgeCubeIllustration() {
 
 export function LoginClient({ demoCredentials }: { demoCredentials: DemoCredentials }) {
   const router = useRouter();
-  const { setAuth, accessToken } = useAuth();
+  const { setCookieSession, accessToken } = useAuth();
   const [email, setEmail] = useState(demoCredentials?.email || "");
   const [password, setPassword] = useState(demoCredentials?.password || "");
   const [rememberAccount, setRememberAccount] = useState(false);
@@ -53,7 +53,7 @@ export function LoginClient({ demoCredentials }: { demoCredentials: DemoCredenti
       } else {
         window.localStorage.removeItem("ai-knowledge-login-email");
       }
-      setAuth(data);
+      setCookieSession(data.user);
       router.push("/documents");
     } catch (e) {
       if (e instanceof ApiError) setError(e.message);

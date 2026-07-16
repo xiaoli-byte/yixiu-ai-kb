@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from "@nestjs/common";
 import { Inject } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
-import { Role, Resource, Action, UserContext } from "./permissions.types";
+import { Role, Resource, Action, ROLE_HIERARCHY, UserContext } from "./permissions.types";
 import { PermissionsService } from "./permissions.service";
 import { PRISMA } from "@/database/database.service";
+import { resolveKbRole } from "@xiaoli-byte/authz";
 
 /**
  * 角色管理服务
@@ -26,7 +27,12 @@ export class RolesManagementService {
       where: { id: userId, tenantId },
       select: { role: true },
     });
-    return user ? (user.role as Role) : null;
+    if (!user) return null;
+    const membership = await this.prisma.membership.findUnique({
+      where: { userId_tenantId: { userId, tenantId } },
+      select: { roles: true },
+    });
+    return this.resolveRole(membership?.roles, user.role);
   }
 
   /**
@@ -47,6 +53,17 @@ export class RolesManagementService {
       throw new BadRequestException("不能修改自己的角色");
     }
 
+    // 角色值必须在本地词表内（body 直传，不校验会把任意字符串写进 user.role）
+    if (!Object.values(Role).includes(newRole)) {
+      throw new BadRequestException("非法的角色值");
+    }
+
+    // 不能授出高于自身层级的角色（admin 不能提拔 super_admin）
+    const operatorRank = ROLE_HIERARCHY[operator.role] ?? 0;
+    if (ROLE_HIERARCHY[newRole] > operatorRank) {
+      throw new BadRequestException("不能授予高于自身的角色");
+    }
+
     // 检查目标用户存在且在同一租户
     const targetUser = await this.prisma.user.findFirst({
       where: { id: targetUserId, tenantId: operator.tenantId },
@@ -56,14 +73,28 @@ export class RolesManagementService {
       throw new NotFoundException("用户不存在或不在同一租户");
     }
 
+    // 不能改动权限比自己高的用户（admin 不能降级 super_admin）。
+    // 词表外的遗留脏角色按最低层级对待，允许管理员通过本接口修复。
+    const currentRole = await this.getUserRole(targetUserId, operator.tenantId);
+    if ((ROLE_HIERARCHY[currentRole ?? (targetUser.role as Role)] ?? 0) > operatorRank) {
+      throw new BadRequestException("不能修改权限高于自身的用户");
+    }
+
     // 更新角色
-    await this.prisma.user.update({
-      where: { id: targetUserId },
-      data: { role: newRole },
-    });
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: targetUserId },
+        data: { role: newRole },
+      }),
+      this.prisma.membership.upsert({
+        where: { userId_tenantId: { userId: targetUserId, tenantId: operator.tenantId } },
+        create: { userId: targetUserId, tenantId: operator.tenantId, roles: [newRole] },
+        update: { roles: [newRole] },
+      }),
+    ]);
 
     this.logger.log(
-      `用户 ${operator.userId} 将用户 ${targetUserId} 的角色从 ${targetUser.role} 更改为 ${newRole}`,
+      `用户 ${operator.userId} 将用户 ${targetUserId} 的角色从 ${currentRole ?? targetUser.role} 更改为 ${newRole}`,
     );
   }
 
@@ -124,9 +155,14 @@ export class RolesManagementService {
       orderBy: { createdAt: "desc" },
     });
 
+    const memberships = await this.prisma.membership.findMany({
+      where: { tenantId: operator.tenantId },
+      select: { userId: true, roles: true },
+    });
+    const rolesByUser = new Map(memberships.map((membership) => [membership.userId, membership.roles]));
     return users.map((u: typeof users[number]) => ({
       ...u,
-      role: u.role as Role,
+      role: this.resolveRole(rolesByUser.get(u.id), u.role),
     }));
   }
 
@@ -177,12 +213,6 @@ export class RolesManagementService {
    * 获取角色统计信息
    */
   async getRoleStatistics(tenantId: string): Promise<Record<Role, number>> {
-    const users = await this.prisma.user.groupBy({
-      by: ["role"],
-      where: { tenantId },
-      _count: { id: true },
-    });
-
     const stats: Record<Role, number> = {
       [Role.SUPER_ADMIN]: 0,
       [Role.ADMIN]: 0,
@@ -190,10 +220,24 @@ export class RolesManagementService {
       [Role.VIEWER]: 0,
     };
 
-    for (const group of users) {
-      stats[group.role as Role] = group._count.id;
+    const users = await this.prisma.user.findMany({
+      where: { tenantId },
+      select: { id: true, role: true },
+    });
+    const memberships = await this.prisma.membership.findMany({
+      where: { tenantId },
+      select: { userId: true, roles: true },
+    });
+    const rolesByUser = new Map(memberships.map((membership) => [membership.userId, membership.roles]));
+    for (const user of users) {
+      const role = this.resolveRole(rolesByUser.get(user.id), user.role);
+      stats[role] += 1;
     }
 
     return stats;
+  }
+
+  private resolveRole(roles: readonly string[] | undefined, fallback: string): Role {
+    return (resolveKbRole(roles ?? []).role ?? fallback) as Role;
   }
 }

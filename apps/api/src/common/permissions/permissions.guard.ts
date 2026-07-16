@@ -5,7 +5,6 @@ import {
   ForbiddenException,
   SetMetadata,
   applyDecorators,
-  UseGuards,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { ClsService } from "nestjs-cls";
@@ -17,6 +16,7 @@ import {
   UserContext,
 } from "./permissions.types";
 import { PermissionsService } from "./permissions.service";
+import { IS_PUBLIC_KEY } from "../decorators/public.decorator";
 
 /** 权限检查元数据 key */
 export const PERMISSIONS_KEY = "permissions";
@@ -52,11 +52,19 @@ export const RequireRoles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
 export const RequireMinRole = (role: Role) => SetMetadata(MIN_ROLE_KEY, role);
 
 /**
- * 权限守卫
+ * 权限守卫（app.module 以 APP_GUARD 全局注册，默认拒绝）
  * 支持：
+ * - @Public - 公开路由，跳过全部检查
  * - @RequireRoles - 检查用户角色
- * - @RequireMinRole - 检查最低角色
+ * - @RequireMinRole - 检查最低角色（"只需登录"用 @AnyAuthenticated）
  * - @RequirePermissions - 检查资源权限
+ *
+ * 关键不变量：非 @Public 路由必须声明上述权限元数据之一，否则一律 403。
+ * 旧版是"无声明即放行"，漏挂装饰器的写端点会静默暴露给任意登录角色——
+ * 多轮审查反复挖出的越权洞全部源于此。反转后"漏挂"表现为 403 显式故障，
+ * 配合 authz-route-coverage.spec.ts 在 CI 阶段就拦下。
+ * 元数据用 getAllAndOverride 读取：方法级覆盖类级，类级声明对全 controller 生效
+ * （旧版只读方法级，类级 @AdminOnly 会被静默忽略）。
  */
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -67,8 +75,29 @@ export class PermissionsGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    // 0. 公开路由直接放行（登录/健康检查/服务间端点）
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
+    const targets = [context.getHandler(), context.getClass()] as const;
+    const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [...targets]);
+    const minRole = this.reflector.getAllAndOverride<Role>(MIN_ROLE_KEY, [...targets]);
+    const requiredPermissions = this.reflector.getAllAndOverride<PermissionsMetadata[]>(
+      PERMISSIONS_KEY,
+      [...targets],
+    );
+
+    // 默认拒绝：没有任何权限声明的路由不可达
+    if (!requiredRoles?.length && !minRole && !requiredPermissions?.length) {
+      throw new ForbiddenException(
+        "该路由未声明访问权限（默认拒绝）。请为其添加 @Public / @AnyAuthenticated / 权限装饰器之一",
+      );
+    }
+
     // 1. 检查角色要求
-    const requiredRoles = this.reflector.get<Role[]>(ROLES_KEY, context.getHandler());
     if (requiredRoles?.length) {
       const userRole = this.getUserRole();
       if (!requiredRoles.includes(userRole)) {
@@ -77,9 +106,7 @@ export class PermissionsGuard implements CanActivate {
     }
 
     // 2. 检查最低角色要求
-    const minRole = this.reflector.get<Role>(MIN_ROLE_KEY, context.getHandler());
     if (minRole) {
-      const userRole = this.getUserRole();
       if (!this.permissionsService.hasMinimumRole(this.getUserContext(), minRole)) {
         const roleLabels: Record<Role, string> = {
           [Role.SUPER_ADMIN]: "超级管理员",
@@ -92,10 +119,6 @@ export class PermissionsGuard implements CanActivate {
     }
 
     // 3. 检查权限要求
-    const requiredPermissions = this.reflector.get<PermissionsMetadata[]>(
-      PERMISSIONS_KEY,
-      context.getHandler(),
-    );
     if (requiredPermissions?.length) {
       const userContext = this.getUserContext();
       const request = context.switchToHttp().getRequest();
@@ -151,7 +174,8 @@ export class PermissionsGuard implements CanActivate {
 }
 
 /**
- * 组合装饰器：权限 + JWT 认证 + 守卫
+ * 组合装饰器：声明多类权限元数据
+ * （JwtAuthGuard/PermissionsGuard 已全局注册，装饰器只负责声明元数据）
  */
 export const Protected = (
   permissions?: PermissionsMetadata[],
@@ -159,7 +183,6 @@ export const Protected = (
   minRole?: Role,
 ) =>
   applyDecorators(
-    UseGuards(PermissionsGuard),
     ...(permissions ? [RequirePermissions(...permissions)] : []),
     ...(roles ? [RequireRoles(...roles)] : []),
     ...(minRole ? [RequireMinRole(minRole)] : []),
@@ -168,14 +191,18 @@ export const Protected = (
 /**
  * 管理员专属装饰器（包含超级管理员）
  */
-export const AdminOnly = () =>
-  applyDecorators(RequireRoles(Role.ADMIN, Role.SUPER_ADMIN), UseGuards(PermissionsGuard));
+export const AdminOnly = () => RequireRoles(Role.ADMIN, Role.SUPER_ADMIN);
 
 /**
  * 编辑及以上权限装饰器（包含管理员和超级管理员）
  */
-export const EditorOrAbove = () =>
-  applyDecorators(RequireMinRole(Role.EDITOR), UseGuards(PermissionsGuard));
+export const EditorOrAbove = () => RequireMinRole(Role.EDITOR);
+
+/**
+ * 仅要求登录（任意有效角色）。
+ * 默认拒绝策略下，"只需登录"也必须显式声明，不存在"什么都不写=登录即可"。
+ */
+export const AnyAuthenticated = () => RequireMinRole(Role.VIEWER);
 
 /**
  * 文档读权限装饰器

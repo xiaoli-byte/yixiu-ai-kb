@@ -37,5 +37,7 @@ fi
 echo "Creating bucket $BUCKET ..."
 docker exec -i ai-knowledge-minio mc alias set local http://localhost:9000 "$ROOT_USER" "$ROOT_PASSWORD" >/dev/null
 docker exec -i ai-knowledge-minio mc mb --ignore-existing "local/$BUCKET"
-docker exec -i ai-knowledge-minio mc anonymous set download "local/$BUCKET"
+# 显式禁止匿名访问：文件一律经 API 鉴权后代理下载，bucket 匿名可读会绕过全部 ACL。
+# 用 set none（而非删掉 set download 了事）是为了让既有环境重跑本脚本即可收敛。
+docker exec -i ai-knowledge-minio mc anonymous set none "local/$BUCKET"
 echo "Bucket $BUCKET ready."

@@ -1,6 +1,5 @@
-import { Controller, Get, Query, UseGuards } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
-import { PermissionsGuard } from "../../common/permissions/permissions.guard";
+import { Controller, Get, Query } from "@nestjs/common";
+import { AnyAuthenticated } from "../../common/permissions/permissions.guard";
 import { DatabaseService } from "../../database/database.service";
 import {
   OverviewService,
@@ -10,7 +9,6 @@ import {
 const TREND_RANGES: OverviewTrendRange[] = ["today", "week", "month"];
 
 // 概览统计：租户级聚合，所有登录用户可见（不加 @AdminOnly）
-@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("overview")
 export class OverviewController {
   constructor(
@@ -19,11 +17,13 @@ export class OverviewController {
   ) {}
 
   @Get("metrics")
+  @AnyAuthenticated()
   async metrics() {
     return this.overview.getMetrics(this.db.tenantId!);
   }
 
   @Get("trend")
+  @AnyAuthenticated()
   async trend(@Query("range") range?: string) {
     const normalized: OverviewTrendRange = TREND_RANGES.includes(range as OverviewTrendRange)
       ? (range as OverviewTrendRange)
@@ -32,11 +32,13 @@ export class OverviewController {
   }
 
   @Get("categories")
+  @AnyAuthenticated()
   async categories() {
     return this.overview.getCategories(this.db.tenantId!);
   }
 
   @Get("recent-activities")
+  @AnyAuthenticated()
   async recentActivities(@Query("limit") limit?: string) {
     const parsed = Number(limit);
     return this.overview.getRecentActivities(

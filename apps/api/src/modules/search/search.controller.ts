@@ -1,29 +1,30 @@
 import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
 import { SearchEventRequest, SearchQuery } from "@ai-knowledge/schemas";
 import { SearchService } from "./search.service";
-import { PermissionsGuard } from "../../common/permissions/permissions.guard";
+import { AnyAuthenticated } from "../../common/permissions/permissions.guard";
 import { RateLimit, RateLimitGuard, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 
-// PermissionsGuard 见 qa.controller 同注：无方法级声明时放行，仅为让未来的权限装饰器真正生效。
-@UseGuards(AuthGuard("jwt"), RateLimitGuard, PermissionsGuard)
+@UseGuards(RateLimitGuard)
 @Controller("search")
 export class SearchController {
   constructor(private readonly search: SearchService) {}
 
   @Get()
   @RateLimit({ ...RateLimitPolicies.search, message: "搜索请求过于频繁，请稍后再试" })
+  @AnyAuthenticated()
   async getSearch(@Query() query: unknown, @CurrentUser() user: any) {
     return this.search.searchList(query, user);
   }
 
   @Get("hot")
+  @AnyAuthenticated()
   async hot(@Query() query: unknown) {
     return this.search.listHotSearch(query);
   }
 
   @Get("history")
+  @AnyAuthenticated()
   async history(
     @CurrentUser("sub") userId: string,
     @Query("limit") limit?: string,
@@ -35,21 +36,25 @@ export class SearchController {
   }
 
   @Delete("history/:id")
+  @AnyAuthenticated()
   async deleteHistory(@Param("id") id: string, @CurrentUser("sub") userId: string) {
     return this.search.deleteHistory(id, { userId });
   }
 
   @Delete("history")
+  @AnyAuthenticated()
   async clearHistory(@CurrentUser("sub") userId: string) {
     return this.search.clearHistory({ userId });
   }
 
   @Post("history/clear")
+  @AnyAuthenticated()
   async clearHistoryWithPost(@CurrentUser("sub") userId: string) {
     return this.search.clearHistory({ userId });
   }
 
   @Post("events")
+  @AnyAuthenticated()
   @RateLimit({
     windowMs: 60 * 1000,
     max: 20,
@@ -64,6 +69,7 @@ export class SearchController {
   }
 
   @Post()
+  @AnyAuthenticated()
   @RateLimit({ ...RateLimitPolicies.search, message: "搜索请求过于频繁，请稍后再试" })
   async handleSearch(@Body() raw: unknown, @CurrentUser() user: any) {
     const parsed = SearchQuery.safeParse(raw ?? {});

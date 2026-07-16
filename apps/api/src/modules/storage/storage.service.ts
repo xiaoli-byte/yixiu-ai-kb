@@ -10,8 +10,6 @@ export class StorageService implements OnModuleInit {
   private readonly logger = new Logger(StorageService.name);
   private client!: MinioClient;
   private bucket!: string;
-  private publicUrl!: string;
-  private internalUrl!: string;
 
   constructor(private readonly config: AppConfigService) {}
 
@@ -19,8 +17,6 @@ export class StorageService implements OnModuleInit {
     const storage = this.config.storage;
 
     this.bucket = storage.bucket;
-    this.publicUrl = storage.publicUrl;
-    this.internalUrl = storage.internalUrl;
 
     this.client = new MinioClient({
       endPoint: storage.endPoint,
@@ -72,15 +68,6 @@ export class StorageService implements OnModuleInit {
 
   async removeObject(key: string): Promise<void> {
     await this.withTimeout(this.client.removeObject(this.bucket, key), "删除 MinIO 文件");
-  }
-
-  async presignedGet(key: string, expirySeconds = 3600): Promise<string> {
-    // bucket 已设为公开下载，无需签名
-    return `/minio/${this.bucket}/${key}`;
-  }
-
-  get publicBaseUrl() {
-    return `/minio/${this.bucket}`;
   }
 
   private async withTimeout<T>(operation: Promise<T>, action: string): Promise<T> {

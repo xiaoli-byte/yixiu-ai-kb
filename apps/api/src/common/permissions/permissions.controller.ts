@@ -1,7 +1,6 @@
-import { Controller, Get, Patch, Body, UseGuards } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
+import { Controller, Get, Patch, Param, Body } from "@nestjs/common";
 import { CurrentUser } from "../decorators/current-user.decorator";
-import { AdminOnly } from "./permissions.guard";
+import { AdminOnly, AnyAuthenticated } from "./permissions.guard";
 import { RolesManagementService } from "./roles-management.service";
 import { PermissionsService } from "./permissions.service";
 import { Role, Resource, Action } from "./permissions.types";
@@ -11,7 +10,6 @@ import { Role, Resource, Action } from "./permissions.types";
  * 提供权限查询和角色管理接口
  */
 @Controller("permissions")
-@UseGuards(AuthGuard("jwt"))
 export class PermissionsController {
   constructor(
     private readonly rolesService: RolesManagementService,
@@ -22,14 +20,19 @@ export class PermissionsController {
    * 获取当前用户的权限信息
    */
   @Get("me")
-  async getMyPermissions(@CurrentUser("sub") userId: string) {
-    return this.rolesService.getUserPermissions(userId, "current"); // tenantId 从 context 获取
+  @AnyAuthenticated()
+  async getMyPermissions(
+    @CurrentUser("sub") userId: string,
+    @CurrentUser("tenantId") tenantId: string,
+  ) {
+    return this.rolesService.getUserPermissions(userId, tenantId);
   }
 
   /**
    * 获取角色统计
    */
   @Get("stats")
+  @AnyAuthenticated()
   async getRoleStats(@CurrentUser("tenantId") tenantId: string) {
     return this.rolesService.getRoleStatistics(tenantId);
   }
@@ -43,28 +46,33 @@ export class PermissionsController {
   async getUsersWithRoles(
     @CurrentUser("sub") userId: string,
     @CurrentUser("tenantId") tenantId: string,
+    @CurrentUser("role") role: string,
   ) {
-    const context = {
+    return this.rolesService.getTenantUsersWithRoles({
       userId,
       tenantId,
-      role: Role.VIEWER, // 会通过 ClsService 正确设置
-    };
-    // 注意：这里需要通过 ClsService 获取实际 role
-    return this.rolesService.getTenantUsersWithRoles(context);
+      role: role as Role,
+    });
   }
 
   /**
    * 修改用户角色（管理员）
-   * ⚠️ KB-05 半成品桩：尚未落库，仅返回 success 占位。
-   * @AdminOnly 必须保留——没有它任意登录用户都能调本端点，补齐落库实现时即成提权漏洞。
+   * @AdminOnly 是第一道门；服务层还有 isAdmin / 禁改自己 / 同租户 / 角色层级校验兜底。
    */
   @Patch("users/:userId/role")
   @AdminOnly()
   async updateUserRole(
     @CurrentUser("sub") operatorId: string,
     @CurrentUser("tenantId") tenantId: string,
+    @CurrentUser("role") operatorRole: string,
+    @Param("userId") targetUserId: string,
     @Body() body: { role: Role },
   ) {
+    await this.rolesService.updateUserRole(
+      { userId: operatorId, tenantId, role: operatorRole as Role },
+      targetUserId,
+      body?.role,
+    );
     return { success: true };
   }
 
@@ -72,6 +80,7 @@ export class PermissionsController {
    * 获取可用的角色选项
    */
   @Get("options")
+  @AnyAuthenticated()
   async getOptions() {
     return {
       roles: this.permissionsService.getRoleOptions(),

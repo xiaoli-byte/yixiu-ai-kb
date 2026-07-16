@@ -14,6 +14,11 @@ export class AppConfigService {
     return this.config.get<string>(key as string)?.trim() || "";
   }
 
+  private optionalPem(key: keyof AppEnv): string {
+    // Container/secret stores commonly provide PEM as a single escaped env value.
+    return this.optionalString(key).replace(/\\n/g, "\n");
+  }
+
   private number(key: keyof AppEnv): number {
     return Number(this.string(key));
   }
@@ -79,6 +84,13 @@ export class AppConfigService {
     return {
       accessSecret: this.string("JWT_ACCESS_SECRET"),
       refreshSecret: this.string("JWT_REFRESH_SECRET"),
+      accessAlgorithm: this.config.getOrThrow<"HS256" | "RS256">("JWT_ACCESS_ALGORITHM"),
+      accessPrivateKey: this.optionalPem("JWT_ACCESS_PRIVATE_KEY"),
+      accessPublicKey: this.optionalPem("JWT_ACCESS_PUBLIC_KEY"),
+      accessKeyId: this.optionalString("JWT_ACCESS_KEY_ID") || "ai-knowledge-v1",
+      federatedAccessPublicKey: this.optionalPem("FEDERATED_JWT_ACCESS_PUBLIC_KEY"),
+      federatedAccessKeyId:
+        this.optionalString("FEDERATED_JWT_ACCESS_KEY_ID") || "ai-call-v1",
       accessTtl: this.string("JWT_ACCESS_TTL"),
       refreshTtl: this.string("JWT_REFRESH_TTL"),
     };

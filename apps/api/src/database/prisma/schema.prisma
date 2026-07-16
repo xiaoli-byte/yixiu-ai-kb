@@ -50,15 +50,19 @@ model User {
   passwordHash String   @map("password_hash")
   /// @deprecated 迁移到 Membership.roles[]（KB-02/KB-03）。过渡期保留供旧代码双读，
   /// 待 KB-04/KB-05 把读写路径切到 Membership 后再移除。
-  role         String   @default("viewer")
-  departmentId String?  @map("department_id")
+    role         String   @default("viewer")
+    /// Federated lifecycle state. Disabled/deleted accounts remain for ownership
+    /// history, but are denied by the JWT strategy.
+    status       String   @default("active")
+    departmentId String?  @map("department_id")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   documents       Document[]       @relation("Owner")
   conversations   QAConversation[]
 
-  @@unique([tenantId, email])
+    @@unique([tenantId, email])
+    @@index([tenantId, status])
   @@map("users")
 }
 

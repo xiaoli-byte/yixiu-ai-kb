@@ -2,22 +2,27 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 // 需要登录才能访问的路由
-const protectedRoutes = ["/documents", "/search", "/qa", "/graph", "/settings"];
+const protectedRoutes = ["/overview", "/documents", "/search", "/qa", "/graph", "/settings"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const normalizedPath = pathname.replace(/^\/knowledge(?=\/|$)/, "") || "/";
 
   // 检查是否是受保护的路由
   const isProtectedRoute = protectedRoutes.some((route) =>
-    pathname.startsWith(route)
+    normalizedPath.startsWith(route)
   );
 
   if (!isProtectedRoute) {
     return NextResponse.next();
   }
 
-  // 客户端处理重定向（token 存在 localStorage 中，middleware 无法访问）
-  return NextResponse.next();
+  // access token 只在 httpOnly cookie 中，middleware 可在服务端完成首层拦截。
+  if (request.cookies.get("access_token")?.value) return NextResponse.next();
+
+  const loginUrl = new URL("/login", request.url);
+  loginUrl.searchParams.set("redirect", `${pathname}${request.nextUrl.search}`);
+  return NextResponse.redirect(loginUrl);
 }
 
 export const config = {

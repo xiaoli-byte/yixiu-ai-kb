@@ -14,15 +14,14 @@ export interface User {
 }
 
 export interface LoginResponse {
-  accessToken: string;
-  refreshToken: string;
   user: User;
 }
 
 export interface RefreshTokenRequest {
-  refreshToken: string;
+  /** 浏览器使用 httpOnly cookie；仅保留给升级中的非浏览器客户端。 */
+  refreshToken?: string;
 }
 
 export interface RefreshTokenResponse {
-  accessToken: string;
+  user: User;
 }

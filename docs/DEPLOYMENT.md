@@ -178,6 +178,7 @@ pnpm seed
 > **升级到含标签下线 / QA 重写版本的注意事项**：
 > - `0010_drop_tags` 会**永久删除** `tags` / `document_tags` 表及其数据（标签功能已整体下线，图谱分类改用文件夹）。若历史标签数据仍有价值，升级前先备份这两张表。
 > - `0011_qa_conversation_rolling_summary` 为 `qa_conversations` 增加滚动摘要字段（`summary`、`summary_message_count`），QA 长会话记忆依赖它。
+> - `0012_federated_user_lifecycle` 为 `users` 增加非空 `status` 与 `(tenant_id, status)` 索引。ai-call 停用账号同步为 `inactive`、删除同步为 `deleted`；两者保留用户行，以维持文档 owner 和审计追溯。
 > - QA 检索重排使用 DashScope gte-rerank，默认模型 `gte-rerank-v2`（`DASHSCOPE_RERANK_MODEL` 可覆盖）；无法调用时自动降级为召回原序，不阻塞问答。联调无 Key 环境可设 `DASHSCOPE_LLM_MOCK` / `DASHSCOPE_EMBED_MOCK` / `DASHSCOPE_RERANK_MOCK=true`。
 
 > 数据库业务结构变更必须先更新 `apps/api/src/database/prisma/schema.prisma`，再通过 Prisma Migrate 生成/部署迁移。禁止使用散落 SQL 脚本、手动 `psql` 或 `prisma db push` 修改业务表结构；Prisma Migrate 生成的迁移 SQL 除外。
@@ -300,6 +301,14 @@ NEO4J_PASSWORD=
 # ===== 鉴权 =====
 JWT_ACCESS_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
 JWT_REFRESH_SECRET=CHANGE_ME_generate_with_openssl_rand_base64_64
+# KB-10：本服务自己的 RS256 密钥对
+JWT_ACCESS_ALGORITHM=RS256
+JWT_ACCESS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nCHANGE_ME\n-----END PRIVATE KEY-----"
+JWT_ACCESS_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nCHANGE_ME\n-----END PUBLIC KEY-----"
+JWT_ACCESS_KEY_ID=ai-knowledge-v1
+# 仅接收 ai-call 的公钥，绝不部署 ai-call 私钥
+FEDERATED_JWT_ACCESS_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\nCHANGE_ME_ai_call_public_key\n-----END PUBLIC KEY-----"
+FEDERATED_JWT_ACCESS_KEY_ID=ai-call-v1
 BOOTSTRAP_ADMIN_EMAIL=admin@yourcompany.com
 BOOTSTRAP_ADMIN_PASSWORD=CHANGE_ME_use_a_strong_unique_admin_password
 BOOTSTRAP_ADMIN_NAME=Super Admin
@@ -343,7 +352,7 @@ FUNASR_HTTP_URL=http://localhost:10095
 FUNASR_TIMEOUT_MS=600000
 ```
 
-> **生产启动校验**：`NODE_ENV=production` 时 API 会拒绝使用占位/示例值启动，`DATABASE_URL`、`JWT_ACCESS_SECRET`、`JWT_REFRESH_SECRET`、`S3_SECRET_KEY`、`BOOTSTRAP_ADMIN_PASSWORD` 等必须是真实值，请务必替换所有 `CHANGE_ME_*`。
+> **生产启动校验**：`NODE_ENV=production` 时 API 会拒绝使用占位/示例值启动，`DATABASE_URL`、`JWT_ACCESS_SECRET`、`JWT_REFRESH_SECRET`、`S3_SECRET_KEY`、`BOOTSTRAP_ADMIN_PASSWORD` 等必须是真实值，请务必替换所有 `CHANGE_ME_*`。**KB-10** 要求 `JWT_ACCESS_ALGORITHM=RS256`，且本服务私钥/公钥与 ai-call 的 `FEDERATED_JWT_ACCESS_PUBLIC_KEY` 均已配置；本服务绝不持有 ai-call 私钥。若以 ai-call 联合身份运行，`SERVICE_API_TOKEN` 必须与 ai-call 的 `KNOWLEDGE_SERVICE_API_TOKEN` 完全一致；它同时保护检索与 `PUT /api/federation/users/sync`、`DELETE /api/federation/users/:id` 生命周期端点。两服务在低峰重启后，等待旧 HS256 access token 自然过期再验收。
 
 ### 3.4 启动生产服务
 
@@ -727,7 +736,7 @@ kubectl logs -f deployment/api -n ai-knowledge
 | `S3_SECRET_KEY` | S3 Secret Key | - | 是 |
 | `JWT_ACCESS_SECRET` | Access Token 密钥 | - | 是 |
 | `JWT_REFRESH_SECRET` | Refresh Token 密钥 | - | 是 |
-| `JWT_ACCESS_TTL` | Access Token 有效期 | 7d | - |
+| `JWT_ACCESS_TTL` | Access Token 有效期 | 15m | - |
 | `JWT_REFRESH_TTL` | Refresh Token 有效期 | 30d | - |
 | `BOOTSTRAP_ADMIN_EMAIL` | 初始管理员邮箱 | - | 是 |
 | `BOOTSTRAP_ADMIN_PASSWORD` | 初始管理员密码 | - | 是 |
@@ -742,7 +751,7 @@ kubectl logs -f deployment/api -n ai-knowledge
 | `DASHSCOPE_EMBED_MOCK` | 模拟 Embedding 调用 | false | - |
 | `DASHSCOPE_RERANK_MODEL` | QA 检索重排模型 | gte-rerank-v2 | - |
 | `DASHSCOPE_RERANK_MOCK` | 模拟重排（保持召回原序） | false | - |
-| `SERVICE_API_TOKEN` | 服务间调用令牌（如 ai-call → `/search/retrieve`）；生产必配，开发缺省放行但仍强制租户隔离 | - | 生产是 |
+| `SERVICE_API_TOKEN` | 服务间调用令牌（ai-call → `/search/retrieve`、`/federation/users/*`）；生产必配，开发缺省放行但仍强制租户隔离 | - | 生产是 |
 | `SERVICE_API_REQUIRE_SIGNATURE` | 服务间调用是否要求时间戳签名（防重放） | false | - |
 | `CHUNK_SIZE` | 切片大小 | 500 | - |
 | `CHUNK_OVERLAP` | 切片重叠 | 50 | - |

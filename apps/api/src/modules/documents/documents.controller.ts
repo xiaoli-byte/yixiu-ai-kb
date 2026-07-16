@@ -11,21 +11,18 @@ import {
   Query,
   UploadedFile,
   UploadedFiles,
-  UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor, FilesInterceptor } from "@nestjs/platform-express";
-import { AuthGuard } from "@nestjs/passport";
 import { DocumentListQuery, DocumentUpdateRequest } from "@ai-knowledge/schemas";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { PermissionsGuard, RequirePermissions } from "../../common/permissions/permissions.guard";
+import { RequirePermissions, AnyAuthenticated } from "../../common/permissions/permissions.guard";
 import { Action, Resource } from "../../common/permissions/permissions.types";
 import { RateLimit, RateLimitPolicies } from "../../common/rate-limit/rate-limit.guard";
 import { DatabaseService } from "../../database/database.service";
 import { FoldersService } from "../folders/folders.service";
 import { DocumentsService } from "./documents.service";
 
-@UseGuards(AuthGuard("jwt"), PermissionsGuard)
 @Controller("documents")
 export class DocumentsController {
   constructor(
@@ -35,6 +32,7 @@ export class DocumentsController {
   ) {}
 
   @Get()
+  @AnyAuthenticated()
   async list(@Query() query: unknown, @CurrentUser() user: any) {
     const result = DocumentListQuery.safeParse(query);
     if (!result.success) throw new BadRequestException("Invalid document query");
@@ -42,11 +40,13 @@ export class DocumentsController {
   }
 
   @Get(":id/permissions")
+  @AnyAuthenticated()
   async getPermissions(@Param("id") id: string, @CurrentUser() user: any) {
     return this.docs.getPermissions(id, user);
   }
 
   @Get(":id")
+  @AnyAuthenticated()
   async detail(@Param("id") id: string, @CurrentUser() user: any) {
     return this.docs.getDetail(id, user);
   }

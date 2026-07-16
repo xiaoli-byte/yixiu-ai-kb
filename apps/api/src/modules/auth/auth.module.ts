@@ -7,6 +7,8 @@ import { AuthController } from "./auth.controller";
 import { ClsModule } from "nestjs-cls";
 import { PermissionsModule } from "../../common/permissions/permissions.module";
 import { AppConfigService } from "../../config/app-config.service";
+import { FederatedIdentityService } from "./federated-identity.service";
+import { FederatedIdentityController } from "./federated-identity.controller";
 
 @Global()
 @Module({
@@ -14,16 +16,24 @@ import { AppConfigService } from "../../config/app-config.service";
     PassportModule.register({ defaultStrategy: "jwt" }),
     JwtModule.registerAsync({
       inject: [AppConfigService],
-      useFactory: (config: AppConfigService) => ({
-        secret: config.jwt.accessSecret,
-        signOptions: { expiresIn: config.jwt.accessTtl },
-      }),
+      useFactory: (config: AppConfigService) => {
+        const jwt = config.jwt;
+        return {
+          secret: jwt.accessSecret,
+          privateKey: jwt.accessAlgorithm === "RS256" ? jwt.accessPrivateKey : undefined,
+          signOptions: {
+            expiresIn: jwt.accessTtl,
+            algorithm: jwt.accessAlgorithm,
+            keyid: jwt.accessKeyId,
+          },
+        };
+      },
     }),
     ClsModule,
     PermissionsModule,
   ],
-  providers: [AuthService, JwtStrategy],
-  controllers: [AuthController],
+  providers: [AuthService, JwtStrategy, FederatedIdentityService],
+  controllers: [AuthController, FederatedIdentityController],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule {}
